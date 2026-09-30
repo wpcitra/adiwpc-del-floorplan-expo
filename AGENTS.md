@@ -222,7 +222,7 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Private discount on a multi-booth contract**: "Simpan Diskon" (`POST /invoices/sync-booth-discount`) and a Studio save that changes a booth's price or discount (`POST /floorplan/save`, change detected against the booths table) both call `recalcContract`. The unpaid Penuh / Pelunasan then shows subtotal = sum of the booth prices, discount = sum of their discounts (one booth keeps its own type, e.g. 10%), booth lines at the booth prices, total with PPN. Never write discount / subtotal / total to an invoice directly (the old Studio-save sync matched only exact codes, dropped PPN and rewrote paid invoices).
 - **Data Exhibitor.**
   - The API keeps one row per booth (§5), with `mergeGroup` and a per-booth share of the contract (`contractShare`).
-  - `ExhibitorTable` collapses the group into one row "#A-01+A-03+A-04" (`collapseMergedRows`).
+  - `ExhibitorTable` and the Dashboard tenant table (`SalesCharts`) show one row per TRANSACTION (`collapseMergedRows`): booths of one auto-merge group and booths of one multi-booth contract (`contractShare.code`, also when they do not touch) become one row "#A-04+A-07+A-08" with summed money (incl. discount) and area. Booth counts (occupancy, categories) keep the per-booth rows.
   - The dashboard still counts original booths.
 
 ---

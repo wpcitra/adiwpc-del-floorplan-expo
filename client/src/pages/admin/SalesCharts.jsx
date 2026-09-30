@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { getProjectDateInfo, currentYearWIB } from '../../components/admin/ProjectYearFolderSelector';
+import { collapseMergedRows } from '../../utils/mergeRows';
 
 const WIB = 'Asia/Jakarta';
 function fmtRupiah(n) {
@@ -519,7 +520,10 @@ export default function SalesCharts() {
     if (n !== null) {
       setUpdatingBoothId(booth.id);
       try {
-        const res = await api.updateBoothStatus(booth.id, { status: booth.status, owner_name: n.trim() });
+        // One transaction (merged booths) = one brand: rename every booth of the row
+        const targets = booth.isMerged ? booth.mergedBooths.filter(m => m.id) : [booth];
+        const results = await Promise.all(targets.map(t => api.updateBoothStatus(t.id, { status: t.status || booth.status, owner_name: n.trim() })));
+        const res = { success: results.length > 0 && results.every(r => r?.success) };
         if (res.success) { showToast(`✨ Brand diperbarui: "${n}"`); if (selection?.type === 'project') loadStats(selection.id); else loadStats(null); }
       } catch { showToast('⚠️ Gagal memperbarui'); }
       finally { setUpdatingBoothId(null); }
@@ -545,18 +549,22 @@ export default function SalesCharts() {
     return 'reserved';
   };
 
+  // Tenant table: one row per TRANSACTION (merged booths / one multi-booth invoice = one row, AGENTS.md §18);
+  // booth counts (occupancy, categories) keep using the per-booth rows
+  const tenantRows = useMemo(() => collapseMergedRows(yearExhibitors), [yearExhibitors]);
+
   const statusCounts = useMemo(() => {
-    const counts = { all: yearExhibitors.length, sold: 0, dp: 0, reserved: 0, free: 0, canceled: 0 };
-    yearExhibitors.forEach(b => {
+    const counts = { all: tenantRows.length, sold: 0, dp: 0, reserved: 0, free: 0, canceled: 0 };
+    tenantRows.forEach(b => {
       const st = resolveExhibitorStatus(b);
       if (counts[st] !== undefined) counts[st]++;
       if (st === 'dp') counts.reserved++;
     });
     return counts;
-  }, [yearExhibitors]);
+  }, [tenantRows]);
 
   const filteredExhibitors = useMemo(() => {
-    return yearExhibitors.filter(b => {
+    return tenantRows.filter(b => {
       const st = resolveExhibitorStatus(b);
       let ok = true;
       if (statusFilter === 'sold') ok = st === 'sold';
@@ -574,7 +582,7 @@ export default function SalesCharts() {
         (b.floorplanTitle || b.projectName || '').toLowerCase().includes(q);
       return ok && ms;
     });
-  }, [yearExhibitors, statusFilter, searchBrand]);
+  }, [tenantRows, statusFilter, searchBrand]);
 
   const pieData = [
     { name: 'Sudah Dibayar (Paid)', value: es.paidCount, color: '#10b981' },
@@ -1048,7 +1056,7 @@ export default function SalesCharts() {
                         <span className="text-xs text-slate-600">{booth.category || 'Standard'}</span>
                       </div>
                       <div className="text-[11px] text-slate-500 font-mono mt-0.5">
-                        {widthM}m × {heightM}m · {areaSqm} m²
+                        {booth.isMerged ? `${booth.mergedBooths.length} booth gabungan · ${areaSqm} m²` : `${widthM}m × ${heightM}m · ${areaSqm} m²`}
                       </div>
                     </td>
 
@@ -1103,7 +1111,7 @@ export default function SalesCharts() {
 
         <div className="p-3 bg-slate-50/70 border border-slate-200/80 rounded-lg flex items-center justify-between text-xs text-slate-600">
           <div>
-            <span>Menampilkan <strong>{filteredExhibitors.length}</strong> dari <strong>{yearExhibitors.length}</strong> tenant. Sisa Tagihan: <strong className="font-mono text-slate-900">{fmtRupiah(es.remainingBill)}</strong>.</span>
+            <span>Menampilkan <strong>{filteredExhibitors.length}</strong> dari <strong>{tenantRows.length}</strong> tenant. Sisa Tagihan: <strong className="font-mono text-slate-900">{fmtRupiah(es.remainingBill)}</strong>.</span>
           </div>
           <button type="button" onClick={() => { if (selection?.type === 'project') navigate(`/admin/floorplan?templateId=${selection.id}`); else navigate('/admin/floorplan'); }}
             className="text-slate-700 hover:text-slate-900 font-medium hover:underline flex items-center gap-1 shrink-0 cursor-pointer">
