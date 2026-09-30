@@ -22,6 +22,8 @@ import { authenticate, enforceAccessPolicy, stampActorIdentity } from './middlew
 import { auditTrail } from './middleware/audit.js';
 import { readBackupStatus, startBackupSchedule } from './utils/backup.js';
 import { appVersion } from './utils/appVersion.js';
+import db from './db.js';
+import { runSeed } from './seed.js';
 import { installErrorCapture, errorCaptureMiddleware, expressErrorHandler } from './utils/errorTracker.js';
 
 // Pusat Maintenance (AGENTS.md §22): record server errors (console.error(Error), 5xx responses, crashes)
@@ -117,4 +119,13 @@ app.listen(PORT, '0.0.0.0', () => {
   startBackupSchedule();
   console.log(`🚀 Floorplan Backend API Server is running on port ${PORT}`);
   console.log(`📊 Database connected: server/data/floorplan.db`);
+  try {
+    const fpCount = db.prepare('SELECT COUNT(*) as count FROM floorplans').get().count;
+    if (fpCount === 0) {
+      console.log('🌱 Database is fresh: seeding master exhibition floorplan & booths...');
+      runSeed();
+    }
+  } catch (e) {
+    console.error('Failed to run initial seed:', e.message);
+  }
 });
