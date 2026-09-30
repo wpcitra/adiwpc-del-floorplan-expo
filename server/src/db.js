@@ -919,6 +919,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_agent_usage_month ON agent_usage(created_at);
 `);
 
+// Denah Operasional: booths built with a "special design" (custom stand) are marked and coloured by the operations
+// team. Stored with the other operations booth data, never on the sales booth.
+for (const col of [
+  "ALTER TABLE ops_booth_data ADD COLUMN special_design INTEGER DEFAULT 0",
+  "ALTER TABLE ops_booth_data ADD COLUMN special_color TEXT DEFAULT ''"
+]) {
+  try { db.exec(col); } catch (e) {}
+}
+
 // Auto-merge booth (AGENTS.md §18): exhibitor identity per booth / order and the "Tampilkan Terpisah" switch
 for (const col of [
   "ALTER TABLE booths ADD COLUMN exhibitor_id TEXT DEFAULT ''",

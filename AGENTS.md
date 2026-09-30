@@ -169,7 +169,8 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **One floorplan, two layers.**
   - The sales layer (booths, walls, structures, doors, stage, blueprint) is always read live from `floorplans.canvas_fabric_json`. It is never copied into the operational layer.
   - The operational layer lives in `ops_elements`. It holds one row per element with the Fabric object JSON, flagged `isOpsItem`.
-  - Per-booth operations data lives in `ops_booth_data`: power, water, internet, setup status, notes.
+  - Per-booth operations data lives in `ops_booth_data`: power, water, internet, setup status, notes, and **special design** (`special_design`, `special_color`).
+  - Special design is the only booth "edit" the operations team has. It marks a custom-built stand and gives the booth its own colour on the operational floorplan: drawn by `drawOpsOverlay`, with a per-colour legend in the export. The sales booth object and its data are never changed.
   - Neither table ever writes to `booths`, `orders`, `invoices`, or the sales canvas.
 - **Operations mode (`/admin/ops`) saves only the operational layer**, through `PUT /api/ops/:id` with optimistic locking on `baseVersion` (409 `OPS_VERSION_CONFLICT`).
   - Sales objects are loaded with `isSalesLayer`, locked, and dimmed at runtime. `onStateLoaded` re-applies this after every load and after undo/redo.

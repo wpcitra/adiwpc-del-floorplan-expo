@@ -26,6 +26,9 @@ export const SETUP_STATUS = {
   bongkar: { label: 'Bongkar', color: '#8b5cf6' }
 };
 export const INTERNET_LABELS = { tidak: 'Tidak', wifi: 'WiFi', lan: 'LAN (kabel)' };
+// Special design booths (custom stand built by the tenant's contractor): coloured by the operations team
+export const SPECIAL_DESIGN_DEFAULT_COLOR = '#7c3aed';
+export const SPECIAL_DESIGN_COLORS = ['#7c3aed', '#db2777', '#0ea5e9', '#0d9488', '#ea580c', '#ca8a04', '#dc2626', '#1e293b'];
 export const OPS_LOCK_MESSAGE = 'Booth hanya bisa diubah di Denah Sales. Hubungi tim Sales untuk mengubah layout.';
 
 // Canvas properties kept with operational objects & history snapshots
@@ -36,7 +39,8 @@ export const SALES_DIM_OPACITY = 0.45;
 
 export const boothKeyOf = (bd) => String(bd?.id || bd?.code || '').trim();
 export const emptyBoothOps = (booth) => ({
-  boothKey: boothKeyOf(booth), boothCode: booth?.code || '', powerWatt: 0, waterNeeded: false, internet: 'tidak', setupStatus: 'belum_datang', notes: ''
+  boothKey: boothKeyOf(booth), boothCode: booth?.code || '', powerWatt: 0, waterNeeded: false, internet: 'tidak', setupStatus: 'belum_datang', notes: '',
+  specialDesign: false, specialColor: ''
 });
 
 // ---------- geometry ----------
@@ -370,6 +374,47 @@ export function drawOpsOverlay(canvas, ctx, { boothOps = {}, conflicts = new Map
       }
     });
   }
+
+  // Special design booths: their own colour (always shown, also with the setup status hidden) + a label
+  salesBooths(canvas).forEach(b => {
+    const data = boothOps[boothKeyOf(b.boothData)];
+    if (!data?.specialDesign) return;
+    const color = data.specialColor || SPECIAL_DESIGN_DEFAULT_COLOR;
+    const pts = screenPoly(b, vpt);
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.globalAlpha = 0.42;
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = Math.max(3, 3.5 * scale);
+    ctx.strokeStyle = color;
+    ctx.setLineDash([]);
+    ctx.stroke();
+    const xs = pts.map(p => p.x);
+    const ys = pts.map(p => p.y);
+    const w = Math.max(...xs) - Math.min(...xs);
+    if (w > 56 * scale) {
+      const font = 8.5 * scale;
+      const label = 'SPECIAL DESIGN';
+      ctx.font = `bold ${font}px system-ui, sans-serif`;
+      const tw = Math.min(w - 6 * scale, ctx.measureText(label).width + 8 * scale);
+      const x0 = Math.max(...xs) - tw - 3 * scale;
+      const y0 = Math.min(...ys) + 3 * scale;
+      ctx.fillStyle = color;
+      if (typeof ctx.roundRect === 'function') { ctx.beginPath(); ctx.roundRect(x0, y0, tw, font + 4 * scale, 3 * scale); ctx.fill(); } else ctx.fillRect(x0, y0, tw, font + 4 * scale);
+      ctx.fillStyle = '#ffffff';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x0, y0, tw, font + 4 * scale);
+      ctx.clip();
+      ctx.fillText(label, x0 + 4 * scale, y0 + (font + 4 * scale) / 2 + 0.5);
+      ctx.restore();
+    }
+  });
 
   const r = Math.max(7, 9 * scale);
   conflicts.forEach((codes, el) => {

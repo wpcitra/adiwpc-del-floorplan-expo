@@ -35,6 +35,8 @@ const elementDto = (r) => ({
   updatedAt: r.updated_at
 });
 
+const SPECIAL_DESIGN_DEFAULT_COLOR = '#7c3aed';
+
 const boothOpsDto = (r) => ({
   boothKey: r.booth_key,
   boothCode: r.booth_code || '',
@@ -43,6 +45,8 @@ const boothOpsDto = (r) => ({
   internet: r.internet || 'tidak',
   setupStatus: r.setup_status || 'belum_datang',
   notes: r.notes || '',
+  specialDesign: Boolean(r.special_design),
+  specialColor: r.special_color || '',
   updatedBy: r.updated_by,
   updatedAt: r.updated_at
 });
@@ -269,24 +273,30 @@ router.put('/:id', (req, res) => {
           water_needed: b.waterNeeded ? 1 : 0,
           internet: INTERNET_OPTIONS.includes(b.internet) ? b.internet : 'tidak',
           setup_status: SETUP_STATUSES.includes(b.setupStatus) ? b.setupStatus : 'belum_datang',
-          notes: String(b.notes || '').slice(0, 1000)
+          notes: String(b.notes || '').slice(0, 1000),
+          // Special design booth: its own colour on the operational floorplan (default violet)
+          special_design: b.specialDesign ? 1 : 0,
+          special_color: b.specialDesign ? (/^#[0-9a-f]{6}$/i.test(String(b.specialColor || '')) ? String(b.specialColor).toLowerCase() : SPECIAL_DESIGN_DEFAULT_COLOR) : ''
         };
         const prev = boothMap.get(key);
         const diff = [];
-        const prevState = prev || { power_watt: 0, water_needed: 0, internet: 'tidak', setup_status: 'belum_datang', notes: '' };
+        const prevState = prev || { power_watt: 0, water_needed: 0, internet: 'tidak', setup_status: 'belum_datang', notes: '', special_design: 0, special_color: '' };
         if (prevState.setup_status !== next.setup_status) diff.push(`status setup ${SETUP_LABELS[prevState.setup_status]} → ${SETUP_LABELS[next.setup_status]}`);
         if (Number(prevState.power_watt) !== next.power_watt) diff.push(`listrik ${prevState.power_watt || 0} → ${next.power_watt} W`);
         if (Number(prevState.water_needed) !== next.water_needed) diff.push(next.water_needed ? 'butuh air' : 'tidak butuh air');
         if (prevState.internet !== next.internet) diff.push(`internet ${INTERNET_LABELS[prevState.internet]} → ${INTERNET_LABELS[next.internet]}`);
         if ((prevState.notes || '') !== next.notes) diff.push('catatan diubah');
+        if (Number(prevState.special_design || 0) !== next.special_design) diff.push(next.special_design ? `special design (warna ${next.special_color})` : 'bukan special design');
+        else if (next.special_design && (prevState.special_color || '') !== next.special_color) diff.push(`warna special design ${prevState.special_color || '-'} → ${next.special_color}`);
         if (!diff.length) return;
         db.prepare(`
-          INSERT INTO ops_booth_data (floorplan_id, booth_key, booth_code, power_watt, water_needed, internet, setup_status, notes, updated_by, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          INSERT INTO ops_booth_data (floorplan_id, booth_key, booth_code, power_watt, water_needed, internet, setup_status, notes, special_design, special_color, updated_by, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
           ON CONFLICT(floorplan_id, booth_key) DO UPDATE SET booth_code = excluded.booth_code, power_watt = excluded.power_watt,
             water_needed = excluded.water_needed, internet = excluded.internet, setup_status = excluded.setup_status,
-            notes = excluded.notes, updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP
-        `).run(fp.id, key, next.booth_code, next.power_watt, next.water_needed, next.internet, next.setup_status, next.notes, actor);
+            notes = excluded.notes, special_design = excluded.special_design, special_color = excluded.special_color,
+            updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP
+        `).run(fp.id, key, next.booth_code, next.power_watt, next.water_needed, next.internet, next.setup_status, next.notes, next.special_design, next.special_color, actor);
         counts.booths++;
         logs.push(['Ubah data operasional booth', `Booth ${next.booth_code || key} — ${fpLabel}`, diff.join(', '), false]);
       });

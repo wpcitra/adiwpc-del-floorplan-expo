@@ -3,7 +3,7 @@ import {
   Lock, Zap, Droplets, Wifi, ClipboardList, AlertTriangle, Link2, Unlink, Globe, EyeOff, Crosshair, User, Phone, Mail,
   Tag, Ruler, Store, Layers, MapPin, Info
 } from 'lucide-react';
-import { SETUP_STATUS, INTERNET_LABELS, OPS_LOCK_MESSAGE, boothKeyOf, opsTypeCounts, venueEmoji } from '../../utils/opsLayer';
+import { SETUP_STATUS, INTERNET_LABELS, OPS_LOCK_MESSAGE, boothKeyOf, opsTypeCounts, venueEmoji, SPECIAL_DESIGN_COLORS, SPECIAL_DESIGN_DEFAULT_COLOR } from '../../utils/opsLayer';
 import { captionText } from '../../utils/elementCaptions';
 import ElementIcon from './ElementIcon';
 import CanvasShortcutsGuide from './CanvasShortcutsGuide';
@@ -62,6 +62,34 @@ function BoothPanel({ booth, boothRow, data, onChange, anchored = [], onSelectEl
           <InfoRow icon={User} label="PIC">{pic}</InfoRow>
           <InfoRow icon={Phone} label="Kontak PIC">{phone}</InfoRow>
           {email && <InfoRow icon={Mail} label="Email PIC">{email}</InfoRow>}
+        </div>
+
+        {/* Special design: the only booth "edit" allowed here — a colour on the operational floorplan */}
+        <div className="p-3 rounded-xl border space-y-2" style={data.specialDesign ? { borderColor: data.specialColor || SPECIAL_DESIGN_DEFAULT_COLOR, background: `${data.specialColor || SPECIAL_DESIGN_DEFAULT_COLOR}12` } : { borderColor: '#e2e8f0' }}>
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Special Design</div>
+              <div className="text-[10px] text-slate-500">Booth dibangun khusus (bukan booth standar)</div>
+            </div>
+            <div className="grid grid-cols-2 gap-1 w-28">
+              <button type="button" onClick={() => !data.specialDesign && onChange({ specialDesign: true, specialColor: data.specialColor || SPECIAL_DESIGN_DEFAULT_COLOR })} className={optionClass(data.specialDesign)}>Ya</button>
+              <button type="button" onClick={() => data.specialDesign && onChange({ specialDesign: false })} className={optionClass(!data.specialDesign)}>Tidak</button>
+            </div>
+          </div>
+          {data.specialDesign && (
+            <div>
+              <label className="block text-[11px] text-slate-500 mb-1 font-medium">Warna booth di Denah Operasional</label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {SPECIAL_DESIGN_COLORS.map(c => (
+                  <button key={c} type="button" onClick={() => c !== data.specialColor && onChange({ specialColor: c })} title={c}
+                    className={`w-6 h-6 rounded-md border cursor-pointer ${(data.specialColor || SPECIAL_DESIGN_DEFAULT_COLOR) === c ? 'ring-2 ring-offset-1 ring-slate-500 border-slate-500' : 'border-slate-300'}`}
+                    style={{ background: c }} />
+                ))}
+                <input type="color" value={data.specialColor || SPECIAL_DESIGN_DEFAULT_COLOR} onChange={(e) => onChange({ specialColor: e.target.value })}
+                  className="w-7 h-7 rounded border border-slate-200 cursor-pointer" title="Warna lain" />
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="space-y-3">
@@ -213,9 +241,10 @@ export function OpsElementSection({ element, boothCodes = [], conflictCodes = nu
 function SummaryPanel({ opsObjects, booths, boothOps, conflicts, orphans, layer, onFocusElement }) {
   const types = opsTypeCounts(opsObjects);
   const statusCounts = Object.fromEntries(Object.keys(SETUP_STATUS).map(k => [k, 0]));
-  let watt = 0, water = 0, internet = 0;
+  let watt = 0, water = 0, internet = 0, special = 0;
   booths.forEach(b => {
     const d = boothOps[boothKeyOf(b.boothData)];
+    if (d?.specialDesign) special++;
     statusCounts[d?.setupStatus || 'belum_datang']++;
     watt += Number(d?.powerWatt) || 0;
     if (d?.waterNeeded) water++;
@@ -240,6 +269,7 @@ function SummaryPanel({ opsObjects, booths, boothOps, conflicts, orphans, layer,
             <div className="bg-slate-800 p-2.5 rounded-lg"><div className="text-[10px] text-slate-400">Total Listrik Booth</div><div className="text-lg font-bold">{watt.toLocaleString('id-ID')} W</div></div>
             <div className="bg-slate-800 p-2.5 rounded-lg"><div className="text-[10px] text-slate-400">Booth Butuh Air</div><div className="text-xl font-bold">{water}</div></div>
             <div className="bg-slate-800 p-2.5 rounded-lg"><div className="text-[10px] text-slate-400">Booth Butuh Internet</div><div className="text-xl font-bold">{internet}</div></div>
+            <div className="bg-slate-800 p-2.5 rounded-lg col-span-2"><div className="text-[10px] text-slate-400">Booth Special Design</div><div className="text-xl font-bold text-violet-300">{special}</div></div>
           </div>
         </div>
 

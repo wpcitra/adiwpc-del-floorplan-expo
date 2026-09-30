@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { SETUP_STATUS, SALES_DIM_OPACITY, boothKeyOf, opsTypeCounts, venueEmoji, drawLibraryIcon, INTERNET_LABELS } from './opsLayer';
+import { SETUP_STATUS, SALES_DIM_OPACITY, boothKeyOf, opsTypeCounts, venueEmoji, drawLibraryIcon, INTERNET_LABELS, SPECIAL_DESIGN_DEFAULT_COLOR } from './opsLayer';
 import { accentOf } from './elementLibrary';
 
 // Export of the Denah Operasional for crews & vendors: booths + operational elements + icon legend.
@@ -71,15 +71,21 @@ export async function exportOpsFloorplan(canvas, { title = 'Denah', venue = '', 
   const booths = canvas.getObjects().filter(o => o.isBooth && o.boothData && o.visible !== false);
   const statusCounts = Object.fromEntries(Object.keys(SETUP_STATUS).map(k => [k, 0]));
   let totalWatt = 0, water = 0, internet = 0;
+  // Special design booths per colour (legend: one row per colour used)
+  const specialColors = new Map();
   booths.forEach(b => {
     const d = boothOps[boothKeyOf(b.boothData)];
+    if (d?.specialDesign) {
+      const c = d.specialColor || SPECIAL_DESIGN_DEFAULT_COLOR;
+      specialColors.set(c, [...(specialColors.get(c) || []), b.boothData.code]);
+    }
     statusCounts[d?.setupStatus || 'belum_datang']++;
     totalWatt += Number(d?.powerWatt) || 0;
     if (d?.waterNeeded) water++;
     if (d?.internet && d.internet !== 'tidak') internet++;
   });
 
-  const legendRows = 7 + types.length + Object.keys(SETUP_STATUS).length + 6;
+  const legendRows = 7 + types.length + Object.keys(SETUP_STATUS).length + 6 + (specialColors.size ? specialColors.size + 2 : 0);
   const outW = floor.width + legendW;
   const outH = Math.max(floor.height + headerH, headerH + legendRows * 22 * S + pad * 2);
   const out = document.createElement('canvas');
@@ -159,6 +165,20 @@ export async function exportOpsFloorplan(canvas, { title = 'Denah', venue = '', 
     ctx.lineWidth = 2 * S;
     ctx.strokeRect(x, yy, 16 * S, 14 * S);
   }, cfg.label, `${statusCounts[key]} booth`));
+
+  if (specialColors.size) {
+    y += 8 * S;
+    heading('Booth Special Design');
+    specialColors.forEach((codes, color) => row((x, yy) => {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.45;
+      ctx.fillRect(x, yy, 16 * S, 14 * S);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2 * S;
+      ctx.strokeRect(x, yy, 16 * S, 14 * S);
+    }, codes.join(', '), `${codes.length} booth`));
+  }
 
   y += 8 * S;
   heading('Tanda');
