@@ -6,6 +6,7 @@ import {
 import { SETUP_STATUS, INTERNET_LABELS, OPS_LOCK_MESSAGE, boothKeyOf, opsTypeCounts, venueEmoji } from '../../utils/opsLayer';
 import { captionText } from '../../utils/elementCaptions';
 import ElementIcon from './ElementIcon';
+import CanvasShortcutsGuide from './CanvasShortcutsGuide';
 
 const panelClass = 'w-80 lg:w-[340px] shrink-0 bg-white border-l border-slate-200 flex flex-col h-full shadow-sm z-10 select-none overflow-y-auto overflow-x-hidden';
 const inputClass = 'w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500';
@@ -285,6 +286,7 @@ function SummaryPanel({ opsObjects, booths, boothOps, conflicts, orphans, layer,
           </div>
         </div>
         {layer?.updatedBy && <p className="text-[10px] text-slate-400">Lapisan operasional terakhir disimpan oleh {layer.updatedBy}</p>}
+        <CanvasShortcutsGuide mode="ops" />
       </div>
     </aside>
   );

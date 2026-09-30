@@ -46,8 +46,13 @@ export default function CanvasBottomBar({
   onChangeBoothCornerPct,
   snapToBooths = true,
   onToggleSnapToBooths,
+  // Short description under "Snap ke Booth" (Denah Operasional: elements stick to booths, booths stay locked)
+  snapToBoothsHint = 'Booth menempel ke booth; elemen ke sisi / sudut / tengah booth (Alt = lepas)',
   snapToWalls = false,
   onToggleSnapToWalls,
+  // Snap ke Elemen: elements stick to / line up with other elements (undefined = hidden)
+  snapToElements = true,
+  onToggleSnapToElements,
   gridScale = 20,
   canUndo = false,
   canRedo = false,
@@ -223,10 +228,26 @@ export default function CanvasBottomBar({
                     <span className="text-sm">🧩</span>
                     <div className="text-left">
                       <div className="font-medium">Snap ke Booth</div>
-                      <div className="text-[10px] text-slate-400">Tempel rapat ke sisi / sudut booth lain (Alt = lepas)</div>
+                      <div className="text-[10px] text-slate-400">{snapToBoothsHint}</div>
                     </div>
                   </div>
                   {snapToBooths && <Check size={14} className="text-emerald-400" />}
+                </button>
+              )}
+              {onToggleSnapToElements && (
+                <button
+                  type="button"
+                  onClick={() => onToggleSnapToElements?.()}
+                  className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl hover:bg-slate-800 text-slate-200 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">📐</span>
+                    <div className="text-left">
+                      <div className="font-medium">Snap ke Elemen</div>
+                      <div className="text-[10px] text-slate-400">Elemen menempel &amp; sejajar dengan elemen lain, tengah &amp; jarak sama rata</div>
+                    </div>
+                  </div>
+                  {snapToElements && <Check size={14} className="text-emerald-400" />}
                 </button>
               )}
               {onToggleSnapToWalls && (

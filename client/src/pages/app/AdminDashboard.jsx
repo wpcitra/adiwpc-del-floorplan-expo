@@ -76,6 +76,7 @@ export default function AdminDashboard() {
   // Booth snapping (Floorplan Studio only)
   const [snapToBooths, setSnapToBooths] = useState(true);
   const [snapToWalls, setSnapToWalls] = useState(false);
+  const [snapToElements, setSnapToElements] = useState(true);
   const gridScale = DEFAULT_GRID_SCALE; // 1 kotak = 1 meter (default 20px)
 
   // Viewport & Pan state
@@ -1202,6 +1203,7 @@ export default function AdminDashboard() {
             }}
             snapToBooths={snapToBooths}
             snapToWalls={snapToWalls}
+            snapToElements={snapToElements}
             onOpenInvoiceForBooth={(boothData) => {
               setActiveInvoiceBooth(boothData);
               setIsInvoiceOpen(true);
@@ -1238,6 +1240,11 @@ export default function AdminDashboard() {
               }}
               snapToWalls={snapToWalls}
               onToggleSnapToWalls={() => setSnapToWalls(!snapToWalls)}
+              snapToElements={snapToElements}
+              onToggleSnapToElements={() => {
+                setSnapToElements(!snapToElements);
+                showToast(!snapToElements ? '📐 Snap ke Elemen aktif (tahan Alt / Option untuk menonaktifkan sementara)' : 'Snap ke Elemen dinonaktifkan');
+              }}
               autoMerge={autoMerge}
               onToggleAutoMerge={() => {
                 setAutoMerge(!autoMerge);

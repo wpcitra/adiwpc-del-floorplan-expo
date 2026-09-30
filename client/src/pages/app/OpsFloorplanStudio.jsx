@@ -85,6 +85,9 @@ export default function OpsFloorplanStudio() {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [isPanMode, setIsPanMode] = useState(false);
   const [snapToGrid, setSnapToGrid] = useState(true);
+  // Snap ke Booth (booths are anchors only, they stay locked) and Snap ke Elemen
+  const [snapToBooths, setSnapToBooths] = useState(true);
+  const [snapToElements, setSnapToElements] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [showRuler, setShowRuler] = useState(true);
   const [showDimensions, setShowDimensions] = useState(false);
@@ -687,6 +690,9 @@ export default function OpsFloorplanStudio() {
             onStateLoaded={applyLayerState}
             hidePrices
             snapToGrid={snapToGrid}
+            snapToBooths={snapToBooths}
+            snapToElements={snapToElements}
+            markBoothOverlaps={false}
             showGrid={showGrid}
             showRuler={showRuler}
             showDimensions={showDimensions}
@@ -733,6 +739,11 @@ export default function OpsFloorplanStudio() {
               onTogglePanMode={() => setIsPanMode(v => !v)}
               snapToGrid={snapToGrid}
               onToggleSnapToGrid={() => setSnapToGrid(v => !v)}
+              snapToBooths={snapToBooths}
+              onToggleSnapToBooths={() => setSnapToBooths(v => !v)}
+              snapToBoothsHint="Elemen menempel ke sisi / sudut / tengah booth (booth tetap terkunci)"
+              snapToElements={snapToElements}
+              onToggleSnapToElements={() => setSnapToElements(v => !v)}
               showGrid={showGrid}
               onToggleShowGrid={() => setShowGrid(v => !v)}
               showRuler={showRuler}

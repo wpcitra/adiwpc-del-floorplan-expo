@@ -222,7 +222,7 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - `outlineLoops()` + `isConvexVertex()` round only convex corners; concave (inner) corners stay siku.
   - The top-most member paints the whole group, so touching sides never show a double line.
   - Members with different corner values use the floorplan setting.
-- **Snap ke Booth (sales Studio only: `snapToBooths` prop; the ops page leaves it off).**
+- **Snap ke Booth for booths (sales Studio: `snapToBooths` prop).** In Denah Operasional booths stay locked; there "Snap ke Booth" only makes elements stick to booths (§25).
   - `computeSnap()` works on the real rectangle (AABB after 0/90/180/270° rotation, outer box of a multi-selection). Threshold: `SNAP_SCREEN_PX / zoom`.
   - Per axis: touch (side to side, only when the boxes face each other) or align (same side, any distance). The closest candidate wins; on a tie, touch wins. An axis without a booth candidate falls back to Snap to Grid.
   - Resize snaps the dragged side.
@@ -340,3 +340,31 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - Salin / Tempel Gaya uses `floorplan_shape_style_clipboard`. "Jadikan Default" saves the style per element type in this browser (`floorplan_shape_defaults`) and is used by `defaultProps()` for new elements.
 - No caption overlay for these types (`NO_CAPTION_TYPES`). Backspace / Delete never delete an element while its text is being edited.
 - The older "Bentuk & Anotasi Vektor" palette (`ShapePalette`, `isBasicShape`) is separate and unchanged.
+
+---
+
+## 25. Snap ke Elemen Lock (`boothSnap.js`, `CanvasEditor.jsx`)
+- **One snap system.** Elements (everything that is not a booth) use the same `computeSnap` / `computeGuides` / `limitStepToTouch` as booths, with the `elements` option. Called without it, every function behaves exactly as booth-to-booth snapping.
+  - `server/test/snap.test.js` guards this.
+  - A randomized old-vs-new comparison found 0 differences.
+  - Never fork a second snap module.
+- **Modes in `object:moving`.**
+  - A selection that contains a booth uses booth mode (unchanged: booth targets + optional walls, overlap warnings).
+  - Anything else uses element mode when "Snap ke Booth" or "Snap ke Elemen" is on. Targets come from `elementSnapTargets()`: booths (Snap ke Booth) and every visible element of every layer, incl. walls, pillars, doors, the ops overlay, and locked sales objects in Denah Operasional (Snap ke Elemen).
+  - Targets are computed once per drag (`elementSnapCacheRef`).
+- **Order.**
+  1. Line elements (`LINE_TYPES`: walls, aisles, VIP lane, wheelchair path, measure, queue): an end snaps to another end or a corner (`snapLineEnds`).
+  2. Otherwise sides / corners (touch, align incl. long-distance).
+  3. Then, only on an axis without a side candidate, centre to centre or equal spacing (`equalSpacingCandidates`).
+  4. Then the grid.
+  - Threshold `SNAP_SCREEN_PX / zoom`. Alt / Option disables every snap.
+  - Queue line vertices snap to anchor points (`canvas.__snapPoint`). Text Box & Bentuk resize snaps to booth and element sides.
+- **Geometry (`snapGeometry`).**
+  - Rotated elements use their outer box.
+  - Library elements use their body (the hit area = group matrix × child matrix; a CCTV cone does not count).
+  - Point-like library elements up to 1 × 1 m (Titik Listrik, WiFi, CCTV...) use their centre (`isPointElement`; shapes are never points).
+  - Bulat / Segitiga / Jajaran Genjang use their outer box and centre.
+- **Elements may overlap** booths and other elements: no warning and no blocking (the pillar-booth conflict rule stays). Element snapping never changes booths, contracts, or auto-merge adjacency. Element positions are rounded to 0,01 m after a drag.
+- **Guides.** Pink = touching / shared point; indigo dashed = aligned; green dashed = centre to centre; orange with the gap in metres = equal spacing. The blue distance label is hidden when a centre / equal guide is shown. Booth overlap marks are off in Denah Operasional (`markBoothOverlaps={false}`).
+- **Toolbar ("Grid & Skala").** Toggles: Snap to Grid, Snap ke Booth, Snap ke Elemen (all default on); Snap ke Dinding & Pilar (booth mode, sales only). Denah Operasional shows its own "Snap ke Booth" hint. `CanvasShortcutsGuide` is the "Panduan & Pintasan Kanvas" list in both studios.
+

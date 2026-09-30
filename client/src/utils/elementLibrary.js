@@ -316,6 +316,14 @@ export function applyLibraryBehavior(obj) {
   if (!isLibraryElement(obj)) return;
   if (obj.venueData.type === 'queue_line' && fabric.controlsUtils?.createPolyControls) {
     obj.controls = fabric.controlsUtils.createPolyControls(obj);
+    // Snap ke Elemen: a dragged vertex sticks to corners, line ends and centres (canvas.__snapPoint, Alt = free)
+    Object.values(obj.controls).forEach(control => {
+      const handler = control.actionHandler;
+      control.actionHandler = (eventData, transform, x, y) => {
+        const p = transform.target.canvas?.__snapPoint?.({ x, y }, transform.target, eventData);
+        return handler(eventData, transform, p ? p.x : x, p ? p.y : y);
+      };
+    });
     obj.hasBorders = true;
     obj.objectCaching = false;
   }

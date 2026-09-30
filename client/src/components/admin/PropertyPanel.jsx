@@ -48,6 +48,7 @@ import {
 import DoorInspector from './DoorInspector';
 import ElementInspector from './ElementInspector';
 import ShapeStyleSection from './ShapeStyleSection';
+import CanvasShortcutsGuide from './CanvasShortcutsGuide';
 import CaptionSection from './CaptionSection';
 import MergeGroupSection from './MergeGroupSection';
 import BoothCornerControl from './BoothCornerControl';
@@ -337,49 +338,7 @@ export default function PropertyPanel({
           </div>
 
           {/* Quick Guide & Shortcuts */}
-          <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/80 space-y-2 text-xs">
-            <span className="font-semibold text-slate-700 flex items-center gap-1.5 text-xs">
-              <Info size={14} className="text-blue-500 shrink-0" /> Panduan & Pintasan Kanvas
-            </span>
-            <ul className="space-y-1.5 text-slate-600 text-[11px] leading-relaxed">
-              <li className="flex items-start gap-1.5">
-                <span className="text-slate-400 mt-0.5 shrink-0">•</span>
-                <span><b>Tahan Spasi + Drag:</b> Geser tampilan (Pan)</span>
-              </li>
-              <li className="flex items-start gap-1.5">
-                <span className="text-slate-400 mt-0.5 shrink-0">•</span>
-                <span><b>Scroll Mouse:</b> Zoom In & Out</span>
-              </li>
-              <li className="flex items-start gap-1.5">
-                <span className="text-slate-400 mt-0.5 shrink-0">•</span>
-                <span><b>Drag Seleksi Kotak:</b> Pilih banyak booth</span>
-              </li>
-              <li className="flex items-start gap-1.5">
-                <span className="text-slate-400 mt-0.5 shrink-0">•</span>
-                <span><b>Backspace / Del:</b> Hapus objek</span>
-              </li>
-              <li className="flex items-start gap-1.5">
-                <span className="text-slate-400 mt-0.5 shrink-0">•</span>
-                <span><b>Snap to Grid:</b> Sejajar tiap 1m (20px)</span>
-              </li>
-              <li className="flex items-start gap-1.5">
-                <span className="text-slate-400 mt-0.5 shrink-0">•</span>
-                <span><b>Snap ke Booth:</b> Booth menempel rapat ke sisi / sudut booth lain; garis panduan pink = menempel, putus-putus = sejajar</span>
-              </li>
-              <li className="flex items-start gap-1.5">
-                <span className="text-slate-400 mt-0.5 shrink-0">•</span>
-                <span><b>Tahan Alt / Option saat menggeser:</b> Nonaktifkan snap sementara</span>
-              </li>
-              <li className="flex items-start gap-1.5">
-                <span className="text-slate-400 mt-0.5 shrink-0">•</span>
-                <span><b>Panah:</b> Geser 0,1 m • <b>Shift + Panah:</b> 1 m, berhenti tepat saat menempel booth lain</span>
-              </li>
-              <li className="flex items-start gap-1.5">
-                <span className="text-slate-400 mt-0.5 shrink-0">•</span>
-                <span><b>Ctrl / Cmd + Drag:</b> Salin objek</span>
-              </li>
-            </ul>
-          </div>
+          <CanvasShortcutsGuide />
         </div>
       </aside>
     );

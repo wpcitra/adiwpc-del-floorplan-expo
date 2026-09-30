@@ -20,12 +20,10 @@ import {
 } from '../../utils/elementLibrary';
 import { drawElementCaptions, findCaptionHit } from '../../utils/elementCaptions';
 import {
-  SNAP_SCREEN_PX, boxOf, containsBooth, movingMembers, snapTargets, computeSnap, computeGuides, limitStepToTouch, findBoothOverlaps, roundToStep
+  SNAP_SCREEN_PX, boxOf, containsBooth, snapTargets, computeSnap, computeGuides, limitStepToTouch, findBoothOverlaps, roundToStep,
+  elementSnapTargets, movingGeometry, snapLineEnds, snapPoint
 } from '../../utils/boothSnap';
 import CanvasRuler from './CanvasRuler';
-
-// Booths, and the Text Box & Bentuk elements, follow "Snap ke Booth" when they are moved
-const snapsToBooths = (target) => containsBooth(target) || movingMembers(target).some(isShapeElement);
 
 const CanvasEditor = forwardRef(function CanvasEditor({
   onSelectionChange,
@@ -50,9 +48,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   onStateLoaded,
   // Hide rental prices in the preview hover card (operations team)
   hidePrices = false,
-  // Snap sesama booth (Denah Sales only): booth edges & corners, optionally walls & pillars
+  // Snap sesama booth (Denah Sales only): booth edges & corners, optionally walls & pillars.
+  // For elements (everything that is not a booth, Sales & Operasional): "Snap ke Booth" = booths are anchors.
   snapToBooths = false,
-  snapToWalls = false
+  snapToWalls = false,
+  // Snap ke Elemen: elements stick to / line up with other elements of every layer (AGENTS.md §25)
+  snapToElements = false,
+  // Red marks on overlapping booths while snapping (off in Denah Operasional, where booths are locked)
+  markBoothOverlaps = true
 }, ref) {
   const containerRef = useRef(null);
   const canvasElRef = useRef(null);
@@ -89,6 +92,20 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   snapToBoothsRef.current = snapToBooths;
   const snapToWallsRef = useRef(snapToWalls);
   snapToWallsRef.current = snapToWalls;
+  const snapToElementsRef = useRef(snapToElements);
+  snapToElementsRef.current = snapToElements;
+  const markBoothOverlapsRef = useRef(markBoothOverlaps);
+  markBoothOverlapsRef.current = markBoothOverlaps;
+  // Anchors of the element being dragged (computed once per drag, cleared on release)
+  const elementSnapCacheRef = useRef(null);
+  const elementSnapOn = () => snapToBoothsRef.current || snapToElementsRef.current;
+  const elementTargetsFor = (canvas, target) => {
+    const cache = elementSnapCacheRef.current;
+    if (cache && cache.target === target) return cache.targets;
+    const targets = elementSnapTargets(canvas, target, { booths: snapToBoothsRef.current, elements: snapToElementsRef.current });
+    elementSnapCacheRef.current = { target, targets };
+    return targets;
+  };
   const onWarningRef = useRef(onWarning);
   onWarningRef.current = onWarning;
   // Smart guides of the booth being moved / resized ({ lines, distance }), cleared when it is released
@@ -1371,6 +1388,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
     canvas.on('mouse:up', () => {
       setShapeResizeBadge(null);
+      elementSnapCacheRef.current = null;
       if (snapGuidesRef.current) {
         snapGuidesRef.current = null;
         canvas.requestRenderAll();
@@ -1485,7 +1503,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       }
 
       // 2a. Snap ke Booth: edges / corners of other booths win over the grid; each axis falls back to the grid
-      if (snapToBoothsRef.current && !freeMove && snapsToBooths(target)) {
+      if (snapToBoothsRef.current && !freeMove && containsBooth(target)) {
         const gridPos = { left: target.left, top: target.top };
         target.set(rawPos);
         target.setCoords();
@@ -1497,6 +1515,24 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         });
         target.setCoords();
         snapGuidesRef.current = computeGuides(boxOf(target), targets, { gridScale: gridScaleRef.current });
+      } else if (elementSnapOn() && !freeMove && !containsBooth(target)) {
+        // 2a'. Snap ke Elemen / ke Booth for elements (same snap rules, booths are anchors only):
+        //      line ends to ends / corners, else sides & corners, else centre / equal spacing, else the grid
+        const gridPos = { left: target.left, top: target.top };
+        target.set(rawPos);
+        target.setCoords();
+        const targets = elementTargetsFor(canvas, target);
+        const thr = SNAP_SCREEN_PX / (canvas.getZoom() || 1);
+        const geo = movingGeometry(target);
+        const endSnap = geo.ends ? snapLineEnds(geo.ends, targets, thr) : null;
+        const { dx, dy } = endSnap || computeSnap(geo.box, targets, thr, { elements: true, center: geo.center });
+        target.set({
+          left: dx !== null ? rawPos.left + dx : gridPos.left,
+          top: dy !== null ? rawPos.top + dy : gridPos.top
+        });
+        target.setCoords();
+        const after = movingGeometry(target);
+        snapGuidesRef.current = computeGuides(after.box, targets, { gridScale: gridScaleRef.current, elements: true, center: after.center, point: endSnap?.point || null });
       } else {
         snapGuidesRef.current = null;
       }
@@ -1534,12 +1570,12 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       if (target?.isBooth) target.__transformStartBox = boxOf(target);
     });
 
-    // Text Box & Bentuk resize: the dragged side sticks to the nearest booth side, like booths do
+    // Text Box & Bentuk resize: the dragged side sticks to the nearest booth / element side
     // (straight elements only; Alt = from the centre and Shift = keep proportion are never snapped)
     canvas.__snapShapeResize = (target, transform, { w, h, axis }) => {
       const angle = ((Math.round(target.angle || 0) % 360) + 360) % 360;
-      if (!snapToBoothsRef.current || angle !== 0) return null;
-      const targets = snapTargets(canvas, target, { includeWalls: snapToWallsRef.current });
+      if (!elementSnapOn() || angle !== 0) return null;
+      const targets = elementTargetsFor(canvas, target);
       if (!targets.length) return null;
       const anchor = target.getPositionByOrigin(transform.originX, transform.originY);
       const thr = SNAP_SCREEN_PX / (canvas.getZoom() || 1);
@@ -1556,6 +1592,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         if (edge !== null && (edge - anchor.y) * dir > 0) next.h = Math.abs(edge - anchor.y);
       }
       return next;
+    };
+
+    // Queue line vertices being dragged stick to corners, line ends and centres (Alt = free)
+    canvas.__snapPoint = (pt, target, eventData) => {
+      if (!elementSnapOn() || eventData?.altKey) return null;
+      const point = snapPoint(pt, elementTargetsFor(canvas, target), SNAP_SCREEN_PX / (canvas.getZoom() || 1));
+      snapGuidesRef.current = point ? { lines: [{ x1: point.x, y1: point.y, x2: point.x, y2: point.y, kind: 'touch' }], distance: null } : null;
+      return point;
     };
 
     // Object Scaling: Live dimension updates
@@ -1655,6 +1699,12 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
       // Booths: neat 0,01 m positions (no tiny gaps from decimals) and a warning when they end up overlapping
       snapGuidesRef.current = null;
+      elementSnapCacheRef.current = null;
+      if (target && !containsBooth(target) && opt.action === 'drag' && !target.isBackgroundBlueprint) {
+        // Elements: the same 0,01 m position step; overlapping booths or other elements is allowed
+        target.set({ left: roundToStep(target.left, gridScaleRef.current), top: roundToStep(target.top, gridScaleRef.current) });
+        target.setCoords();
+      }
       if (target && containsBooth(target)) {
         delete target.__transformStartBox;
         target.set({ left: roundToStep(target.left, gridScaleRef.current), top: roundToStep(target.top, gridScaleRef.current) });
@@ -1709,12 +1759,12 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     // Snap guides (pink = touching side / corner, dashed = aligned with a booth further away, distance in metres)
     // and red marks on overlapping booths. Editor-only: never painted into exports.
     canvas.on('after:render', ({ ctx }) => {
-      if (!snapToBoothsRef.current || isPreviewModeRef.current || (ctx && ctx !== canvas.contextContainer)) return;
+      if (!(snapToBoothsRef.current || snapToElementsRef.current) || isPreviewModeRef.current || (ctx && ctx !== canvas.contextContainer)) return;
       const context = ctx || canvas.getContext();
       const vpt = canvas.viewportTransform;
       const toScreen = (x, y) => fabric.util.transformPoint(new fabric.Point(x, y), vpt);
       context.save();
-      findBoothOverlaps(canvas).forEach(({ rect }) => {
+      (snapToBoothsRef.current && markBoothOverlapsRef.current ? findBoothOverlaps(canvas) : []).forEach(({ rect }) => {
         const a = toScreen(rect.l, rect.t);
         const b = toScreen(rect.r, rect.b);
         context.fillStyle = 'rgba(239, 68, 68, 0.18)';
@@ -1726,13 +1776,21 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       });
       const guides = snapGuidesRef.current;
       if (guides) {
+        // pink = touching, indigo dashed = aligned, green dashed = centre to centre, orange = equal spacing
+        const GUIDE_STYLE = {
+          touch: { dash: [], width: 3, color: '#ec4899' },
+          align: { dash: [6, 4], width: 1.5, color: '#6366f1' },
+          center: { dash: [4, 3], width: 1.5, color: '#10b981' },
+          equal: { dash: [], width: 2, color: '#f97316' }
+        };
         guides.lines.forEach(l => {
           const a = toScreen(l.x1, l.y1);
           const b = toScreen(l.x2, l.y2);
+          const style = GUIDE_STYLE[l.kind] || GUIDE_STYLE.touch;
           context.beginPath();
-          context.setLineDash(l.kind === 'align' ? [6, 4] : []);
-          context.lineWidth = l.kind === 'align' ? 1.5 : 3;
-          context.strokeStyle = l.kind === 'align' ? '#6366f1' : '#ec4899';
+          context.setLineDash(style.dash);
+          context.lineWidth = style.width;
+          context.strokeStyle = style.color;
           if (Math.hypot(b.x - a.x, b.y - a.y) < 2) {
             // corner to corner: small cross on the shared corner
             context.moveTo(a.x - 6, a.y); context.lineTo(a.x + 6, a.y);
@@ -1741,6 +1799,22 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             context.moveTo(a.x, a.y); context.lineTo(b.x, b.y);
           }
           context.stroke();
+          if (l.text) {
+            // equal spacing: the gap in metres, in the guide's colour
+            context.setLineDash([]);
+            context.font = '600 10px system-ui, -apple-system, sans-serif';
+            const w = context.measureText(l.text).width + 8;
+            const mx = (a.x + b.x) / 2;
+            const my = (a.y + b.y) / 2;
+            context.fillStyle = style.color;
+            context.beginPath();
+            if (typeof context.roundRect === 'function') context.roundRect(mx - w / 2, my - 8, w, 16, 4); else context.rect(mx - w / 2, my - 8, w, 16);
+            context.fill();
+            context.fillStyle = '#ffffff';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillText(l.text, mx, my + 0.5);
+          }
         });
         if (guides.distance) {
           const d = guides.distance;
@@ -1861,7 +1935,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           pushHistory();
         }
       }
-      // Arrow keys: 0,1 m per press, Shift = 1 m; booths stop exactly when they touch another booth (Alt = no stop)
+      // Arrow keys: 0,1 m per press, Shift = 1 m; booths stop exactly when they touch another booth, elements when
+      // they touch an element or a booth (Alt = no stop)
       const ARROWS = { ArrowLeft: [-1, 0, 'left'], ArrowRight: [1, 0, 'right'], ArrowUp: [0, -1, 'up'], ArrowDown: [0, 1, 'down'] };
       const tag = e.target?.tagName;
       if (ARROWS[e.key] && tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT' && !e.target?.isContentEditable && !isPreviewModeRef.current) {
@@ -1870,8 +1945,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           e.preventDefault();
           const [sx, sy, dir] = ARROWS[e.key];
           let step = (e.shiftKey ? 1 : 0.1) * gridScaleRef.current;
-          if (!e.altKey && snapToBoothsRef.current && snapsToBooths(active)) {
+          if (!e.altKey && snapToBoothsRef.current && containsBooth(active)) {
             step = limitStepToTouch(boxOf(active), snapTargets(canvas, active, { includeWalls: false }), dir, step);
+          } else if (!e.altKey && elementSnapOn() && !containsBooth(active)) {
+            const targets = elementSnapTargets(canvas, active, { booths: snapToBoothsRef.current, elements: snapToElementsRef.current });
+            step = limitStepToTouch(movingGeometry(active).box, targets, dir, step, { all: true });
           }
           if (step > 0.01) {
             active.set({ left: active.left + sx * step, top: active.top + sy * step });
