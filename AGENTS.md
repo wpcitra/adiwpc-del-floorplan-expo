@@ -142,7 +142,8 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - Editing a `full` invoice's total / PPN also updates its `contract_total` / `contract_tax_rate` (a full invoice is the whole contract).
 - **Amounts are computed on the server** (`POST /api/invoices` with `invoiceKind: 'dp' | 'settlement'`). Pelunasan = contract − DP. `recalcContract()` rewrites only the unpaid balance invoice after a price/discount change or a DP cancel/delete; paid invoices are never rewritten. A DP turns an unpaid `full` invoice into the Pelunasan.
 - Paid contract invoices cannot be deleted (409); canceling a paid DP needs `confirmCancelPaidDp` and is written to the audit log. Deleted invoices are soft-deleted (`deleted_at`).
-- **Client summaries** (`client/src/utils/invoiceSummary.js`) count each contract once (total, discount, paid, remaining) via `inv.contract`; tabs filter by the contract status.
+- **Client summaries** (`client/src/utils/invoiceSummary.js`) count each contract once (total, discount, paid, remaining) via `inv.contract`; tabs filter AND count by the contract status (`matchesStatusTab`), so a paid DP is "Uang Muka / DP", never "Lunas". After a status change the UI reports the booth status returned by the server, never the one it asked for.
+- **A DP chosen at registration** is `downPaymentPercent` × the contract value computed by the server; the form's `paidAmount` estimate is ignored (a stale booth price once produced "DP 50%" billing 30%).
 
 
 ## 15. Exhibitor Directory: Tahun → Project → Tenant (`ExhibitorTable.jsx`, `ProjectYearFolderSelector.jsx`)

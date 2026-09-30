@@ -675,7 +675,7 @@ export default function InvoiceA4View({
                   {isDpInvoice ? (
                     <>
                       <div className="flex justify-between gap-3 text-blue-700 font-bold">
-                        <span>Nilai DP ({inv.dp_percent}%) — invoice ini:</span>
+                        <span>Nilai DP ({inv.contract_total > 0 ? Math.round((inv.total_amount / inv.contract_total) * 1000) / 10 : inv.dp_percent}%) — invoice ini:</span>
                         <span className="whitespace-nowrap font-mono">{rp(inv.total_amount)}</span>
                       </div>
                       {taxView.showBreakdown && dpPart && (

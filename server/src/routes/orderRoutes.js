@@ -179,7 +179,8 @@ router.post('/checkout', (req, res) => {
 
       // 6. Payment plan (the same for every contract of this registration)
       const resolvedPaymentType = req.body.paymentType || req.body.payment_type || 'full';
-      const resolvedDpPercent = req.body.downPaymentPercent || req.body.dpPercent || (resolvedPaymentType === 'dp' ? 50 : 0);
+      const askedDpPercent = Number(req.body.downPaymentPercent || req.body.dpPercent) || (resolvedPaymentType === 'dp' ? 50 : 0);
+      const resolvedDpPercent = Math.min(99, Math.max(0, askedDpPercent));
       // A DP is only money received when it was actually paid now (status PAID -> PARTIAL). For a booking hold or a
       // manual transfer awaiting verification the DP is just the plan: nothing is paid until finance confirms it.
       if (resolvedPaymentType === 'dp' && resolvedPaymentStatus === 'PAID') {
@@ -217,11 +218,9 @@ router.post('/checkout', (req, res) => {
         amount: p.price
       }));
 
-      const dpAmount = isDpInvoice
-        ? Math.min(contractTotal, Math.round(req.body.paidAmount !== undefined && resolvedPaymentStatus === 'PARTIAL'
-          ? Number(req.body.paidAmount) || 0
-          : (contractTotal * (resolvedDpPercent || 50)) / 100))
-        : 0;
+      // DP = the chosen percentage of the contract computed HERE (the form's own estimate is never used: it
+      // could come from a stale booth price, so "DP 50%" once billed 30% of the contract)
+      const dpAmount = isDpInvoice ? Math.round((contractTotal * (resolvedDpPercent || 50)) / 100) : 0;
       const invoiceTotal = isDpInvoice ? dpAmount : contractTotal;
       const invoiceTax = isDpInvoice ? taxPortion(contract, dpAmount) : { dpp: contract.dpp, ppn: contract.ppn };
       const invoicePaid = invoiceStatus === 'PAID' ? invoiceTotal : 0;

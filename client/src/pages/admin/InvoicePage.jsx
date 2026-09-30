@@ -260,7 +260,15 @@ export default function InvoicePage() {
 
       const res = await api.updateInvoiceStatus(inv.id, nextPaymentStatus, newBoothStatus);
       if (res && res.success) {
-        showToast(`✅ Status Booth #${inv.booth_code} berhasil diubah ke ${newBoothStatus.toUpperCase()} (Sinkron ke Denah & DB)`);
+        // The booth follows the whole contract (DP + Pelunasan): report what the server actually set, never the request
+        const actual = res.boothStatus || newBoothStatus;
+        const c = inv.contract;
+        if (newBoothStatus === 'sold' && actual !== 'sold') {
+          const sisa = c ? Math.max(0, Number(c.total) - Number(c.paid)) : 0;
+          showToast(`⚠️ Booth #${inv.booth_code} tetap RESERVED: kontrak belum lunas${c ? ` (dibayar Rp ${Number(c.paid).toLocaleString('id-ID')} dari Rp ${Number(c.total).toLocaleString('id-ID')}, sisa Rp ${sisa.toLocaleString('id-ID')})` : ''}. Terbitkan & lunasi Invoice Pelunasan agar booth Terjual.`);
+        } else {
+          showToast(`✅ Status Booth #${inv.booth_code}: ${actual.toUpperCase()} (sinkron ke denah & database)`);
+        }
         await loadInvoices();
       } else {
         showToast(`⚠️ ${res?.error || 'Gagal mengubah status booth'}`);
@@ -402,10 +410,8 @@ export default function InvoicePage() {
             </span>
           )}
           <span className="text-[11px] text-emerald-700/80 font-medium mt-1 block">
-            {projectInvoices.filter(i => (i.payment_status || '').toUpperCase() === 'PAID').length} Lunas • {projectInvoices.filter(i => {
-              const st = (i.payment_status || '').toUpperCase();
-              return st === 'PARTIAL' || st === 'DP' || (Number(i.paid_amount) > 0 && Number(i.remaining_amount) > 0);
-            }).length} Uang Muka (DP)
+            {/* Counted per booth contract: a paid DP is "Uang Muka", only a fully paid contract is "Lunas" */}
+            {selectedSummary.paidCount} Lunas • {selectedSummary.dpCount} Uang Muka (DP)
           </span>
         </div>
 
@@ -419,10 +425,7 @@ export default function InvoicePage() {
             Rp {unpaidRevenue.toLocaleString('id-ID')}
           </div>
           <span className="text-[11px] text-amber-700/80 font-medium mt-1 block">
-            {projectInvoices.filter(i => {
-              const st = (i.payment_status || '').toUpperCase();
-              return st !== 'PAID' && (Number(i.remaining_amount) > 0 || (Number(i.paid_amount) === 0 && st !== 'CANCELED'));
-            }).length} Invoice Menunggu Pelunasan
+            {selectedSummary.unpaidCount + selectedSummary.dpCount} Kontrak Belum Lunas
           </span>
         </div>
 
@@ -505,10 +508,7 @@ export default function InvoicePage() {
                   statusFilter === 'UNPAID' ? 'bg-white text-amber-800 shadow-xs font-semibold ring-1 ring-amber-200' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Belum Lunas ({projectInvoices.filter(i => {
-                  const st = (i.payment_status || '').toUpperCase();
-                  return (st === 'UNPAID' || st === 'PENDING') && !(Number(i.paid_amount) > 0 && Number(i.remaining_amount) > 0);
-                }).length})
+                Belum Lunas ({projectInvoices.filter(i => matchesStatusTab(i, 'UNPAID')).length})
               </button>
               <button
                 type="button"
@@ -517,10 +517,7 @@ export default function InvoicePage() {
                   statusFilter === 'PARTIAL' ? 'bg-white text-slate-900 shadow-xs font-semibold ring-1 ring-slate-200' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Uang Muka / DP ({projectInvoices.filter(i => {
-                  const st = (i.payment_status || '').toUpperCase();
-                  return st === 'PARTIAL' || st === 'DP' || (Number(i.paid_amount) > 0 && Number(i.remaining_amount) > 0);
-                }).length})
+                Uang Muka / DP ({projectInvoices.filter(i => matchesStatusTab(i, 'PARTIAL')).length})
               </button>
               <button
                 type="button"
@@ -529,7 +526,7 @@ export default function InvoicePage() {
                   statusFilter === 'PAID' ? 'bg-white text-emerald-800 shadow-xs font-semibold ring-1 ring-emerald-200' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Lunas ({projectInvoices.filter(i => (i.payment_status || '').toUpperCase() === 'PAID').length})
+                Lunas ({projectInvoices.filter(i => matchesStatusTab(i, 'PAID')).length})
               </button>
             </div>
           </div>
@@ -614,8 +611,12 @@ export default function InvoicePage() {
                         </div>
                         {inv.contract && ['dp', 'settlement'].includes(invoiceKind(inv)) && (
                           <div className="text-[10px] text-slate-500 mt-0.5">
-                            {invoiceKind(inv) === 'dp' ? `DP ${inv.dp_percent || 0}% • ` : inv.related_invoice ? `Setelah DP ${inv.related_invoice.invoice_number} • ` : 'Tanpa DP (100%) • '}
+                            {/* DP share from the amounts (an older registration could store a percentage that did not match) */}
+                            {invoiceKind(inv) === 'dp' ? `DP ${Number(inv.contract.total) > 0 ? Math.round((Number(inv.total_amount) / Number(inv.contract.total)) * 1000) / 10 : (inv.dp_percent || 0)}% • ` : inv.related_invoice ? `Setelah DP ${inv.related_invoice.invoice_number} • ` : 'Tanpa DP (100%) • '}
                             Kontrak Rp {Number(inv.contract.total).toLocaleString('id-ID')} • <span className="font-semibold">{inv.contract.statusLabel}</span>
+                            {Number(inv.contract.unbilled) > 0 && (
+                              <span className="block text-amber-700 font-semibold">Sisa Rp {Number(inv.contract.unbilled).toLocaleString('id-ID')} belum ditagih — buat Invoice Pelunasan agar booth bisa Terjual</span>
+                            )}
                           </div>
                         )}
                       </td>
