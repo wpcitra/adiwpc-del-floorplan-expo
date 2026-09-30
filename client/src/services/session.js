@@ -3,25 +3,46 @@ import { reportUnreachable, flushQueuedReports, queuedReportsPending } from './e
 
 const STORAGE_KEY = 'expo_auth_session';
 
+// Also kept in memory: when the browser blocks site storage (privacy settings, some private modes) the session
+// still works in this tab instead of silently sending API calls without a token ("Silakan login terlebih dahulu").
+let memorySession = null;
+let storageBlocked = false;
+
+// Expiry measured on this computer's own clock (login time + session length). Comparing the server's expiresAt
+// with a computer whose date / time is wrong threw fresh sessions away right after login. The server stays the
+// authority: an expired or revoked token is answered with 401 "Sesi login sudah berakhir" and cleared below.
+const isExpired = (session) => Number.isFinite(session?.localExpiresAt) && Date.now() > session.localExpiresAt;
+
 export function getSession() {
+  let session = memorySession;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    const session = raw ? JSON.parse(raw) : null;
-    if (session?.expiresAt && new Date(session.expiresAt) < new Date()) {
-      localStorage.removeItem(STORAGE_KEY);
-      return null;
-    }
-    return session;
+    if (raw) session = JSON.parse(raw);
   } catch (e) {
+    // storage blocked or corrupt: use the in-memory session
+  }
+  if (session && isExpired(session)) {
+    clearSession();
     return null;
   }
+  return session;
 }
 
 export function saveSession(session) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(session)); } catch (e) {}
+  memorySession = session;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    storageBlocked = localStorage.getItem(STORAGE_KEY) === null;
+  } catch (e) {
+    storageBlocked = true;
+  }
 }
 
+// true when the browser refused to store the session: it only lasts until this tab is reloaded / closed
+export const isStorageBlocked = () => storageBlocked;
+
 export function clearSession() {
+  memorySession = null;
   try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
 }
 

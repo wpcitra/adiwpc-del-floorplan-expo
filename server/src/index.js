@@ -33,25 +33,23 @@ const PORT = process.env.PORT || 5001;
 // Middleware
 // Error capture first, so every request (including CORS / body parser failures) has its context
 app.use('/api', errorCaptureMiddleware);
-// CORS: allow localhost, any railway.app domain, same-origin, and origins listed in ALLOWED_ORIGINS
+// CORS (AGENTS.md §20): the website itself (same domain, e.g. the Railway / custom domain serving client/dist),
+// this computer's localhost pages, and the origins listed in ALLOWED_ORIGINS (comma separated). Other websites
+// cannot call the API from a visitor's browser. Logins do not depend on CORS: the token is sent in the
+// Authorization header by the site's own pages.
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
 const isLocalOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(origin);
-
-const isAllowedOrigin = (origin) => {
-  if (!origin) return true;
-  if (isLocalOrigin(origin)) return true;
-  if (allowedOrigins.includes(origin)) return true;
-  try {
-    const hostname = new URL(origin).hostname;
-    if (hostname.endsWith('.railway.app') || hostname.endsWith('.up.railway.app')) return true;
-  } catch (e) {}
-  return true; // Allow production domains so authenticated bearer tokens work from any client browser
+const isSameSite = (origin, req) => {
+  try { return new URL(origin).host === (req.headers['x-forwarded-host'] || req.headers.host); } catch (e) { return false; }
 };
 
-app.use(cors({
-  origin: (origin, callback) => callback(null, isAllowedOrigin(origin)),
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+app.use(cors((req, callback) => {
+  const origin = req.headers.origin;
+  callback(null, {
+    origin: !origin || isLocalOrigin(origin) || allowedOrigins.includes(origin) || isSameSite(origin, req),
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+  });
 }));
 
 // Body parser with high limit for blueprints and canvas data
