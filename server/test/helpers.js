@@ -28,8 +28,10 @@ const freePort = () => new Promise((resolve, reject) => {
   srv.on('error', reject);
 });
 
-export async function startServer(extraEnv = {}) {
+// `prepare(dataDir)` runs before the server starts (e.g. to put a database in the temporary DATA_DIR)
+export async function startServer(extraEnv = {}, { prepare, credentials = {} } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'floorplan-test-'));
+  if (prepare) await prepare(dataDir);
   const port = await freePort();
   const child = spawn(process.execPath, ['src/index.js'], {
     cwd: SERVER_DIR,
@@ -63,7 +65,7 @@ export async function startServer(extraEnv = {}) {
     return { status: res.status, body: json, text };
   };
   const login = async (role) => {
-    const [email, password] = ACCOUNTS[role];
+    const [email, password] = credentials[role] || ACCOUNTS[role];
     const res = await api('POST', '/auth/login', { email, password });
     if (!res.body?.token) throw new Error(`Login ${role} gagal: ${res.text}`);
     return res.body.token;

@@ -251,6 +251,8 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **`GET /invoices/config`**: visitors never receive the signature image.
 - **CORS**: only localhost / 127.0.0.1 (any port) plus the origins listed in `ALLOWED_ORIGINS`.
 - **`src/resetDb.js`** (wipes all projects and transactions) runs only with `ALLOW_DB_RESET=yes` and `--confirm-wipe`, never with `NODE_ENV=production`, and always writes `data/backups/pre-reset_*.db` first.
+- **Checkout issues the invoice number itself** (never from the form): with `invoice_number UNIQUE`, a number chosen by a visitor could replace an existing, even paid, invoice. Invoices are inserted with plain `INSERT`, never `INSERT OR REPLACE`.
+- **Organizer data shown to visitors comes from Setting**, never from client code: bank accounts (`bank1*` / `bank2*`), company name, WhatsApp (`supportWhatsapp`). The primary account is one account: saving Bank 1 in Setting updates the invoice layout fields (`bankName` / `accountNumber` / `accountName` / `bankBranch`) and vice versa (`BANK_FIELD_PAIRS` in `invoiceRoutes.js`); an older difference is never overwritten silently (Setting shows a warning).
 
 ---
 
@@ -272,6 +274,10 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - Each test file starts its own server on a free port with an empty temporary `DATA_DIR`. Never import server modules (`src/db.js` runs migrations) against `server/data/floorplan.db`.
   - Tests cover login/role access, public booking (draft 404, instant-paid 400, unknown 404, taken 409, no substring matching), contract DP + Pelunasan + discount, auto-merge (one invoice per group, adjacency rules), and public data protection.
   - Never disable or weaken a test to make a change pass.
+- **Production starts clean** (`utils/demoCleanup.js`, `db.js`):
+  - An empty database is never filled with demo data. `node server/src/seed.js` (demo event `EVT-2026-001` / `FP-2026-001`) is for local demos only.
+  - Demo data that was auto-seeded on Railway is removed once at startup, only while untouched (the only floorplan, no invoices, only `ORD-2026-*` orders), after a verified backup. Real data is never deleted by this.
+  - First account on production (`RAILWAY_ENVIRONMENT` or `INITIAL_ADMIN_PASSWORD` set): only a Super Admin (`INITIAL_ADMIN_EMAIL`, password `INITIAL_ADMIN_PASSWORD` or a random one printed once in the deploy log). The development accounts (`superadmin123`...) are public in the repository and exist only in development / tests; production logs a warning while one of them is still in use.
 - **Health**: `GET /api/health` returns `environment` (`APP_ENV`), `version` (package version + git commit / `APP_COMMIT`), and `lastBackupAt`. It never returns secrets.
 
 ---

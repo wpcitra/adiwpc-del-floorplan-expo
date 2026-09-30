@@ -22,8 +22,7 @@ import { authenticate, enforceAccessPolicy, stampActorIdentity } from './middlew
 import { auditTrail } from './middleware/audit.js';
 import { readBackupStatus, startBackupSchedule } from './utils/backup.js';
 import { appVersion } from './utils/appVersion.js';
-import db from './db.js';
-import { runSeed } from './seed.js';
+import { removeDemoDataIfUntouched } from './utils/demoCleanup.js';
 import { installErrorCapture, errorCaptureMiddleware, expressErrorHandler } from './utils/errorTracker.js';
 
 // Pusat Maintenance (AGENTS.md §22): record server errors (console.error(Error), 5xx responses, crashes)
@@ -119,13 +118,7 @@ app.listen(PORT, '0.0.0.0', () => {
   startBackupSchedule();
   console.log(`🚀 Floorplan Backend API Server is running on port ${PORT}`);
   console.log(`📊 Database connected: server/data/floorplan.db`);
-  try {
-    const fpCount = db.prepare('SELECT COUNT(*) as count FROM floorplans').get().count;
-    if (fpCount === 0) {
-      console.log('🌱 Database is fresh: seeding master exhibition floorplan & booths...');
-      runSeed();
-    }
-  } catch (e) {
-    console.error('Failed to run initial seed:', e.message);
-  }
+  // Production starts clean: an empty database is NOT filled with demo data (demo: `node server/src/seed.js`, local only).
+  // Demo data auto-seeded earlier on Railway is removed once, only while nobody has entered real data yet.
+  removeDemoDataIfUntouched().catch(error => console.error('Hapus data contoh gagal:', error));
 });

@@ -85,6 +85,8 @@ const DEFAULT_SYSTEM_CONFIG = {
   currencySymbol: 'Rp'
 };
 
+const BANK_FIELD_PAIRS = [['bank1Name', 'bankName'], ['bank1AccNumber', 'accountNumber'], ['bank1AccHolder', 'accountName'], ['bank1Branch', 'bankBranch']];
+
 // GET /api/invoices/config - Get invoice layout & template settings
 router.get('/config', (req, res) => {
   try {
@@ -127,6 +129,16 @@ router.post('/config', (req, res) => {
       ...config,
       updatedAt: new Date().toISOString()
     };
+
+    // One primary bank account: Setting > No. Rekening (bank1*) and Desain Layout Invoice (bankName / accountNumber /
+    // accountName / bankBranch, printed on the invoice) edit the same account. The side that changed wins.
+    for (const [primary, printed] of BANK_FIELD_PAIRS) {
+      const primaryChanged = config[primary] !== undefined && config[primary] !== existingConfig[primary];
+      const printedChanged = config[printed] !== undefined && config[printed] !== existingConfig[printed];
+      if (primaryChanged) merged[printed] = merged[primary];
+      else if (printedChanged) merged[primary] = merged[printed];
+      // neither changed: an older difference stays as it is (the admin decides which name is right, see Setting)
+    }
 
     db.prepare(`
       INSERT INTO invoice_settings (id, config_json, updated_at)

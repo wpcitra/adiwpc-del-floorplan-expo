@@ -33,24 +33,15 @@ import { api } from '../../services/api';
 import { computeContractTax, DEFAULT_TAX_NOTE } from '../../utils/invoiceTax';
 import InvoiceA4View from '../admin/InvoiceA4View';
 
-const OFFICIAL_BANKS = [
-  {
-    id: 'bca',
-    bankName: 'Bank Central Asia (BCA)',
-    accountNumber: '882-019-3321',
-    accountHolder: 'PT Wahyu Promo Citra',
-    branch: 'KCP Sudirman Jakarta',
-    badge: 'BCA Bisnis'
-  },
-  {
-    id: 'mandiri',
-    bankName: 'Bank Mandiri',
-    accountNumber: '122-00-9988776-5',
-    accountHolder: 'PT Wahyu Promo Citra',
-    branch: 'KCP Thamrin Jakarta',
-    badge: 'Mandiri Corporate'
-  }
-];
+// Organizer's bank accounts, company name and WhatsApp come from Setting (database), never from this file
+const banksFromConfig = (cfg = {}) => [
+  { id: 'bank1', bankName: cfg.bank1Name || cfg.bankName, accountNumber: cfg.bank1AccNumber || cfg.accountNumber, accountHolder: cfg.bank1AccHolder || cfg.accountName, branch: cfg.bank1Branch || cfg.bankBranch },
+  { id: 'bank2', bankName: cfg.bank2Name, accountNumber: cfg.bank2AccNumber, accountHolder: cfg.bank2AccHolder, branch: cfg.bank2Branch }
+].filter(b => String(b.bankName || '').trim() && String(b.accountNumber || '').trim());
+const waNumber = (raw) => {
+  const digits = String(raw || '').replace(/\D/g, '');
+  return digits.startsWith('0') ? `62${digits.slice(1)}` : digits;
+};
 
 export default function BookingModal({ 
   booth, 
@@ -68,12 +59,19 @@ export default function BookingModal({
   const [step, setStep] = useState('form');
   // PPN from Setting (rate, and whether online registrations are taxed). Admins choose per registration.
   const [taxCfg, setTaxCfg] = useState({ rate: 11, publicTax: true, method: 'exclusive', display: 'show', note: DEFAULT_TAX_NOTE });
+  const [orgCfg, setOrgCfg] = useState({ companyName: '', whatsapp: '', banks: [] });
+  // Invoice number issued by the server for this registration (shown on the success screen and in WhatsApp)
+  const [issuedInvoiceNumber, setIssuedInvoiceNumber] = useState('');
+  const [issuedTotal, setIssuedTotal] = useState(null);
   const [adminApplyTax, setAdminApplyTax] = useState(null); // null = follow the setting
   useEffect(() => {
     api.fetchInvoiceConfig().then(cfg => {
       if (!cfg) return;
       const rate = Number(cfg.taxRate);
       const method = cfg.defaultTaxMethod === 'inclusive' ? 'inclusive' : 'exclusive';
+      const banks = banksFromConfig(cfg);
+      setOrgCfg({ companyName: cfg.companyName || '', whatsapp: waNumber(cfg.supportWhatsapp || cfg.supportPhone), banks });
+      setTransferBank(prev => prev || banks[0]?.bankName || '');
       setTaxCfg({
         rate: Number.isFinite(rate) && rate >= 0 ? rate : 11,
         publicTax: cfg.publicBookingTax !== false,
@@ -108,7 +106,7 @@ export default function BookingModal({
   const [bookingType, setBookingType] = useState('booking');
 
   // Manual Transfer state
-  const [transferBank, setTransferBank] = useState('BCA');
+  const [transferBank, setTransferBank] = useState('');
   const [transferSenderName, setTransferSenderName] = useState('');
   const [transferNotes, setTransferNotes] = useState('');
   const [copiedBankId, setCopiedBankId] = useState(null);
@@ -232,6 +230,9 @@ export default function BookingModal({
   const grandTotal = taxSplit.total;
   const taxIncluded = applyTax && taxCfg.method === 'inclusive';
   const invoiceNumber = `INV/EXP-${Date.now().toString().slice(-6)}`;
+  const shownInvoiceNumber = issuedInvoiceNumber || invoiceNumber;
+  // Total computed by the server (price - private discount + PPN), shown after the registration was saved
+  const shownTotal = issuedTotal ?? grandTotal;
   const vaNumber = `8809${Math.floor(100000000000 + Math.random() * 900000000000)}`;
 
   const formatTime = (seconds) => {
@@ -417,6 +418,8 @@ export default function BookingModal({
         setStep('form');
         return;
       }
+      setIssuedInvoiceNumber(result?.order?.invoiceNumber || '');
+      setIssuedTotal(Number.isFinite(Number(result?.order?.totalAmount)) ? Number(result.order.totalAmount) : null);
       setStep('success');
     }
   };
@@ -788,7 +791,7 @@ export default function BookingModal({
                       <div className="text-xs font-bold text-slate-900 leading-tight">2. Transfer Bank</div>
                       <div className="text-[10px] text-blue-800 font-semibold mt-0.5">Rekening Resmi</div>
                     </div>
-                    <span className="text-[9px] text-slate-500 mt-1 line-clamp-2">Transfer manual ke BCA / Mandiri EO</span>
+                    <span className="text-[9px] text-slate-500 mt-1 line-clamp-2">Transfer manual ke {orgCfg.banks.length ? orgCfg.banks.map(bank => bank.bankName).join(' / ') : 'rekening penyelenggara'}</span>
                   </button>
 
                 </div>
@@ -825,7 +828,7 @@ export default function BookingModal({
                   <div className="bg-blue-50/70 p-3.5 rounded-2xl border border-blue-200 text-xs text-blue-950 space-y-2">
                     <div className="flex items-center gap-2 font-bold text-blue-900">
                       <Landmark size={16} className="text-blue-600 shrink-0" />
-                      <span>Rekening Resmi Penyelenggara (PT Wahyu Promo Citra)</span>
+                      <span>Rekening Resmi Penyelenggara{orgCfg.companyName ? ` (${orgCfg.companyName})` : ''}</span>
                     </div>
                     <p className="text-slate-600 text-[11px]">
                       Silakan lakukan transfer sesuai total tagihan ke salah satu rekening resmi perusahaan kami di bawah ini:
@@ -833,7 +836,10 @@ export default function BookingModal({
 
                     {/* Daftar Rekening Bank Resmi */}
                     <div className="space-y-2 pt-1">
-                      {OFFICIAL_BANKS.map((bank) => (
+                      {orgCfg.banks.length === 0 && (
+                        <div className="p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-[11px]">Rekening penyelenggara belum diatur. Silakan hubungi panitia.</div>
+                      )}
+                      {orgCfg.banks.map((bank) => (
                         <div 
                           key={bank.id}
                           className={`p-3 rounded-xl border bg-white flex items-center justify-between transition-all ${
@@ -843,7 +849,7 @@ export default function BookingModal({
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-slate-900 text-xs">{bank.bankName}</span>
-                              <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-medium">{bank.badge}</span>
+                              {bank.branch && <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-medium">{bank.branch}</span>}
                             </div>
                             <div className="font-mono text-sm font-black text-slate-800 tracking-wider mt-0.5">
                               {bank.accountNumber}
@@ -871,8 +877,8 @@ export default function BookingModal({
                           onChange={(e) => setTransferBank(e.target.value)}
                           className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
                         >
-                          <option value="BCA">Transfer ke: BCA</option>
-                          <option value="Mandiri">Transfer ke: Mandiri</option>
+                          <option value="">Transfer ke: pilih rekening</option>
+                          {orgCfg.banks.map(bank => <option key={bank.id} value={bank.bankName}>Transfer ke: {bank.bankName}</option>)}
                         </select>
                         <input
                           type="text"
@@ -1098,7 +1104,7 @@ export default function BookingModal({
               <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-left text-xs space-y-2 font-mono">
                 <div className="flex justify-between items-center pb-2 border-b border-slate-200">
                   <span className="text-slate-500">NO. INVOICE</span>
-                  <span className="font-bold text-slate-800">{invoiceNumber}</span>
+                  <span className="font-bold text-slate-800">{shownInvoiceNumber}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">EXHIBITOR</span>
@@ -1141,17 +1147,17 @@ export default function BookingModal({
               </div>
 
               {/* WhatsApp Quick Action Button jika Booking Dulu atau Transfer Manual */}
-              {(bookingType === 'booking' || bookingType === 'manual_transfer') && (
+              {(bookingType === 'booking' || bookingType === 'manual_transfer') && orgCfg.whatsapp && (
                 <div className="p-3 bg-emerald-50/80 rounded-2xl border border-emerald-200 text-left text-xs flex items-center justify-between gap-3">
                   <div className="text-[11px] text-emerald-950">
                     <span className="font-bold block">Hubungi Admin / Finance via WhatsApp:</span>
                     <p className="text-slate-600 text-[10px]">Kirimkan konfirmasi atau bukti transfer langsung untuk respons cepat.</p>
                   </div>
                   <a
-                    href={`https://wa.me/6281299887766?text=${encodeURIComponent(
+                    href={`https://wa.me/${orgCfg.whatsapp}?text=${encodeURIComponent(
                       bookingType === 'booking'
-                        ? `Halo Admin PT Wahyu Promo Citra, saya telah melakukan pemesanan (Hold 24 Jam) booth pameran:\n\n• No. Invoice: ${invoiceNumber}\n• Perusahaan: ${brandName}\n• PIC: ${fullName}\n• No. Booth: ${boothCode}\n• Total: Rp ${grandTotal.toLocaleString('id-ID')}\n\nMohon info tata cara pelunasan lebih lanjut. Terima kasih.`
-                        : `Halo Finance PT Wahyu Promo Citra, saya ingin mengonfirmasi transfer manual pembayaran booth pameran:\n\n• No. Invoice: ${invoiceNumber}\n• Perusahaan: ${brandName}\n• PIC: ${fullName}\n• No. Booth: ${boothCode}\n• Rekening Tujuan: ${transferBank}\n• Pengirim: ${transferSenderName || fullName}\n• Total: Rp ${grandTotal.toLocaleString('id-ID')}\n\nBerikut bukti transfer saya. Mohon verifikasinya. Terima kasih.`
+                        ? `Halo Admin${orgCfg.companyName ? ` ${orgCfg.companyName}` : ''}, saya telah melakukan pemesanan (Hold 24 Jam) booth pameran:\n\n• No. Invoice: ${shownInvoiceNumber}\n• Perusahaan: ${brandName}\n• PIC: ${fullName}\n• No. Booth: ${boothCode}\n• Total: Rp ${shownTotal.toLocaleString('id-ID')}\n\nMohon info tata cara pelunasan lebih lanjut. Terima kasih.`
+                        : `Halo Finance${orgCfg.companyName ? ` ${orgCfg.companyName}` : ''}, saya ingin mengonfirmasi transfer manual pembayaran booth pameran:\n\n• No. Invoice: ${shownInvoiceNumber}\n• Perusahaan: ${brandName}\n• PIC: ${fullName}\n• No. Booth: ${boothCode}\n• Rekening Tujuan: ${transferBank}\n• Pengirim: ${transferSenderName || fullName}\n• Total: Rp ${shownTotal.toLocaleString('id-ID')}\n\nBerikut bukti transfer saya. Mohon verifikasinya. Terima kasih.`
                     )}`}
                     target="_blank"
                     rel="noreferrer"
@@ -1197,7 +1203,7 @@ export default function BookingModal({
         <InvoiceA4View
           invoice={{
             id: `INV-${boothCode}`,
-            invoice_number: invoiceNumber,
+            invoice_number: shownInvoiceNumber,
             issue_date: new Date().toISOString().split('T')[0],
             due_date: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
             client_name: fullName,

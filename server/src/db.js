@@ -3,7 +3,8 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { hashPassword } from './utils/password.js';
+import crypto from 'crypto';
+import { hashPassword, verifyPassword } from './utils/password.js';
 import { exhibitorIdFor } from './utils/exhibitorIdentity.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -972,21 +973,47 @@ try {
   console.error('Backfill exhibitor_id gagal:', e.message);
 }
 
-// Seed default users (one per role) if table is empty
+// First accounts of an empty database.
+// Production (Railway, or INITIAL_ADMIN_PASSWORD set): ONLY a Super Admin, with the password from INITIAL_ADMIN_PASSWORD
+// or a random one printed once in the deploy log. The repository is public, so the development passwords below must
+// never guard a live website. Other staff accounts are created by the Super Admin in the "Pengguna" menu.
+// Development / tests: one account per role with the known development passwords.
+const secureAccounts = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.INITIAL_ADMIN_PASSWORD);
 const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
 if (userCount === 0) {
   const insertUser = db.prepare(`
     INSERT INTO users (id, name, email, phone, role, password_hash)
     VALUES (?, ?, ?, ?, ?, ?)
   `);
-  insertUser.run('usr_superadmin', 'Super Admin', 'superadmin@expo.local', '', 'superadmin', hashPassword('superadmin123'));
-  insertUser.run('usr_finance', 'Tim Keuangan', 'keuangan@expo.local', '', 'finance', hashPassword('keuangan123'));
-  insertUser.run('usr_sales', 'Tim Sales', 'sales@expo.local', '', 'sales', hashPassword('sales123'));
+  if (secureAccounts) {
+    const fromEnv = String(process.env.INITIAL_ADMIN_PASSWORD || '');
+    const password = fromEnv.length >= 8 ? fromEnv : crypto.randomBytes(9).toString('base64url');
+    const email = String(process.env.INITIAL_ADMIN_EMAIL || 'superadmin@expo.local').trim().toLowerCase();
+    insertUser.run('usr_superadmin', 'Super Admin', email, '', 'superadmin', hashPassword(password));
+    console.log(fromEnv.length >= 8
+      ? `🔐 Akun Super Admin pertama dibuat: ${email} (password dari variabel INITIAL_ADMIN_PASSWORD)`
+      : `🔐 Akun Super Admin pertama dibuat: ${email} / password sementara: ${password} — segera ganti setelah login`);
+  } else {
+    insertUser.run('usr_superadmin', 'Super Admin', 'superadmin@expo.local', '', 'superadmin', hashPassword('superadmin123'));
+    insertUser.run('usr_finance', 'Tim Keuangan', 'keuangan@expo.local', '', 'finance', hashPassword('keuangan123'));
+    insertUser.run('usr_sales', 'Tim Sales', 'sales@expo.local', '', 'sales', hashPassword('sales123'));
+  }
 }
-// Default operations account (added with the operational floorplan feature)
-if (!db.prepare("SELECT 1 FROM users WHERE role = 'operations' LIMIT 1").get() && !db.prepare("SELECT 1 FROM users WHERE email = 'operasional@expo.local'").get()) {
+// Default operations account (added with the operational floorplan feature; development only)
+if (!secureAccounts && !db.prepare("SELECT 1 FROM users WHERE role = 'operations' LIMIT 1").get() && !db.prepare("SELECT 1 FROM users WHERE email = 'operasional@expo.local'").get()) {
   db.prepare(`INSERT INTO users (id, name, email, phone, role, password_hash) VALUES (?, ?, ?, ?, ?, ?)`)
     .run('usr_operations', 'Tim Operasional', 'operasional@expo.local', '', 'operations', hashPassword('operasional123'));
+}
+
+// A live website still using a development password (accounts created before the change above): warn in the log
+if (secureAccounts) {
+  try {
+    const known = { 'superadmin@expo.local': 'superadmin123', 'keuangan@expo.local': 'keuangan123', 'sales@expo.local': 'sales123', 'operasional@expo.local': 'operasional123' };
+    const weak = db.prepare("SELECT email, password_hash FROM users WHERE email IN ('superadmin@expo.local', 'keuangan@expo.local', 'sales@expo.local', 'operasional@expo.local')").all()
+      .filter(u => verifyPassword(known[u.email], u.password_hash))
+      .map(u => u.email);
+    if (weak.length) console.warn(`⚠️ Akun berikut masih memakai password bawaan dari repo publik, segera ganti: ${weak.join(', ')}`);
+  } catch (e) {}
 }
 
 export default db;

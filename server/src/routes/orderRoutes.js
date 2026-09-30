@@ -26,9 +26,14 @@ router.post('/checkout', (req, res) => {
       paymentMethod = 'qris',
       transferBank = '',
       transferSenderName = '',
-      notes = '',
-      invoiceNumber = `INV/EXP-${Date.now().toString().slice(-6)}`
+      notes = ''
     } = req.body;
+    // The invoice number is always issued here, never taken from the form: a number sent by a visitor could
+    // otherwise replace an existing (even paid) invoice with the same number
+    let invoiceNumber = `INV/EXP-${Date.now().toString().slice(-6)}`;
+    for (let i = 0; db.prepare('SELECT 1 FROM invoices WHERE invoice_number = ?').get(invoiceNumber) && i < 50; i++) {
+      invoiceNumber = `INV/EXP-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 90 + 10)}`;
+    }
 
     const hasBooths = Boolean(boothCode) || (Array.isArray(req.body.boothCodes) && req.body.boothCodes.some(Boolean));
     if (!hasBooths || !brandName || !email || !phone) {
@@ -224,7 +229,7 @@ router.post('/checkout', (req, res) => {
         ? [{ id: 'item-1', description: `Uang Muka (DP ${resolvedDpPercent}%) Sewa Booth #${codeLabel} - ${resolvedPaymentMethod}`, qty: 1, unitPrice: dpAmount, amount: dpAmount }]
         : items;
       db.prepare(`
-        INSERT OR REPLACE INTO invoices (
+        INSERT INTO invoices (
           id, invoice_number, floorplan_id, booth_id, booth_code,
           client_name, company_name, client_email, client_phone,
           issue_date, due_date, items_json, subtotal, discount_type, discount_value, discount_amount, discount_reason,
