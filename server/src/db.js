@@ -1005,6 +1005,27 @@ if (!secureAccounts && !db.prepare("SELECT 1 FROM users WHERE role = 'operations
     .run('usr_operations', 'Tim Operasional', 'operasional@expo.local', '', 'operations', hashPassword('operasional123'));
 }
 
+// Emergency access from the hosting panel: RESET_ADMIN_PASSWORD (min. 8 characters) sets the Super Admin password on
+// start (the account is created or re-activated when needed) and signs out its sessions. The password is never logged.
+// Remove the variable after logging in, otherwise every restart resets the password again.
+{
+  const resetPassword = String(process.env.RESET_ADMIN_PASSWORD || '');
+  if (resetPassword && resetPassword.length < 8) {
+    console.warn('⚠️ RESET_ADMIN_PASSWORD diabaikan: minimal 8 karakter.');
+  } else if (resetPassword) {
+    const email = String(process.env.INITIAL_ADMIN_EMAIL || 'superadmin@expo.local').trim().toLowerCase();
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    if (existing) {
+      db.prepare("UPDATE users SET password_hash = ?, role = 'superadmin', is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(hashPassword(resetPassword), existing.id);
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(existing.id);
+    } else {
+      db.prepare('INSERT INTO users (id, name, email, phone, role, password_hash) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(`usr_superadmin_${Date.now()}`, 'Super Admin', email, '', 'superadmin', hashPassword(resetPassword));
+    }
+    console.warn(`🔑 Password Super Admin ${email} diatur dari variabel RESET_ADMIN_PASSWORD. Hapus variabel itu setelah berhasil login.`);
+  }
+}
+
 // A live website still using a development password (accounts created before the change above): warn in the log
 if (secureAccounts) {
   try {

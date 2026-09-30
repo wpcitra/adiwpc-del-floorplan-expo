@@ -100,3 +100,15 @@ test('rekening utama sinkron: Setting (Bank 1) dan Desain Layout Invoice menguba
     assert.equal(pub.bank1AccHolder, 'PT Contoh Dua');
   } finally { await s.stop(); }
 });
+
+test('RESET_ADMIN_PASSWORD mengatur ulang password Super Admin (akses darurat dari panel hosting)', async () => {
+  const fresh = 'Reset-Darurat-2026';
+  const s = await startServer({ RESET_ADMIN_PASSWORD: fresh }, { credentials: { superadmin: ['superadmin@expo.local', fresh] } });
+  try {
+    const old = await s.api('POST', '/auth/login', { email: 'superadmin@expo.local', password: 'superadmin123' });
+    assert.equal(old.status, 401, 'password lama tidak berlaku lagi');
+    const ok = await s.api('POST', '/auth/login', { email: 'superadmin@expo.local', password: fresh });
+    assert.ok(ok.body?.token, ok.text);
+    assert.doesNotMatch(s.output(), new RegExp(fresh), 'password tidak pernah ditulis ke log');
+  } finally { await s.stop(); }
+});

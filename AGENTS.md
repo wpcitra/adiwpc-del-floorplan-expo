@@ -279,6 +279,7 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - An empty database is never filled with demo data. `node server/src/seed.js` (demo event `EVT-2026-001` / `FP-2026-001`) is for local demos only.
   - Demo data that was auto-seeded on Railway is removed once at startup, only while untouched (the only floorplan, no invoices, only `ORD-2026-*` orders), after a verified backup. Real data is never deleted by this.
   - First account on production (`RAILWAY_ENVIRONMENT` or `INITIAL_ADMIN_PASSWORD` set): only a Super Admin (`INITIAL_ADMIN_EMAIL`, password `INITIAL_ADMIN_PASSWORD` or a random one printed once in the deploy log). The development accounts (`superadmin123`...) are public in the repository and exist only in development / tests; production logs a warning while one of them is still in use.
+  - Locked out: set `RESET_ADMIN_PASSWORD` (min. 8 characters) in the hosting variables and redeploy. On start the Super Admin gets that password (created / re-activated if needed) and its sessions end; the password is never logged. Remove the variable after logging in.
 - **Health**: `GET /api/health` returns `environment` (`APP_ENV`), `version` (package version + git commit / `APP_COMMIT`), and `lastBackupAt`. It never returns secrets.
 
 ---
