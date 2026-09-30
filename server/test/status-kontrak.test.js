@@ -53,3 +53,20 @@ test('Pelunasan lunas: kontrak Lunas, booth Terjual di database & denah', async 
   assert.equal(r.body.contractStatus, 'PAID');
   assert.deepEqual(await boothState('S-01'), { db: 'sold', denah: 'sold' });
 });
+
+test('Studio menerima biodata tenant dari registrasi (PIC, email, telepon, kategori); tampilan publik tidak', async () => {
+  await createPublishedFloorplan(s.api, 'FP-TEST-BIODATA', [boothObject('B-03', { left: 0, top: 0, price: 5000000 })]);
+  const r = await s.api('POST', '/orders/checkout', {
+    floorplanId: 'FP-TEST-BIODATA', boothCodes: ['B-03'], fullName: 'Wulan Jaya', brandName: 'wujaya', brandCategory: 'Kuliner & F&B',
+    email: 'wulan@contoh.test', phone: '081299990000', bookingType: 'booking'
+  });
+  assert.equal(r.status, 200, r.text);
+  const staff = (await s.api('GET', '/floorplan/FP-TEST-BIODATA', undefined, { as: 'sales' })).body.floorplan.booths.find(b => b.code === 'B-03');
+  assert.equal(staff.pic_name, 'Wulan Jaya');
+  assert.equal(staff.email, 'wulan@contoh.test');
+  assert.equal(staff.phone, '081299990000');
+  assert.equal(staff.brand_category, 'Kuliner & F&B');
+  assert.equal(staff.registration_source, 'online');
+  const pub = (await s.api('GET', '/floorplan/FP-TEST-BIODATA?view=public')).body.floorplan.booths.find(b => b.code === 'B-03');
+  for (const k of ['pic_name', 'email', 'phone', 'discount_amount', 'registered_by']) assert.equal(pub[k], undefined, `${k} tidak boleh publik`);
+});

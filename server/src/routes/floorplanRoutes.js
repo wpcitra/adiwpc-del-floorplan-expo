@@ -9,6 +9,45 @@ import { publicFloorplanPayload } from '../utils/publicData.js';
 
 const router = express.Router();
 
+// Booth row for staff (Studio, Dashboard): includes the tenant biodata filled at registration (PIC, email, phone,
+// brand category, source) and the private discount, so hydrateBoothObject shows the tenant as complete.
+// The public view only receives PUBLIC_BOOTH_ROW_FIELDS (utils/publicData.js, AGENTS.md §20).
+function boothRowDto(b) {
+  return {
+    id: b.id,
+    booth_number: b.code,
+    code: b.code,
+    category: b.category,
+    shape: b.shape || 'rectangle',
+    price: b.price,
+    status: b.status,
+    owner_name: b.owner_name,
+    ownerName: b.owner_name,
+    brand_category: b.brand_category || '',
+    pic_name: b.pic_name || '',
+    email: b.email || '',
+    phone: b.phone || '',
+    registration_source: b.registration_source || '',
+    registered_by: b.registered_by || '',
+    discount_type: b.discount_type || 'nominal',
+    discount_value: b.discount_value ?? 0,
+    discount_amount: b.discount_amount ?? 0,
+    discount_reason: b.discount_reason || '',
+    // Auto-merge (AGENTS.md §18): exhibitor identity (opaque ID, not the email) and the display switch
+    exhibitor_id: b.exhibitor_id || '',
+    merge_separate: b.merge_separate ? 1 : 0,
+    dimensions_meters: {
+      width: b.width_m,
+      height: b.height_m
+    },
+    widthM: b.width_m,
+    heightM: b.height_m,
+    facilities: b.facilities_json ? JSON.parse(b.facilities_json) : [],
+    coordinates: b.coordinates_json ? JSON.parse(b.coordinates_json) : {}
+  };
+}
+
+
 // Safety lock: extract booths from fabric JSON objects if booths array is omitted or empty
 function extractBoothsFromFabricJson(objects) {
   if (!Array.isArray(objects)) return [];
@@ -328,28 +367,7 @@ router.get('/active', (req, res) => {
     // Get all booths belonging to this floorplan
     const booths = db.prepare(`
       SELECT * FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL
-    `).all(floorplan.id).map(b => ({
-      id: b.id,
-      booth_number: b.code,
-      code: b.code,
-      category: b.category,
-      shape: b.shape || 'rectangle',
-      price: b.price,
-      status: b.status,
-      owner_name: b.owner_name,
-      ownerName: b.owner_name,
-      // Auto-merge (AGENTS.md §18): exhibitor identity (opaque ID, not the email) and the display switch
-      exhibitor_id: b.exhibitor_id || '',
-      merge_separate: b.merge_separate ? 1 : 0,
-      dimensions_meters: {
-        width: b.width_m,
-        height: b.height_m
-      },
-      widthM: b.width_m,
-      heightM: b.height_m,
-      facilities: b.facilities_json ? JSON.parse(b.facilities_json) : [],
-      coordinates: b.coordinates_json ? JSON.parse(b.coordinates_json) : {}
-    }));
+    `).all(floorplan.id).map(boothRowDto);
 
     // Get venue items
     const venueItems = db.prepare(`
@@ -856,28 +874,7 @@ router.get('/:id', (req, res) => {
 
     const booths = db.prepare(`
       SELECT * FROM booths WHERE floorplan_id = ?
-    `).all(floorplan.id).map(b => ({
-      id: b.id,
-      booth_number: b.code,
-      code: b.code,
-      category: b.category,
-      shape: b.shape || 'rectangle',
-      price: b.price,
-      status: b.status,
-      owner_name: b.owner_name,
-      ownerName: b.owner_name,
-      // Auto-merge (AGENTS.md §18): exhibitor identity (opaque ID, not the email) and the display switch
-      exhibitor_id: b.exhibitor_id || '',
-      merge_separate: b.merge_separate ? 1 : 0,
-      dimensions_meters: {
-        width: b.width_m,
-        height: b.height_m
-      },
-      widthM: b.width_m,
-      heightM: b.height_m,
-      facilities: b.facilities_json ? JSON.parse(b.facilities_json) : [],
-      coordinates: b.coordinates_json ? JSON.parse(b.coordinates_json) : {}
-    }));
+    `).all(floorplan.id).map(boothRowDto);
 
     const venueItems = db.prepare(`
       SELECT * FROM venue_items WHERE floorplan_id = ?

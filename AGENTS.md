@@ -255,6 +255,7 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - Metadata keeps only event, floorplan, and display (the exported booth list carries discounts).
   - `exhibitor_id` / `boothData.exhibitorId` are replaced by an opaque per-floorplan alias (`PX-…`). Auto-merge only needs equality. The alias salt is `PUBLIC_ALIAS_SALT` (random per process if unset).
   - When adding a field to boothData or booth rows, decide explicitly whether it belongs in `PUBLIC_BOOTH_FIELDS`. Never show PIC, contact, or discount data publicly.
+  - Staff booth rows (`boothRowDto` in `floorplanRoutes.js`) carry the tenant biodata saved at registration (`pic_name`, `email`, `phone`, `brand_category`, `registration_source`, `registered_by`) and the private discount, so the Studio's Property Inspector shows a registered tenant as complete instead of "Lengkapi Biodata". The public view strips them (`PUBLIC_BOOTH_ROW_FIELDS`).
 - **`GET /orders/check-client`**: visitors receive only `{ exists }`. Contact details are returned to logged-in staff only.
 - **`GET /invoices/config`**: visitors never receive the signature image.
 - **CORS**: only localhost / 127.0.0.1 (any port) plus the origins listed in `ALLOWED_ORIGINS`.
