@@ -1,0 +1,15 @@
+# Konfigurasi deploy untuk Railway
+# https://docs.railway.app/reference/config-as-code
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm run build"
+
+[deploy]
+startCommand = "npm start"
+# Cek kesehatan aplikasi setelah start (post-deploy). Path ini balik 200 dari server (index.js).
+healthcheckPath = "/api/health"
+# Beri waktu 5 menit untuk seed awal + backup pertama pada database kosong
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
