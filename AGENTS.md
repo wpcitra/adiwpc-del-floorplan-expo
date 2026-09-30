@@ -368,3 +368,23 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Guides.** Pink = touching / shared point; indigo dashed = aligned; green dashed = centre to centre; orange with the gap in metres = equal spacing. The blue distance label is hidden when a centre / equal guide is shown. Booth overlap marks are off in Denah Operasional (`markBoothOverlaps={false}`).
 - **Toolbar ("Grid & Skala").** Toggles: Snap to Grid, Snap ke Booth, Snap ke Elemen (all default on); Snap ke Dinding & Pilar (booth mode, sales only). Denah Operasional shows its own "Snap ke Booth" hint. `CanvasShortcutsGuide` is the "Panduan & Pintasan Kanvas" list in both studios.
 
+
+---
+
+## 26. Copy Lock: Duplikasi, Ctrl/Cmd + Drag, Ctrl/Cmd + C / V (`utils/copyRules.js`, `CanvasEditor.jsx` `addCopies`)
+- **A copy is the original, not a template.**
+  - Every copy path serializes the original with `canvas._toObject(obj, 'toObject', COPY_PROPS)` (absolute coordinates, also inside a multi-selection) and deep-copies it (`prepareCopy`).
+  - It then revives it with `fabric.util.enlivenObjects` + `hydrateBoothObject` (same as loading a floorplan).
+  - Never recreate a copy with `createVenueObject` / `createLibraryElement` / `createBoothObject`. That once turned every library element into a 12 × 6 m dark "Stage" and dropped colours, text styles, flip, and skew.
+- **Only identity and position change.**
+  - New `venueData.id` / `boothData.id` / `id`. Offset: +1 m (Duplikasi), 0 (the copy left behind by Ctrl/Cmd + drag), the pointer (Ctrl/Cmd + V on the canvas), or +1 m per paste.
+  - Links (`anchor`, `anchorOrphaned`, `connections`) are dropped.
+  - A booth copy keeps size, category, price, shape, corners, facilities, and rotation. It gets the next free code with the same prefix (`nextBoothCode`), status Available, and no tenant / contract / discount fields (`BOOTH_TENANT_FIELDS`).
+  - "Jadikan Default" and templates never apply to copies. The booth hover glow is replaced by the resting shadow.
+- **Layers.** The clipboard (`localStorage` `floorplan_canvas_clipboard`) works across floorplans and between Denah Sales and Denah Operasional.
+  - `layerMode="ops"`: copies become operational items. Items coming from the sales layer are internal (`publicVisible: false`). Booths are not pasted (a warning is shown).
+  - In Sales, `isOpsItem` is removed.
+- **Multi-selection copies** keep their relative positions and become the new selection. The copy is placed right above its original (Duplikasi) or right below it (Ctrl/Cmd + drag).
+- **Moving never changes an object.** `normalizeScaledObject` only runs on a real resize (scale ≠ 1): a plain move no longer rounds booth sizes to 0,1 m, recomputes venue label fonts, or grows venue shapes by their stroke.
+- **Rebuilt elements are selected after the transform** (`selectAfterTransform` in `object:modified`). Selecting them immediately re-ended the transform: resizing a library element or door by its handles produced thousands of copies and a stack overflow.
+- Tests: `server/test/copy.test.js`. Browser check: every element type × Duplikasi / copy-paste / Ctrl-drag / move gives an identical serialization except id & position.

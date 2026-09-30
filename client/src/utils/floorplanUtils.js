@@ -1202,6 +1202,8 @@ export function normalizeScaledObject(obj, gridScale = DEFAULT_GRID_SCALE) {
   if (!obj) return;
   // Doors and library elements are redrawn at their new size by the editor, never stretched here
   if (obj.venueData?.type === 'door' || isLibraryElement(obj)) return;
+  // Only a real resize is normalized: a plain move must never change size, label font or drawing
+  if (Math.abs((obj.scaleX || 1) - 1) < 0.001 && Math.abs((obj.scaleY || 1) - 1) < 0.001) return;
 
   const newWidth = Math.round(obj.width * (obj.scaleX || 1));
   const newHeight = Math.round(obj.height * (obj.scaleY || 1));

@@ -492,6 +492,16 @@ export default function PropertyPanel({
           </div>
 
           <div className="pt-4 border-t border-slate-200 space-y-2">
+            {onDuplicateSelected && (
+              <button
+                type="button"
+                onClick={onDuplicateSelected}
+                title="Duplikasi (salinan persis, 1 m ke kanan bawah)"
+                className="w-full py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <Copy size={13} /> Duplikasi Fasilitas
+              </button>
+            )}
             <button
               type="button"
               onClick={onDeleteSelected}

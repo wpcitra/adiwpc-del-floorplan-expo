@@ -27,7 +27,7 @@ import { refreshMergeRendering } from '../../utils/boothMerge';
 
 
 // Custom Fabric properties persisted with the canvas (see AGENTS.md §1)
-const CANVAS_SERIALIZE_PROPS = ['isBooth', 'boothData', 'isVenueItem', 'venueData', 'isCustomGroup', 'isBackgroundBlueprint', 'blueprintData', 'strokeUniform', 'noScaleCache', 'id', 'name', 'src', 'isLocked'];
+const CANVAS_SERIALIZE_PROPS = ['isBooth', 'boothData', 'isVenueItem', 'venueData', 'isCustomGroup', 'isBackgroundBlueprint', 'blueprintData', 'strokeUniform', 'noScaleCache', 'id', 'name', 'src', 'isLocked', 'isBasicShape', 'shapeType'];
 const AUTOSAVE_DELAY_MS = 2500;
 const AUTOSAVE_PREF_KEY = 'studio_autosave_enabled';
 
@@ -1309,11 +1309,7 @@ export default function AdminDashboard() {
                 setSelectedObjects([]);
               }
             }}
-            onDuplicateSelected={() => {
-              if (selectedObject) {
-                editorRef.current?.duplicateObject(selectedObject);
-              }
-            }}
+            onDuplicateSelected={() => editorRef.current?.duplicateSelected()}
             onGroupSelected={() => editorRef.current?.groupSelected()}
             onUngroupSelected={() => editorRef.current?.ungroupSelected()}
             onMergeBooths={() => {

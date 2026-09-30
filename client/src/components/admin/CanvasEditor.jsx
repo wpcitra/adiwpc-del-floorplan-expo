@@ -24,6 +24,12 @@ import {
   elementSnapTargets, movingGeometry, snapLineEnds, snapPoint
 } from '../../utils/boothSnap';
 import CanvasRuler from './CanvasRuler';
+import { COPY_PROPS, prepareCopy } from '../../utils/copyRules';
+
+const CLIPBOARD_KEY = 'floorplan_canvas_clipboard';
+// Booth hover glow (editor-only state) and the shadow a booth has at rest
+const BOOTH_HOVER_SHADOW = { color: 'rgba(59, 130, 246, 0.45)', blur: 16, offsetX: 0, offsetY: 3 };
+const BOOTH_REST_SHADOW = { color: 'rgba(0,0,0,0.06)', blur: 6, offsetX: 0, offsetY: 2 };
 
 const CanvasEditor = forwardRef(function CanvasEditor({
   onSelectionChange,
@@ -55,7 +61,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   // Snap ke Elemen: elements stick to / line up with other elements of every layer (AGENTS.md §25)
   snapToElements = false,
   // Red marks on overlapping booths while snapping (off in Denah Operasional, where booths are locked)
-  markBoothOverlaps = true
+  markBoothOverlaps = true,
+  // 'sales' (Floorplan Studio) or 'ops' (Denah Operasional: copies join the operational layer, no booth copies)
+  layerMode = 'sales'
 }, ref) {
   const containerRef = useRef(null);
   const canvasElRef = useRef(null);
@@ -96,6 +104,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   snapToElementsRef.current = snapToElements;
   const markBoothOverlapsRef = useRef(markBoothOverlaps);
   markBoothOverlapsRef.current = markBoothOverlaps;
+  const layerModeRef = useRef(layerMode);
+  layerModeRef.current = layerMode;
+  // Last pointer position on the canvas (scene coords): Ctrl/Cmd + V pastes there
+  const lastPointerRef = useRef(null);
+  const addCopiesRef = useRef(null);
   // Anchors of the element being dragged (computed once per drag, cleared on release)
   const elementSnapCacheRef = useRef(null);
   const elementSnapOn = () => snapToBoothsRef.current || snapToElementsRef.current;
@@ -273,7 +286,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       'isLocked',
       'isOpsItem',
       'isSalesLayer',
-      'opsOrigOpacity'
+      'opsOrigOpacity',
+      'isBasicShape',
+      'shapeType'
     ]);
 
     const newStack = historyStackRef.current.slice(0, historyIndexRef.current + 1);
@@ -704,73 +719,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       }
     },
 
-    // Duplicate selected
+    // Duplicate selected (one or several objects): exact copies 1 m to the right and down, relative positions kept
     duplicateSelected: () => {
       const canvas = fabricRef.current;
       if (!canvas) return;
-      const active = canvas.getActiveObject();
-      if (!active) return;
-
-      if (active.isBooth) {
-        const data = active.boothData;
-        const existingCount = canvas.getObjects().filter(o => o.isBooth).length + 1;
-        const clone = createBoothObject({
-          ...data,
-          code: `A-${String(existingCount).padStart(2, '0')}`,
-          left: active.left + 40,
-          top: active.top + 40,
-          gridScale
-        });
-        canvas.add(clone);
-        canvas.bringObjectToFront(clone);
-        canvas.setActiveObject(clone);
-      } else if (isLibraryElement(active)) {
-        const c = elementCenter(active);
-        const off = active.pathOffset;
-        const clone = createLibraryElement(active.venueData.type, {
-          ...active.venueData,
-          label: active.text !== undefined ? active.text : active.venueData.label,
-          textStyles: isShapeElement(active) ? active.styles : undefined,
-          points: active.points ? active.points.map(p => ({ x: p.x - off.x, y: p.y - off.y })) : undefined,
-          id: null,
-          cx: c.x + gridScaleRef.current * 2,
-          cy: c.y + gridScaleRef.current * 2,
-          angle: active.angle || 0,
-          gridScale: gridScaleRef.current
-        });
-        canvas.add(clone);
-        placeOnLayer(canvas, clone);
-        canvas.setActiveObject(clone);
-      } else if (active.venueData?.type === 'door') {
-        const center = active.getCenterPoint();
-        const clone = createDoorObject({
-          ...active.venueData,
-          id: null,
-          cx: center.x + gridScaleRef.current * 2,
-          cy: center.y + gridScaleRef.current * 2,
-          angle: active.angle || 0,
-          gridScale: gridScaleRef.current
-        });
-        canvas.add(clone);
-        canvas.bringObjectToFront(clone);
-        canvas.setActiveObject(clone);
-      } else if (active.isVenueItem) {
-        const clone = createVenueObject({
-          type: active.venueData?.type,
-          left: active.left + 40,
-          top: active.top + 40,
-          gridScale,
-          customLabel: active.venueData?.label
-        });
-        clone.venueData.caption = active.venueData?.caption || '';
-        clone.venueData.showCaption = active.venueData?.showCaption !== false;
-        canvas.add(clone);
-        canvas.bringObjectToFront(clone);
-        canvas.setActiveObject(clone);
-      }
-      canvas.requestRenderAll();
-      notifyObjectsUpdate();
-      pushHistory();
+      const members = canvas.getActiveObjects().filter(o => !o.isBackgroundBlueprint);
+      if (!members.length) return;
+      const step = gridScaleRef.current;
+      addCopies(members.map(o => serializeForCopy(canvas, o)), { dx: step, dy: step, anchors: members, placement: 'above' });
     },
 
     // Group / Ungroup
@@ -1183,6 +1139,49 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     onObjectsUpdate?.(userObjects);
   }, [onObjectsUpdate]);
 
+  // Copies (Duplikasi, Ctrl/Cmd + drag, Ctrl/Cmd + V): the originals' full serialized form, deep-copied, with a new
+  // identity and an offset (copyRules.js). `raws` are absolute-coordinate objects (canvas._toObject), `anchors`
+  // the originals: each copy goes right above its original ('above') or right below it ('below').
+  const addCopies = async (raws, { dx = 0, dy = 0, anchors = [], placement = 'above', select = true } = {}) => {
+    const canvas = fabricRef.current;
+    if (!canvas || !raws.length) return [];
+    const ctx = {
+      usedCodes: new Set(canvas.getObjects().filter(o => o.isBooth).map(o => o.boothData?.code).filter(Boolean)),
+      allowBooths: layerModeRef.current !== 'ops',
+      opsLayer: layerModeRef.current === 'ops'
+    };
+    const pairs = raws.map((raw, i) => ({ data: prepareCopy(raw, { ...ctx, dx, dy }), anchor: anchors[i] })).filter(p => p.data);
+    if (!pairs.length) return [];
+    const objs = await fabric.util.enlivenObjects(pairs.map(p => p.data));
+    objs.forEach((obj, i) => {
+      hydrateBoothObject(obj, pairs[i].data, []);
+      const anchorIndex = pairs[i].anchor ? canvas.getObjects().indexOf(pairs[i].anchor) : -1;
+      if (anchorIndex >= 0) canvas.insertAt(placement === 'below' ? anchorIndex : anchorIndex + 1, obj);
+      else canvas.add(obj);
+      // new code, empty tenant: redraw the booth's labels (size, category, corners are kept)
+      if (obj.isBooth) updateBoothAppearance(obj, {});
+      obj.setCoords();
+    });
+    if (select) {
+      canvas.discardActiveObject();
+      canvas.setActiveObject(objs.length > 1 ? new fabric.ActiveSelection(objs, { canvas }) : objs[0]);
+    }
+    canvas.requestRenderAll();
+    refreshPillarConflicts();
+    notifyObjectsUpdate();
+    handleSelectionRef.current?.();
+    pushHistory();
+    return objs;
+  };
+  addCopiesRef.current = addCopies;
+  // Absolute serialized form of an object, also when it is part of a multi-selection. A booth under the pointer
+  // carries the hover glow: its copy gets the resting shadow.
+  const serializeForCopy = (canvas, obj) => {
+    const raw = canvas._toObject(obj, 'toObject', COPY_PROPS);
+    if (raw.isBooth && raw.shadow?.color === BOOTH_HOVER_SHADOW.color) raw.shadow = { ...raw.shadow, ...BOOTH_REST_SHADOW };
+    return raw;
+  };
+
   // Handle Resize
   useEffect(() => {
     const handleResize = () => {
@@ -1247,14 +1246,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         if (isPreviewModeRef.current) {
           setHoveredBooth(target.boothData);
         }
-        target.set({
-          shadow: new fabric.Shadow({
-            color: 'rgba(59, 130, 246, 0.45)',
-            blur: 16,
-            offsetX: 0,
-            offsetY: 3
-          })
-        });
+        target.set({ shadow: new fabric.Shadow(BOOTH_HOVER_SHADOW) });
         canvas.requestRenderAll();
       }
     });
@@ -1263,14 +1255,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       const target = opt.target;
       if (target && (target.isBooth || target.boothData)) {
         setHoveredBooth(null);
-        target.set({
-          shadow: new fabric.Shadow({
-            color: 'rgba(0,0,0,0.06)',
-            blur: 6,
-            offsetX: 0,
-            offsetY: 2
-          })
-        });
+        target.set({ shadow: new fabric.Shadow(BOOTH_REST_SHADOW) });
         canvas.requestRenderAll();
       }
     });
@@ -1355,6 +1340,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     });
 
     canvas.on('mouse:move', (opt) => {
+      if (opt.scenePoint) lastPointerRef.current = { x: opt.scenePoint.x, y: opt.scenePoint.y, at: Date.now() };
       const e = opt.e;
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
@@ -1385,6 +1371,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         setViewportTransform([...vpt]);
       }
     });
+
+    // pointer left the canvas (not just an object): paste falls back to "1 m further"
+    canvas.on('mouse:out', (opt) => { if (!opt?.target) lastPointerRef.current = null; });
 
     canvas.on('mouse:up', () => {
       setShapeResizeBadge(null);
@@ -1431,59 +1420,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       // 1. Shortcut: Ctrl / Cmd + Drag clones object (Alt / Option is "move without snapping")
       if (evt && (evt.ctrlKey || evt.metaKey) && !target._hasClonedInDrag && !target.isBackgroundBlueprint) {
         target._hasClonedInDrag = true;
+        // The dragged objects are the originals; exact copies stay behind at the start position, right below them
         const dx = (target._dragStartX ?? target.left) - target.left;
         const dy = (target._dragStartY ?? target.top) - target.top;
-
-        const objectsToProcess = target.type?.toLowerCase() === 'activeselection' ? target.getObjects() : [target];
-        const matrix = target.calcTransformMatrix();
-
-        objectsToProcess.forEach(item => {
-          let origXItem, origYItem;
-          if (target.type?.toLowerCase() === 'activeselection') {
-            const p = new fabric.Point(item.left, item.top);
-            const absP = fabric.util.transformPoint(p, matrix);
-            origXItem = absP.x + dx;
-            origYItem = absP.y + dy;
-          } else {
-            origXItem = target._dragStartX ?? target.left;
-            origYItem = target._dragStartY ?? target.top;
-          }
-
-          if (item.isBooth && item.boothData) {
-            const existingCount = canvas.getObjects().filter(o => o.isBooth).length + 1;
-            const newBooth = createBoothObject({
-              ...item.boothData,
-              code: `A-${String(existingCount).padStart(2, '0')}`,
-              left: origXItem,
-              top: origYItem,
-              gridScale: gridScaleRef.current
-            });
-            canvas.add(newBooth);
-            canvas.sendObjectBackwards(newBooth);
-          } else if (item.isVenueItem && item.venueData) {
-            const newVenue = createVenueObject({
-              ...item.venueData,
-              left: origXItem,
-              top: origYItem,
-              gridScale: gridScaleRef.current,
-              customLabel: item.venueData?.label
-            });
-            newVenue.venueData.caption = item.venueData?.caption || '';
-            newVenue.venueData.showCaption = item.venueData?.showCaption !== false;
-            canvas.add(newVenue);
-            canvas.sendObjectBackwards(newVenue);
-          } else {
-            item.clone(['isCustomGroup']).then((cloned) => {
-              cloned.set({ left: origXItem, top: origYItem });
-              canvas.add(cloned);
-              canvas.sendObjectBackwards(cloned);
-              canvas.requestRenderAll();
-            });
-          }
-        });
-        
-        canvas.requestRenderAll();
-        notifyObjectsUpdate();
+        const members = target.type?.toLowerCase() === 'activeselection' ? target.getObjects() : [target];
+        addCopiesRef.current?.(members.map(o => serializeForCopy(canvas, o)), { dx, dy, anchors: members, placement: 'below', select: false });
       }
 
       // Alt / Option held: move freely (no grid, no booth snapping)
@@ -1663,6 +1604,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     // Object Modified: Normalize scale factors & keep text neatly inside boundaries!
     canvas.on('object:modified', (opt) => {
       const target = opt.target;
+      // A rebuilt element replaces the one Fabric is still finishing a transform on: selecting it right away
+      // would end that transform again (object:modified -> rebuild -> ... thousands of copies, stack overflow)
+      const selectAfterTransform = (obj) => setTimeout(() => {
+        if (!obj.canvas) return;
+        canvas.setActiveObject(obj);
+        canvas.requestRenderAll();
+        handleSelection();
+      }, 0);
       if (isShapeElement(target)) {
         // Text Box & Bentuk resize without scaling: store the new size in metres (and the text) on the element
         syncShapeElement(target);
@@ -1686,12 +1635,12 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             heightM: def.kind === 'measure' ? current.venueData.heightM : Math.round(current.venueData.heightM * sy * 100) / 100
           });
         }
-        if (current !== target) canvas.setActiveObject(current);
+        if (current !== target) selectAfterTransform(current);
       } else if (target?.venueData?.type === 'door') {
         // Stretching a door with its side handles changes its width; redraw it crisply at scale 1
         if (Math.abs((target.scaleX || 1) - 1) > 0.001 || Math.abs((target.scaleY || 1) - 1) > 0.001) {
           const widthM = (target.venueData.widthM || 0.9) * Math.abs(target.scaleX || 1);
-          canvas.setActiveObject(rebuildDoorObject(canvas, target, { widthM }));
+          selectAfterTransform(rebuildDoorObject(canvas, target, { widthM }));
         }
       } else if (target && !target.isBackgroundBlueprint) {
         normalizeScaledObject(target, gridScale);
@@ -1956,6 +1905,48 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             active.setCoords();
             canvas.fire('object:modified', { target: active, action: 'drag' });
             canvas.requestRenderAll();
+          }
+        }
+      }
+      // Ctrl / Cmd + C / V: copy the selection, paste exact copies (also into another floorplan or Denah Operasional).
+      // Pasted at the pointer when it is on the canvas, otherwise 1 m further for every paste.
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable || canvas.getActiveObject()?.isEditing;
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !typing && !isPreviewModeRef.current && ['c', 'v'].includes(e.key.toLowerCase())) {
+        if (e.key.toLowerCase() === 'c') {
+          const members = canvas.getActiveObjects().filter(o => !o.isBackgroundBlueprint && !o.isSalesLayer);
+          if (members.length) {
+            e.preventDefault();
+            try {
+              localStorage.setItem(CLIPBOARD_KEY, JSON.stringify({ v: 1, objects: members.map(o => serializeForCopy(canvas, o)), pastes: 0 }));
+            } catch (err) {
+              onWarningRef.current?.('⚠️ Salinan terlalu besar untuk disimpan di clipboard browser.');
+            }
+          }
+        } else {
+          let clip = null;
+          try { clip = JSON.parse(localStorage.getItem(CLIPBOARD_KEY) || 'null'); } catch (err) { clip = null; }
+          if (clip?.objects?.length) {
+            e.preventDefault();
+            const xs = clip.objects.map(o => Number(o.left) || 0);
+            const ys = clip.objects.map(o => Number(o.top) || 0);
+            const pointer = lastPointerRef.current;
+            let dx;
+            let dy;
+            if (pointer) {
+              // centre of the copied objects' anchor points onto the pointer
+              dx = pointer.x - (Math.min(...xs) + Math.max(...xs)) / 2;
+              dy = pointer.y - (Math.min(...ys) + Math.max(...ys)) / 2;
+            } else {
+              clip.pastes = (clip.pastes || 0) + 1;
+              dx = dy = clip.pastes * gridScaleRef.current;
+              try { localStorage.setItem(CLIPBOARD_KEY, JSON.stringify(clip)); } catch (err) { /* keep pasting at the same offset */ }
+            }
+            const before = clip.objects.length;
+            addCopiesRef.current?.(clip.objects, { dx, dy }).then(objs => {
+              if (objs.length < before && layerModeRef.current === 'ops') {
+                onWarningRef.current?.('Booth tidak ikut ditempel: booth hanya bisa dibuat di Denah Sales.');
+              }
+            });
           }
         }
       }

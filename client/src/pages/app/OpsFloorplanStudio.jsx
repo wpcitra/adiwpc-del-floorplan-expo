@@ -693,6 +693,7 @@ export default function OpsFloorplanStudio() {
             snapToBooths={snapToBooths}
             snapToElements={snapToElements}
             markBoothOverlaps={false}
+            layerMode="ops"
             showGrid={showGrid}
             showRuler={showRuler}
             showDimensions={showDimensions}
