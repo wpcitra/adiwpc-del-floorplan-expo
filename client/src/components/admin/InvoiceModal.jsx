@@ -79,6 +79,14 @@ export default function InvoiceModal({
   // Tax / PPN State
   const [applyTax, setApplyTax] = useState(false);
   const [taxRate, setTaxRate] = useState(11);
+  // PPN rate from Setting (used when an invoice without PPN is switched to "Dengan PPN")
+  const [taxRateSetting, setTaxRateSetting] = useState(11);
+  useEffect(() => {
+    api.fetchInvoiceConfig().then(cfg => {
+      const rate = Number(cfg?.taxRate);
+      if (Number.isFinite(rate) && rate >= 0) setTaxRateSetting(rate);
+    });
+  }, []);
 
   // Down Payment / Uang Muka States
   const [paymentType, setPaymentType] = useState('full'); // 'full' | 'dp'
@@ -998,6 +1006,24 @@ export default function InvoiceModal({
                   />
                 </div>
               </div>
+            </div>
+
+            {/* Pajak: with or without PPN */}
+            <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-xs flex flex-wrap items-center gap-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700">Pajak (PPN)</span>
+              <div className="flex bg-slate-100 border border-slate-200 rounded-lg p-0.5">
+                {[[true, `Dengan PPN ${applyTax ? taxRate : taxRateSetting}%`], [false, 'Tanpa PPN']].map(([val, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => { setApplyTax(val); if (val && !applyTax) setTaxRate(taxRateSetting); }}
+                    className={`px-3 py-1.5 rounded-md text-xs font-bold cursor-pointer ${applyTax === val ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-white'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[11px] text-slate-500">PPN dihitung dari nilai setelah diskon. Tarif default diatur di Setting &gt; Aturan Booking, PPN &amp; Pajak.</span>
             </div>
 
             {/* Section 4: Summary, Down Payment (DP) & Sync Options */}

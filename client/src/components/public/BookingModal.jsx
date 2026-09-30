@@ -65,6 +65,16 @@ export default function BookingModal({
 }) {
   // Steps: 'form' | 'payment' | 'success'
   const [step, setStep] = useState('form');
+  // PPN from Setting (rate, and whether online registrations are taxed). Admins choose per registration.
+  const [taxCfg, setTaxCfg] = useState({ rate: 11, publicTax: true });
+  const [adminApplyTax, setAdminApplyTax] = useState(null); // null = follow the setting
+  useEffect(() => {
+    api.fetchInvoiceConfig().then(cfg => {
+      if (!cfg) return;
+      const rate = Number(cfg.taxRate);
+      setTaxCfg({ rate: Number.isFinite(rate) && rate >= 0 ? rate : 11, publicTax: cfg.publicBookingTax !== false });
+    });
+  }, []);
   const [showA4Invoice, setShowA4Invoice] = useState(false);
 
   const boothList = Array.isArray(booths) && booths.length > 0 
@@ -206,7 +216,9 @@ export default function BookingModal({
   const height = firstBooth?.heightM || firstBooth?.dimensions_meters?.height || 3;
   const area = totalArea;
   const price = boothList.reduce((acc, b) => acc + (b.price || 5000000), 0);
-  const ppn = Math.round(price * 0.11);
+  // Estimate shown in the form; the server computes the invoice itself (price - private discount + PPN)
+  const applyTax = isAdmin ? (adminApplyTax ?? taxCfg.publicTax) : taxCfg.publicTax;
+  const ppn = applyTax ? Math.round((price * taxCfg.rate) / 100) : 0;
   const grandTotal = price + ppn;
   const invoiceNumber = `INV/EXP-${Date.now().toString().slice(-6)}`;
   const vaNumber = `8809${Math.floor(100000000000 + Math.random() * 900000000000)}`;
@@ -287,6 +299,8 @@ export default function BookingModal({
       phone: phone.trim(),
       price,
       grandTotal,
+      applyTax,
+      taxRate: taxCfg.rate,
       paymentType: 'full',
       dpPercent: 0,
       paidAmount: isSold ? grandTotal : 0,
@@ -368,6 +382,8 @@ export default function BookingModal({
         phone,
         price,
         grandTotal,
+        applyTax,
+        taxRate: taxCfg.rate,
         paymentType: isDp ? 'dp' : 'full',
         dpPercent: isDp ? 50 : 0,
         paidAmount: paidAmt,
@@ -921,9 +937,26 @@ export default function BookingModal({
                     <span>Total Sewa {isMultiBooth ? `${boothList.length} Booth` : `Booth ${boothCode}`} {brandName ? `(${brandName})` : ''}</span>
                     <span className="font-semibold text-slate-800 font-mono">Rp {price.toLocaleString('id-ID')}</span>
                   </div>
+                  {isAdmin && (
+                    <div className="flex items-center justify-between gap-2 py-1">
+                      <span className="text-slate-600">Pajak (PPN)</span>
+                      <div className="flex bg-white border border-slate-200 rounded-lg p-0.5">
+                        {[[true, `Dengan PPN ${taxCfg.rate}%`], [false, 'Tanpa PPN']].map(([val, label]) => (
+                          <button
+                            key={label}
+                            type="button"
+                            onClick={() => setAdminApplyTax(val)}
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer ${applyTax === val ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="flex justify-between text-slate-600">
-                    <span>PPN 11%</span>
-                    <span className="font-semibold text-slate-800 font-mono">Rp {ppn.toLocaleString('id-ID')}</span>
+                    <span>{applyTax ? `PPN ${taxCfg.rate}%` : 'PPN'}</span>
+                    <span className="font-semibold text-slate-800 font-mono">{applyTax ? `Rp ${ppn.toLocaleString('id-ID')}` : 'Tidak dikenakan'}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span>Biaya Administrasi</span>

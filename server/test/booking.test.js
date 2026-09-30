@@ -69,7 +69,8 @@ test('kode booth mirip tidak ikut terpengaruh (A-1 bukan A-10..)', async () => {
 
 test('kontrak DP + Pelunasan dengan diskon: nilai dihitung server, status mengikuti pembayaran', async () => {
   const code = 'B-01'; // price 20.000.000
-  const reg = await s.api('POST', '/orders/checkout', visitor([code], { email: 'dp@contoh.test', brandName: 'Tenant DP' }));
+  // registered by staff without PPN: this test is about the DP / Pelunasan / discount arithmetic
+  const reg = await s.api('POST', '/orders/checkout', visitor([code], { email: 'dp@contoh.test', brandName: 'Tenant DP', applyTax: false }), { as: 'superadmin' });
   assert.equal(reg.status, 200, reg.text);
 
   const disc = await s.api('POST', '/invoices/sync-booth-discount', {

@@ -86,6 +86,8 @@ export default function SettingsPage() {
   const [taxRate, setTaxRate] = useState(11);
   const [bookingExpiryMinutes, setBookingExpiryMinutes] = useState(15);
   const [isPublicBookingActive, setIsPublicBookingActive] = useState(true);
+  // Online registrations by visitors are charged PPN (staff choose per invoice)
+  const [publicBookingTax, setPublicBookingTax] = useState(true);
   const [isPaymentActive, setIsPaymentActive] = useState(true);
   const [currencySymbol, setCurrencySymbol] = useState('Rp');
 
@@ -138,6 +140,7 @@ Salam hangat,
           if (config.invoiceTerms) setInvoiceTerms(config.invoiceTerms);
 
           if (config.taxRate !== undefined) setTaxRate(config.taxRate);
+          if (config.publicBookingTax !== undefined) setPublicBookingTax(config.publicBookingTax !== false);
           if (config.bookingExpiryMinutes !== undefined) setBookingExpiryMinutes(config.bookingExpiryMinutes);
           if (config.isPublicBookingActive !== undefined) setIsPublicBookingActive(config.isPublicBookingActive);
           if (config.isPaymentActive !== undefined) setIsPaymentActive(config.isPaymentActive);
@@ -181,6 +184,7 @@ Salam hangat,
       invoiceTerms,
 
       taxRate,
+      publicBookingTax,
       bookingExpiryMinutes,
       isPublicBookingActive,
       isPaymentActive,
@@ -814,8 +818,12 @@ Salam hangat,
                   <span className="text-xs text-slate-600 font-semibold">% dari total sewa booth</span>
                 </div>
                 <p className="text-[11px] text-slate-500">
-                  PPN ini akan dihitung secara otomatis pada checkout formulir publik dan invoice.
+                  Tarif default untuk invoice. Saat membuat invoice, admin tetap bisa memilih <b>Dengan PPN</b> atau <b>Tanpa PPN</b>.
                 </p>
+                <label className="flex items-start gap-2 pt-1 text-xs text-slate-700 cursor-pointer">
+                  <input type="checkbox" checked={publicBookingTax} onChange={(e) => setPublicBookingTax(e.target.checked)} className="mt-0.5 accent-indigo-600" />
+                  <span><b>Kenakan PPN pada pemesanan online</b> (pengunjung di Live Denah). Jika tidak dicentang, pemesanan online ditagih tanpa PPN.</span>
+                </label>
               </div>
 
               {/* Expiry Timer Booking */}

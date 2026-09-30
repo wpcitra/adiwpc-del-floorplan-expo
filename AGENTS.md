@@ -134,6 +134,12 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Contract** = one booth in one floorplan. `invoices.invoice_kind`: `dp` (max one active), `settlement` (Pelunasan, max one active, `related_invoice_id` → its DP), `full` (single / legacy invoice, e.g. checkout drafts), `facility` (add-ons: never part of the contract, never change the booth).
 - **Contract value** (`contract_total`, snapshot on every contract invoice) = booth price − private discount (+ PPN `contract_tax_rate`). Legacy invoices: contract value = their total.
 - **Status per contract** (`summarizeContract`): paid ≥ contract → PAID / booth `sold`; paid > 0 → PARTIAL ("Uang Muka") / `reserved`; unpaid → UNPAID / `reserved`; all canceled → `available`. Always use `getContract()` / `summarizeContract()`; never read the latest invoice.
+- **One registration = one invoice** (`POST /orders/checkout`): every booth ordered together goes on ONE invoice (`booth_code` "A-01+A-05+B-02", one item per booth with `boothCode`), adjacent or not. Checkout never splits an order per cluster and never appends it to an older invoice.
+- **PPN choice** (`utils/taxSettings.js`): the rate is `taxRate` of the invoice configuration (Setting > Aturan Booking, PPN & Pajak).
+  - Staff choose "Dengan PPN" / "Tanpa PPN" per invoice: checkout `applyTax` + `taxRate`, the DP / Pelunasan wizard for a contract without invoices, and the invoice edit form.
+  - Visitors cannot choose: `publicBookingTax` (default true) decides.
+  - Checkout computes the invoice itself: Σ price − private discounts, + PPN, stored in `tax_rate` / `tax_amount` / `contract_tax_rate`. The total sent by the form is ignored.
+  - Editing a `full` invoice's total / PPN also updates its `contract_total` / `contract_tax_rate` (a full invoice is the whole contract).
 - **Amounts are computed on the server** (`POST /api/invoices` with `invoiceKind: 'dp' | 'settlement'`). Pelunasan = contract − DP. `recalcContract()` rewrites only the unpaid balance invoice after a price/discount change or a DP cancel/delete; paid invoices are never rewritten. A DP turns an unpaid `full` invoice into the Pelunasan.
 - Paid contract invoices cannot be deleted (409); canceling a paid DP needs `confirmCancelPaidDp` and is written to the audit log. Deleted invoices are soft-deleted (`deleted_at`).
 - **Client summaries** (`client/src/utils/invoiceSummary.js`) count each contract once (total, discount, paid, remaining) via `inv.contract`; tabs filter by the contract status.
@@ -200,8 +206,7 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Display switches.** `booths.merge_separate` / `boothData.mergeSeparate` ("Tampilkan Terpisah", set via `POST /floorplan/:id/merge-display`). Project-wide switch: `metadata.display.autoMerge`.
 - **Checkout.**
   - One `POST /orders/checkout` with `boothCodes[]`. It is rejected with 409 plus `unavailable` when a booth was just booked.
-  - One contract (invoice `booth_code` "A-01+A-03+A-04", one item per booth with a `boothCode` field) per cluster of adjacent booths.
-  - A cluster touching an **unpaid** contract of the same exhibitor extends that contract. A paid or DP contract is never changed: the new booths get their own contract, plus a warning.
+  - One invoice for the whole registration, adjacent or not (§14). Adjacent booths are still SHOWN merged on the floorplan (the response's `contracts` lists those display groups).
 - **Unmerge.** Detach or Available on one booth of a multi-booth contract uses `removeBoothFromInvoice`: an unpaid invoice is recalculated; a paid or DP invoice keeps its amounts, drops only the code, and returns a warning. Groups re-split automatically.
 - **Contract value of "A-01+A-03" = sum of its booths** (`contractValueForCode`, used by `recalcContract`).
 - **Data Exhibitor.**

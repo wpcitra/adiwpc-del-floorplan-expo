@@ -75,6 +75,8 @@ const DEFAULT_SYSTEM_CONFIG = {
   invoiceTerms: '1. Uang muka (DP) minimal 50% dibayarkan saat pendaftaran.\n2. Pelunasan sisa 50% wajib diselesaikan maksimal 14 hari sebelum hari H pendaftaran.\n3. Pembatalan kepesertaan setelah invoice diterbitkan akan dikenakan biaya administrasi 25%.',
 
   taxRate: 11,
+  // Online registrations by visitors are charged PPN (staff choose "Dengan PPN" / "Tanpa PPN" per invoice)
+  publicBookingTax: true,
   bookingExpiryMinutes: 15,
   isPublicBookingActive: true,
   isPaymentActive: true,
@@ -895,6 +897,11 @@ router.put('/:id', (req, res) => {
       id
     );
 
+    // A single ("full") invoice IS the whole contract: its value follows the edited total and PPN (AGENTS.md §14)
+    if (kindOf(existing) === 'full' && totalAmount !== undefined) {
+      db.prepare('UPDATE invoices SET contract_total = ?, contract_tax_rate = ? WHERE id = ?')
+        .run(Number(totalAmount) || 0, Number(taxRate) || 0, existing.id);
+    }
     const updatedRecord = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id);
     syncPaymentStatusFromInvoices();
     let parsedItems = items;

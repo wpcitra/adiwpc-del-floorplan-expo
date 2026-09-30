@@ -326,6 +326,8 @@ export default function AdminDashboard() {
       email: bookingData.email,
       phone: bookingData.phone,
       totalAmount: bookingData.grandTotal || bookingData.price,
+      applyTax: bookingData.applyTax,
+      taxRate: bookingData.taxRate,
       paidAmount: bookingData.paidAmount,
       remainingAmount: bookingData.remainingAmount,
       paymentType: bookingData.paymentType || 'full',

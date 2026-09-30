@@ -40,6 +40,14 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
   const [contractLoading, setContractLoading] = useState(false);
   const [contractError, setContractError] = useState('');
   const [applyTax, setApplyTax] = useState(false);
+  // PPN rate from Setting > Aturan Booking, PPN & Pajak
+  const [taxRateSetting, setTaxRateSetting] = useState(11);
+  useEffect(() => {
+    api.fetchInvoiceConfig().then(cfg => {
+      const rate = Number(cfg?.taxRate);
+      if (Number.isFinite(rate) && rate >= 0) setTaxRateSetting(rate);
+    });
+  }, []);
   const [dpMode, setDpMode] = useState('percent');
   const [dpInput, setDpInput] = useState('30');
   const [dueDate, setDueDate] = useState(plusDays(7));
@@ -98,14 +106,14 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
     let cancelled = false;
     setContractLoading(true);
     setContractError('');
-    api.fetchContract({ floorplanId: projectId, boothCode, taxRate: applyTax ? 11 : 0 }).then(res => {
+    api.fetchContract({ floorplanId: projectId, boothCode, taxRate: applyTax ? taxRateSetting : 0 }).then(res => {
       if (cancelled) return;
       setContractLoading(false);
       if (res?.success) setContract(res.contract);
       else { setContract(null); setContractError(res?.error || 'Gagal memuat data kontrak booth'); }
     });
     return () => { cancelled = true; };
-  }, [projectId, boothCode, applyTax]);
+  }, [projectId, boothCode, applyTax, taxRateSetting]);
 
   useEffect(() => { setAckUnpaidDp(false); setError(''); }, [boothCode, kind]);
 
@@ -148,7 +156,7 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
       boothId: contract.booth.id,
       dpMode,
       dpValue: dpMode === 'percent' ? String(dpInput).replace(',', '.') : dpAmount,
-      taxRate: applyTax ? 11 : 0,
+      taxRate: applyTax ? taxRateSetting : 0,
       dueDate,
       notes,
       confirmUnpaidDp: ackUnpaidDp
@@ -253,11 +261,21 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
                   </div>
                 </div>
 
-                {!contract.hasInvoices && (
-                  <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                    <input type="checkbox" checked={applyTax} onChange={(e) => setApplyTax(e.target.checked)} className="accent-indigo-600" />
-                    Kenakan PPN 11% pada nilai kontrak
-                  </label>
+                {!contract.hasInvoices ? (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
+                    <span className="font-bold">Pajak (PPN):</span>
+                    <div className="flex bg-slate-100 border border-slate-200 rounded-lg p-0.5">
+                      {[[true, `Dengan PPN ${taxRateSetting}%`], [false, 'Tanpa PPN']].map(([val, label]) => (
+                        <button key={label} type="button" onClick={() => setApplyTax(val)}
+                          className={`px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer ${applyTax === val ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-white'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-[11px] text-slate-500">Berlaku untuk seluruh kontrak (DP & Pelunasan).</span>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-500">Pajak kontrak: {contract.taxRate ? `dengan PPN ${contract.taxRate}%` : 'tanpa PPN'} (ditetapkan saat invoice pertama kontrak ini dibuat).</div>
                 )}
 
                 {/* Contract summary */}

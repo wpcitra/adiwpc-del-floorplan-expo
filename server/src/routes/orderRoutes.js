@@ -1,11 +1,12 @@
 import express from 'express';
 import db from '../db.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
-import { getContractInvoices, getContract, boothContractValue, invoicePaidAmount, invoiceCodeTokens, removeBoothFromInvoice, kindOf, contractValueForCode } from '../utils/contractBilling.js';
+import { getContractInvoices, getContract, boothContractValue, invoicePaidAmount, invoiceCodeTokens, removeBoothFromInvoice, contractValueForCode } from '../utils/contractBilling.js';
 import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
 import { clusterCheckoutBooths, computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
 import { sortCodes } from '../../../shared/boothGroups.js';
 import { notifyOpsOfSalesChange } from '../utils/opsLayer.js';
+import { readTaxSettings, cleanTaxRate } from '../utils/taxSettings.js';
 
 const router = express.Router();
 
@@ -20,7 +21,6 @@ router.post('/checkout', (req, res) => {
       brandCategory = '',
       email,
       phone,
-      totalAmount,
       bookingType = 'booking',
       paymentMethod = 'qris',
       transferBank = '',
@@ -185,146 +185,106 @@ router.post('/checkout', (req, res) => {
       const todayStr = new Date().toISOString().split('T')[0];
       const dueDateStr = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0];
 
-      // Booth value = price - private discount. Without discounts the total sent by the form (incl. PPN) is
-      // shared over the booths by price, as for single-booth registrations before.
-      const priced = targetBooths.map(b => ({ b, price: Number(b.price) || 0, discount: Number(b.discount_amount) || 0 }));
-      const allPriceSum = priced.reduce((acc, p) => acc + p.price, 0);
-      const anyDiscount = priced.some(p => p.discount > 0);
-      const clientTotal = Number(totalAmount) || 0;
+      // 7. ONE invoice for the whole registration: every booth ordered together, adjacent or not (AGENTS.md §14).
+      //    Amounts are computed here, never taken from the form: booth price - private discount, + PPN when chosen.
+      //    Staff choose "Dengan PPN" / "Tanpa PPN" (applyTax, taxRate); visitors follow the setting.
+      const taxSettings = readTaxSettings();
+      const applyTax = req.user && req.body.applyTax !== undefined ? Boolean(req.body.applyTax) : taxSettings.publicBookingTax;
+      const taxRate = applyTax ? (req.user ? cleanTaxRate(req.body.taxRate, taxSettings.taxRate) : taxSettings.taxRate) : 0;
+      const codes = sortCodes(targetBooths.map(b => b.code));
+      const priced = codes.map(code => targetBooths.find(b => b.code === code)).map(b => {
+        const price = Number(b.price) || 0;
+        return { b, price, discount: Math.min(price, Number(b.discount_amount) || 0) };
+      });
+      const subtotal = priced.reduce((acc, p) => acc + p.price, 0);
+      const discount = priced.reduce((acc, p) => acc + p.discount, 0);
+      const afterDiscount = Math.max(0, subtotal - discount);
+      const taxAmount = Math.round((afterDiscount * taxRate) / 100);
+      const contractTotal = afterDiscount + taxAmount;
+      const codeLabel = codes.join('+');
+      const items = priced.map((p, i) => ({
+        id: `item-${i + 1}`,
+        boothCode: p.b.code,
+        description: `Sewa Booth #${p.b.code} (${p.b.width_m || 3}×${p.b.height_m || 3} m, ${p.b.category || 'Standar'})${p.discount > 0 ? ` - diskon Rp ${p.discount.toLocaleString('id-ID')}` : ''}`,
+        qty: 1,
+        unitPrice: p.price,
+        amount: p.price
+      }));
 
-      // 7. One contract per cluster of adjacent booths (auto-merge). A cluster that touches booths the exhibitor
-      //    already has on an UNPAID contract extends that contract; a paid / DP contract is never changed.
-      const clusters = clusterCheckoutBooths(floorplanId, targetBooths.map(b => b.code), exhibitorId);
+      const dpAmount = isDpInvoice
+        ? Math.min(contractTotal, Math.round(req.body.paidAmount !== undefined && resolvedPaymentStatus === 'PARTIAL'
+          ? Number(req.body.paidAmount) || 0
+          : (contractTotal * (resolvedDpPercent || 50)) / 100))
+        : 0;
+      const invoiceTotal = isDpInvoice ? dpAmount : contractTotal;
+      const invoicePaid = invoiceStatus === 'PAID' ? invoiceTotal : 0;
+      const invoiceItems = isDpInvoice
+        ? [{ id: 'item-1', description: `Uang Muka (DP ${resolvedDpPercent}%) Sewa Booth #${codeLabel} - ${resolvedPaymentMethod}`, qty: 1, unitPrice: dpAmount, amount: dpAmount }]
+        : items;
+      db.prepare(`
+        INSERT OR REPLACE INTO invoices (
+          id, invoice_number, floorplan_id, booth_id, booth_code,
+          client_name, company_name, client_email, client_phone,
+          issue_date, due_date, items_json, subtotal, discount_type, discount_value, discount_amount, discount_reason,
+          tax_rate, tax_amount, total_amount,
+          paid_amount, remaining_amount, payment_type, dp_percent,
+          payment_status, payment_method, notes,
+          invoice_kind, contract_total, contract_tax_rate
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `INV-REC-${stamp}`,
+        invoiceNumber,
+        floorplanId,
+        priced.length === 1 ? priced[0].b.id : null,
+        codeLabel,
+        fullName || brandName,
+        brandName,
+        email,
+        phone,
+        todayStr,
+        dueDateStr,
+        JSON.stringify(invoiceItems),
+        isDpInvoice ? dpAmount : subtotal,
+        priced.length === 1 ? (priced[0].b.discount_type || 'nominal') : 'nominal',
+        isDpInvoice ? 0 : (priced.length === 1 ? Number(priced[0].b.discount_value) || 0 : discount),
+        isDpInvoice ? 0 : discount,
+        isDpInvoice ? '' : priced.map(p => p.b.discount_reason).filter(Boolean).join('; '),
+        isDpInvoice ? 0 : taxRate,
+        isDpInvoice ? 0 : taxAmount,
+        invoiceTotal,
+        invoicePaid,
+        invoiceTotal - invoicePaid,
+        resolvedPaymentType,
+        resolvedDpPercent,
+        invoiceStatus,
+        resolvedPaymentMethod,
+        resolvedNotes,
+        isDpInvoice ? 'dp' : 'full',
+        contractTotal,
+        taxRate
+      );
+      const invoiceNumbers = [invoiceNumber];
       const warnings = [];
-      const invoiceNumbers = [];
+
+      // One order row per booth (dashboard & reports count booths, not groups): its share of the invoice
       const orderIds = [];
-      const clusterInfo = [];
       const insertOrder = db.prepare(`
         INSERT INTO orders (
           id, floorplan_id, booth_id, booth_code, company_name, pic_name, email, phone, total_amount, payment_method, payment_status,
           invoice_number, brand_category, source, admin_name, exhibitor_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
-
-      clusters.forEach((cluster, ci) => {
-        const members = priced.filter(p => cluster.targets.some(c => lower(c) === lower(p.b.code)));
-        if (!members.length) return;
-        const subtotal = members.reduce((acc, p) => acc + p.price, 0);
-        const discount = members.reduce((acc, p) => acc + p.discount, 0);
-        const share = allPriceSum > 0 ? subtotal / allPriceSum : members.length / priced.length;
-        const clusterFinal = anyDiscount || !clientTotal ? Math.max(0, subtotal - discount) : Math.round(clientTotal * share);
-        const items = members.map((p, i) => ({
-          id: `item-${i + 1}`,
-          boothCode: p.b.code,
-          description: `Sewa Booth #${p.b.code} (${p.b.width_m || 3}×${p.b.height_m || 3} m, ${p.b.category || 'Standar'})${p.discount > 0 ? ` - diskon Rp ${p.discount.toLocaleString('id-ID')}` : ''}`,
-          qty: 1,
-          unitPrice: p.price,
-          amount: p.price
-        }));
-
-        // Existing contracts of adjacent booths of this exhibitor
-        const existingInvoices = [];
-        cluster.existing.forEach(code => getContractInvoices(floorplanId, code, '')
-          .filter(inv => upper(inv.payment_status) !== 'CANCELED')
-          .forEach(inv => { if (!existingInvoices.some(x => x.id === inv.id)) existingInvoices.push(inv); }));
-        const existingSet = new Set(cluster.existing.map(lower));
-        const canExtend = cluster.existing.length > 0 && !isDpInvoice && ['UNPAID', 'PENDING'].includes(invoiceStatus) &&
-          existingInvoices.length > 0 &&
-          existingInvoices.every(inv => kindOf(inv) === 'full' && ['UNPAID', 'PENDING'].includes(upper(inv.payment_status)) &&
-            invoiceCodeTokens(inv.booth_code).every(t => existingSet.has(lower(t))));
-
-        let contractCodes = cluster.targets;
-        let invoiceNo;
-        if (canExtend) {
-          // Extend the unpaid contract: one invoice for the whole group (old items + new booths)
-          const [base, ...others] = existingInvoices;
-          let allItems = [];
-          existingInvoices.forEach(inv => { try { allItems.push(...JSON.parse(inv.items_json || '[]')); } catch (e) {} });
-          allItems = [...allItems, ...items].map((it, i) => ({ ...it, id: `item-${i + 1}` }));
-          contractCodes = sortCodes([...new Set([...existingInvoices.flatMap(inv => invoiceCodeTokens(inv.booth_code)), ...cluster.targets])]);
-          const oldTotal = existingInvoices.reduce((acc, inv) => acc + (Number(inv.total_amount) || 0), 0);
-          const newTotal = oldTotal + clusterFinal;
-          const status = [invoiceStatus, ...existingInvoices.map(inv => upper(inv.payment_status))].includes('PENDING') ? 'PENDING' : 'UNPAID';
-          db.prepare(`
-            UPDATE invoices SET booth_code = ?, booth_id = NULL, items_json = ?, subtotal = ?, discount_amount = ?, total_amount = ?,
-              paid_amount = 0, remaining_amount = ?, contract_total = ?, payment_status = ?,
-              notes = COALESCE(notes, '') || ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `).run(contractCodes.join('+'), JSON.stringify(allItems),
-            existingInvoices.reduce((acc, inv) => acc + (Number(inv.subtotal) || 0), 0) + subtotal,
-            existingInvoices.reduce((acc, inv) => acc + (Number(inv.discount_amount) || 0), 0) + discount,
-            newTotal, newTotal, newTotal, status,
-            ` [Kontrak gabungan: booth ${cluster.targets.join(', ')} ditambahkan]`, base.id);
-          others.forEach(inv => db.prepare(`
-            UPDATE invoices SET payment_status = 'CANCELED', remaining_amount = 0,
-              notes = COALESCE(notes, '') || ' [Digabung ke invoice ' || ? || ']', updated_at = CURRENT_TIMESTAMP WHERE id = ?
-          `).run(base.invoice_number, inv.id));
-          invoiceNo = base.invoice_number;
-        } else {
-          if (cluster.existing.length) {
-            warnings.push(`Booth ${cluster.targets.join(', ')} menempel dengan booth ${cluster.existing.join(', ')} milik ${brandName} yang ${isDpInvoice ? 'dibayar dengan skema DP' : 'kontraknya sudah memiliki pembayaran / DP'}: ditagih sebagai kontrak terpisah, tetap tampil tergabung di denah.`);
-          }
-          invoiceNo = ci === 0 ? invoiceNumber : `${invoiceNumber}-${ci + 1}`;
-          const dpAmount = isDpInvoice
-            ? Math.round(req.body.paidAmount !== undefined && resolvedPaymentStatus === 'PARTIAL' ? Number(req.body.paidAmount) * share : (clusterFinal * (resolvedDpPercent || 50)) / 100)
-            : 0;
-          const invoiceTotal = isDpInvoice ? dpAmount : clusterFinal;
-          const invoicePaid = invoiceStatus === 'PAID' ? invoiceTotal : 0;
-          const codeLabel = cluster.targets.join('+');
-          const invoiceItems = isDpInvoice
-            ? [{ id: 'item-1', description: `Uang Muka (DP ${resolvedDpPercent}%) Sewa Booth #${codeLabel} - ${resolvedPaymentMethod}`, qty: 1, unitPrice: dpAmount, amount: dpAmount }]
-            : items;
-          db.prepare(`
-            INSERT OR REPLACE INTO invoices (
-              id, invoice_number, floorplan_id, booth_id, booth_code,
-              client_name, company_name, client_email, client_phone,
-              issue_date, due_date, items_json, subtotal, discount_type, discount_value, discount_amount, discount_reason, total_amount,
-              paid_amount, remaining_amount, payment_type, dp_percent,
-              payment_status, payment_method, notes,
-              invoice_kind, contract_total, contract_tax_rate
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-          `).run(
-            `INV-REC-${stamp}${ci ? `-${ci + 1}` : ''}`,
-            invoiceNo,
-            floorplanId,
-            members.length === 1 ? members[0].b.id : null,
-            codeLabel,
-            fullName || brandName,
-            brandName,
-            email,
-            phone,
-            todayStr,
-            dueDateStr,
-            JSON.stringify(invoiceItems),
-            isDpInvoice ? dpAmount : subtotal,
-            members.length === 1 ? (members[0].b.discount_type || 'nominal') : 'nominal',
-            isDpInvoice ? 0 : (members.length === 1 ? Number(members[0].b.discount_value) || 0 : discount),
-            isDpInvoice ? 0 : discount,
-            isDpInvoice ? '' : members.map(p => p.b.discount_reason).filter(Boolean).join('; '),
-            invoiceTotal,
-            invoicePaid,
-            invoiceTotal - invoicePaid,
-            resolvedPaymentType,
-            resolvedDpPercent,
-            invoiceStatus,
-            resolvedPaymentMethod,
-            resolvedNotes,
-            isDpInvoice ? 'dp' : 'full',
-            clusterFinal
-          );
-        }
-        invoiceNumbers.push(invoiceNo);
-        clusterInfo.push({ codes: contractCodes, newBooths: cluster.targets, invoiceNumber: invoiceNo, extended: canExtend });
-
-        // One order row per booth (dashboard & reports count booths, not groups)
-        members.forEach((p, i) => {
-          const orderId = `ORD-${stamp}${clusters.length > 1 || members.length > 1 ? `-${ci + 1}-${i + 1}` : ''}`;
-          orderIds.push(orderId);
-          insertOrder.run(orderId, floorplanId, p.b.id, p.b.code, brandName, fullName || brandName, email, phone,
-            Math.round(subtotal > 0 ? clusterFinal * (p.price / subtotal) : clusterFinal / members.length),
-            resolvedPaymentMethod, resolvedPaymentStatus, invoiceNo, brandCategory || '', registrationSource, adminName, exhibitorId);
-        });
+      priced.forEach((p, i) => {
+        const orderId = `ORD-${stamp}${priced.length > 1 ? `-${i + 1}` : ''}`;
+        orderIds.push(orderId);
+        insertOrder.run(orderId, floorplanId, p.b.id, p.b.code, brandName, fullName || brandName, email, phone,
+          Math.round((p.price - p.discount) * (1 + taxRate / 100)),
+          resolvedPaymentMethod, resolvedPaymentStatus, invoiceNumber, brandCategory || '', registrationSource, adminName, exhibitorId);
       });
+
+      // Booths that touch each other are still SHOWN as one booth on the floorplan (display only, §18)
+      const clusterInfo = clusterCheckoutBooths(floorplanId, codes, exhibitorId)
+        .map(c => ({ codes: sortCodes([...c.targets, ...c.existing]), newBooths: c.targets, invoiceNumber }));
 
       // 8. Booth status, tenant & canvas follow the contracts (precise matching, AGENTS.md §12)
       try {
@@ -333,7 +293,7 @@ router.post('/checkout', (req, res) => {
         console.error("Error running syncPaymentStatusFromInvoices inside checkout transaction:", err);
       }
 
-      return { orderIds, invoiceNumbers, floorplanId, clusters: clusterInfo, warnings, boothCodes: targetBooths.map(b => b.code) };
+      return { orderIds, invoiceNumbers, floorplanId, clusters: clusterInfo, warnings, boothCodes: targetBooths.map(b => b.code), contractTotal, taxRate, taxAmount };
     });
 
     const result = checkoutTransaction();
@@ -365,7 +325,10 @@ router.post('/checkout', (req, res) => {
         fullName,
         email,
         phone,
-        totalAmount,
+        // computed by the server (price - discount + PPN), not the value sent by the form
+        totalAmount: result.contractTotal,
+        taxRate: result.taxRate,
+        taxAmount: result.taxAmount,
         bookingType,
         paymentMethod: resolvedPaymentMethod,
         status: resolvedPaymentStatus,

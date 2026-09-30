@@ -1828,6 +1828,8 @@ export default function LiveFloorplan() {
       email: bookingData.email,
       phone: bookingData.phone,
       totalAmount: bookingData.grandTotal,
+      applyTax: bookingData.applyTax,
+      taxRate: bookingData.taxRate,
       paidAmount: bookingData.paidAmount,
       remainingAmount: bookingData.remainingAmount,
       paymentType: bookingData.paymentType || 'full',
