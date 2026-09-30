@@ -1253,17 +1253,9 @@ router.post('/sync-booth-discount', (req, res) => {
         WHERE floorplan_id = ? AND deleted_at IS NULL AND (LOWER(TRIM(code)) = LOWER(TRIM(?)) OR (? != '' AND id = ?))
       `).run(req.body.price !== undefined ? numPrice : null, discountType, numDiscVal, calcDiscountAmount, discountReason.trim(), floorplanId, boothCode || '', boothId || '', boothId || '');
 
-      // 2. Contract invoices: keep the discount on the single "full" invoice for display, then recompute the open
-      //    balance (unpaid Pelunasan / Penuh). DP and paid invoices are never rewritten; add-on invoices are untouched.
-      const contractInvoices = getContractInvoices(floorplanId, boothCode, boothId);
-      contractInvoices
-        .filter(inv => kindOf(inv) === 'full' && ['UNPAID', 'PENDING'].includes(String(inv.payment_status).toUpperCase()))
-        .forEach(inv => {
-          db.prepare(`
-            UPDATE invoices SET discount_type = ?, discount_value = ?, discount_amount = ?, discount_reason = ?, subtotal = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `).run(discountType, numDiscVal, calcDiscountAmount, discountReason.trim(), numPrice, inv.id);
-        });
+      // 2. The booth's contract (also a multi-booth "A-01+A-04" invoice): the unpaid Penuh / Pelunasan follows the
+      //    price - discount (+ PPN) of all its booths (subtotal, discount line, total). DP and paid invoices are never
+      //    rewritten; add-on invoices are untouched.
       recalcContract(floorplanId, boothCode, boothId);
 
       // 3. Update active floorplan canvas_fabric_json if exists

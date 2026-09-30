@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../db.js';
-import { getContract } from '../utils/contractBilling.js';
+import { getContract, recalcContract } from '../utils/contractBilling.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
 import { notifyIfBoothsChanged } from '../utils/opsLayer.js';
 import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
@@ -1443,7 +1443,10 @@ router.post('/save', (req, res) => {
         });
       }
 
-      // 2. Sync booths table
+      // 2. Sync booths table (price / discount before this save: changed booths get their contract recomputed)
+      const pricingBefore = new Map(db.prepare('SELECT code, price, discount_amount FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL').all(floorplanId)
+        .map(r => [String(r.code || '').trim().toLowerCase(), r]));
+      const repriced = [];
       db.prepare('DELETE FROM booths WHERE floorplan_id = ?').run(floorplanId);
 
       const insertBooth = db.prepare(`
@@ -1492,32 +1495,16 @@ router.post('/save', (req, res) => {
           b.merge_separate ? 1 : 0
         );
 
-        // Safety Lock & Auto Sync: If this booth has an active discount and an invoice exists, sync invoice table
-        const dAmt = b.discount_amount !== undefined ? b.discount_amount : (b.discountAmount !== undefined ? b.discountAmount : 0);
-        const dVal = b.discount_value !== undefined ? b.discount_value : (b.discountValue !== undefined ? b.discountValue : 0);
-        const dType = b.discount_type || b.discountType || 'nominal';
-        const dReason = b.discount_reason || b.discountReason || '';
-        const bPrice = b.price || 5000000;
-
-        if (dAmt > 0 || dVal > 0) {
-          const existingInv = db.prepare(`
-            SELECT id, subtotal, total_amount, discount_amount, items_json
-            FROM invoices 
-            WHERE (booth_code = ? OR booth_id = ?) 
-              AND (floorplan_id = ? OR floorplan_id IS NULL)
-          `).get(rawCode, b.id || '', floorplanId);
-
-          if (existingInv) {
-            const invSubtotal = existingInv.subtotal || bPrice;
-            const newTotal = Math.max(0, invSubtotal - dAmt);
-            db.prepare(`
-              UPDATE invoices 
-              SET discount_type = ?, discount_value = ?, discount_amount = ?, discount_reason = ?, subtotal = ?, total_amount = ?, updated_at = CURRENT_TIMESTAMP
-              WHERE id = ?
-            `).run(dType, dVal, dAmt, dReason, invSubtotal, newTotal, existingInv.id);
-          }
-        }
+        // Price / private discount changed in the Studio: the booth's contract is recomputed after the loop
+        // (only its unpaid balance invoice follows; paid invoices never change, multi-booth contracts included)
+        const before = pricingBefore.get(String(rawCode || '').trim().toLowerCase());
+        const newPrice = Number(b.price || 5000000) || 0;
+        const newDiscount = Number(b.discount_amount !== undefined ? b.discount_amount : (b.discountAmount !== undefined ? b.discountAmount : 0)) || 0;
+        if (before && (Number(before.price) !== newPrice || Number(before.discount_amount || 0) !== newDiscount)) repriced.push(rawCode);
       }
+
+      // Contracts of repriced booths: the unpaid Penuh / Pelunasan follows price - discount (+ PPN) of ALL its booths
+      [...new Set(repriced)].forEach(code => recalcContract(floorplanId, code, ''));
 
       // 3. Sync venue items
       db.prepare('DELETE FROM venue_items WHERE floorplan_id = ?').run(floorplanId);

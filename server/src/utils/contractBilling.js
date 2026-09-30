@@ -93,7 +93,15 @@ export function contractTaxFor(floorplanId, code, { rate = 0, method = 'none' } 
   if (!rows.length) return null;
   const subtotal = rows.reduce((acc, b) => acc + (Number(b.price) || 0), 0);
   const discount = rows.reduce((acc, b) => acc + Math.min(Number(b.price) || 0, Number(b.discount_amount) || 0), 0);
-  return { ...computeContractTax({ subtotal, discount, rate, method }), grossDiscount: discount };
+  const reasons = [...new Set(rows.filter(b => Number(b.discount_amount) > 0).map(b => String(b.discount_reason || '').trim()).filter(Boolean))];
+  return {
+    ...computeContractTax({ subtotal, discount, rate, method }),
+    grossSubtotal: subtotal, grossDiscount: discount, discountReason: reasons.join('; '),
+    // one booth keeps its own discount type (e.g. 10%); several booths are summed as a nominal discount
+    discountType: rows.length === 1 ? (rows[0].discount_type || 'nominal') : 'nominal',
+    discountValue: rows.length === 1 ? (Number(rows[0].discount_value) || 0) : discount,
+    boothPrices: Object.fromEntries(rows.map(b => [String(b.code).toLowerCase(), Number(b.price) || 0]))
+  };
 }
 
 /**
@@ -248,14 +256,27 @@ export function recalcContract(floorplanId, boothCode, boothId, options = {}) {
       : null;
     const rowsPrice = rows.reduce((acc, b) => acc + (Number(b.price) || 0), 0);
     const rowsDiscount = rows.reduce((acc, b) => acc + Math.min(Number(b.price) || 0, Number(b.discount_amount) || 0), 0);
-    // A single invoice keeps its own lines; its discount follows the booths when the contract was recomputed from them
+    // A single ("Penuh") invoice recomputed from its booths: subtotal = sum of the booth prices, discount = sum of their
+    // private discounts; booth lines follow the booth prices. Other lines (added by hand) are kept as they are.
     const fullDiscount = !isSettlement && contract.grossDiscount !== undefined ? contract.grossDiscount : null;
+    let fullItems = null;
+    if (fullDiscount !== null && contract.boothPrices) {
+      let current = [];
+      try { current = JSON.parse(balance.items_json || '[]'); } catch (e) { current = []; }
+      if (current.length && current.every(it => it.boothCode && contract.boothPrices[String(it.boothCode).toLowerCase()] !== undefined)) {
+        fullItems = current.map(it => {
+          const p = contract.boothPrices[String(it.boothCode).toLowerCase()];
+          return { ...it, qty: 1, unitPrice: p, amount: p };
+        });
+      }
+    }
     db.prepare(`
       UPDATE invoices
       SET invoice_kind = @kind, related_invoice_id = @relatedId, total_amount = @amount, remaining_amount = @amount, paid_amount = 0,
           ${items ? 'items_json = @items,' : ''}
           ${isSettlement ? "subtotal = @subtotal, discount_value = 0, discount_amount = @discount, discount_reason = '', discount_type = 'nominal'," : ''}
-          ${fullDiscount !== null ? 'discount_amount = @discount,' : ''}
+          ${fullDiscount !== null ? "discount_amount = @discount, discount_type = @discountType, discount_value = @discountValue, discount_reason = @reason," : ''}
+          ${fullItems ? 'items_json = @fullItems, subtotal = @grossSubtotal,' : ''}
           tax_rate = @rate, tax_amount = @ppn, dpp_amount = @dpp, tax_method = @method, tax_display = @display,
           tax_note = COALESCE(tax_note, @note),
           updated_at = CURRENT_TIMESTAMP
@@ -266,7 +287,11 @@ export function recalcContract(floorplanId, boothCode, boothId, options = {}) {
       amount,
       ...(items ? { items: JSON.stringify(items) } : {}),
       ...(isSettlement ? { subtotal: rows.length ? rowsPrice : amount, discount: rows.length ? rowsDiscount : 0 } : {}),
-      ...(fullDiscount !== null ? { discount: fullDiscount } : {}),
+      ...(fullDiscount !== null ? {
+        discount: fullDiscount, reason: contract.discountReason || '',
+        discountType: contract.discountType || 'nominal', discountValue: contract.discountValue ?? fullDiscount
+      } : {}),
+      ...(fullItems ? { fullItems: JSON.stringify(fullItems), grossSubtotal: contract.grossSubtotal } : {}),
       rate: part.ppn > 0 ? contract.rate : 0,
       ppn: part.ppn,
       dpp: part.dpp,
