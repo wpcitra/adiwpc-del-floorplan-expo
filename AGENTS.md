@@ -295,3 +295,21 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Public report endpoint** `POST /api/errors/report`: 30 reports per minute per IP, max 60 new browser groups per hour, size-limited fields. The server decides priority, never the browser.
 - **Role `developer`.** Only `/api/maintenance/*`, notifications, and its own account (`DEVELOPER_AREA`). No tenant, price, invoice, or user data. On public endpoints it is treated as a visitor (`req.restrictedUser` keeps it only for masked error reports).
 
+---
+
+## 23. Claude API Key Lock (`utils/claudeApi.js`, `utils/envFile.js`, `ClaudeApiKeySettings.jsx`)
+- **Where the key lives.**
+  - Only in `server/.env` as `ANTHROPIC_API_KEY`. Never in the database, Git, client code, `VITE_*` variables, logs, audit entries, error reports, or API responses.
+  - `utils/envFile.js` loads the file (imported first by `db.js`) and writes it atomically with mode 600. `ENV_FILE` redirects it (tests use their own temporary file).
+- **Admin UI (Setting > Integrasi AI (Claude)), Super Admin only.**
+  - `/api/maintenance/ai-key` is `access: []`. The Developer role cannot reach it.
+  - The key is WRITE-ONLY. `PUT` receives it once. `GET` / responses return only `configured`, `hint` (`…` + last 4 characters), `source`, who changed it and when, and the last check. The input is a password field and is cleared after saving.
+  - `PUT` checks the format (`sk-ant-…`, no spaces, quotes, or line breaks, so no `.env` injection), then calls `GET /v1/models` with the key.
+  - A 401 / 403 rejects the key and nothing is stored. A network error, 429, or outage saves it with a warning.
+  - A key set in the real process environment (`source: 'environment'`) cannot be changed or deleted from the UI.
+- **Calling Claude.** Always through `claudeApi.js`: `x-api-key` + `anthropic-version: 2023-06-01`, base URL from `ANTHROPIC_API_URL` (tests point it at a local mock; tests never call the real API).
+  - Failures map to Indonesian messages: 401 invalid, 403 forbidden, 429 rate limit, credit balance empty, 5xx outage, network.
+  - Never put the key in thrown errors or `console.*`.
+- **Audit.** Saving, testing, and deleting are audited (category `Maintenance`) without the value. `SENSITIVE_KEYS` in `audit.js` drops `apiKey` from request details.
+- **Staging and tests never receive the production key** (`ANTHROPIC_API_KEY=''` is set by `ops/staging.mjs` and the test harness).
+
