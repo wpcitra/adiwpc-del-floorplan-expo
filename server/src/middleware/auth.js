@@ -57,6 +57,7 @@ export function authenticate(req, res, next) {
 const SALES = ['sales'];
 const FINANCE = ['finance'];
 const OPERATIONS = ['operations'];
+const DEVELOPER = ['developer'];
 const WRITE = ['POST', 'PUT', 'PATCH', 'DELETE'];
 
 const ACCESS_RULES = [
@@ -98,6 +99,10 @@ const ACCESS_RULES = [
   { methods: ['POST'], path: /^\/ops\/[^/]+\/copy-from$/, access: [...SALES, ...OPERATIONS] },
   { methods: WRITE, path: /^\/ops(\/.*)?$/, access: OPERATIONS },
 
+  // Pusat Maintenance: browser error reports are public (scrubbed + rate limited), the center itself is Developer / Super Admin
+  { methods: ['POST'], path: /^\/errors\/report$/, access: 'public' },
+  { methods: ['GET', ...WRITE], path: /^\/maintenance(\/.*)?$/, access: DEVELOPER },
+
   // In-app notifications of the logged-in user
   { methods: ['GET', 'POST'], path: /^\/notifications(\/.*)?$/, access: 'staff' },
 
@@ -107,6 +112,13 @@ const ACCESS_RULES = [
 ];
 
 const OPERATIONS_AREA = [/^\/ops(\/.*)?$/, /^\/notifications(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/];
+// Developer: only the Pusat Maintenance (never tenant, price, invoice or user data)
+const DEVELOPER_AREA = [/^\/maintenance(\/.*)?$/, /^\/notifications(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/];
+// Roles limited to their own area; on public endpoints they are treated as anonymous visitors
+const RESTRICTED_AREAS = {
+  operations: { area: OPERATIONS_AREA, error: 'Role Operasional hanya dapat mengakses Denah Operasional' },
+  developer: { area: DEVELOPER_AREA, error: 'Role Developer hanya dapat mengakses Pusat Maintenance' }
+};
 
 const findRule = (method, path) =>
   ACCESS_RULES.find(r => r.methods.includes(method) && r.path.test(path));
@@ -118,16 +130,21 @@ export function enforceAccessPolicy(req, res, next) {
   const rule = findRule(req.method, path);
   const access = rule ? rule.access : 'staff';
 
+  const restricted = RESTRICTED_AREAS[req.user?.role];
   if (access === 'public') {
-    // The operations team sees public endpoints exactly like a visitor (published data only, no staff extras)
-    if (req.user?.role === 'operations') req.user = undefined;
+    // Operations / developer accounts see public endpoints exactly like a visitor (published data only, no staff
+    // extras). `restrictedUser` keeps who they are for masked error reports only.
+    if (restricted) {
+      req.restrictedUser = req.user;
+      req.user = undefined;
+    }
     return next();
   }
 
-  // Operations accounts only reach their own area (Denah Operasional, notifications, own account),
-  // never sales / billing data behind generic "staff" endpoints (prices, discounts, invoices, exhibitors)
-  if (req.user?.role === 'operations' && !OPERATIONS_AREA.some(re => re.test(path))) {
-    return res.status(403).json({ success: false, error: 'Role Operasional hanya dapat mengakses Denah Operasional', code: 'FORBIDDEN' });
+  // Operations / developer accounts only reach their own area (plus notifications and their own account), never
+  // sales / billing data behind generic "staff" endpoints (prices, discounts, invoices, exhibitors)
+  if (restricted && !restricted.area.some(re => re.test(path))) {
+    return res.status(403).json({ success: false, error: restricted.error, code: 'FORBIDDEN' });
   }
 
   if (!req.user) {

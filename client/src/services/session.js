@@ -1,4 +1,6 @@
 // Login session storage + authenticated fetch for the API.
+import { reportUnreachable, flushQueuedReports, queuedReportsPending } from './errorReporter';
+
 const STORAGE_KEY = 'expo_auth_session';
 
 export function getSession() {
@@ -30,7 +32,15 @@ export async function apiFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
   if (session?.token) headers.set('Authorization', `Bearer ${session.token}`);
 
-  const res = await fetch(url, { ...options, headers });
+  let res;
+  try {
+    res = await fetch(url, { ...options, headers });
+  } catch (error) {
+    // Server unreachable (down / network): noted for the Pusat Maintenance, sent once the server is back
+    if (!options.signal?.aborted) reportUnreachable(url, error);
+    throw error;
+  }
+  if (queuedReportsPending()) flushQueuedReports();
   if (res.status === 401 && session?.token) {
     clearSession();
     window.dispatchEvent(new CustomEvent('auth:expired'));

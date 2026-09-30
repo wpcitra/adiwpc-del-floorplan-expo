@@ -14,17 +14,23 @@ import authRoutes from './routes/authRoutes.js';
 import auditRoutes from './routes/auditRoutes.js';
 import opsRoutes from './routes/opsRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
+import maintenanceRoutes, { reportRouter as errorReportRoutes } from './routes/maintenanceRoutes.js';
 import { authenticate, enforceAccessPolicy, stampActorIdentity } from './middleware/auth.js';
 import { auditTrail } from './middleware/audit.js';
 import { readBackupStatus, startBackupSchedule } from './utils/backup.js';
 import { appVersion } from './utils/appVersion.js';
+import { installErrorCapture, errorCaptureMiddleware, expressErrorHandler } from './utils/errorTracker.js';
 
 dotenv.config();
+// Pusat Maintenance (AGENTS.md §22): record server errors (console.error(Error), 5xx responses, crashes)
+installErrorCapture();
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 
 // Middleware
+// Error capture first, so every request (including CORS / body parser failures) has its context
+app.use('/api', errorCaptureMiddleware);
 // CORS: only this computer's own pages (localhost / 127.0.0.1, any port) and the origins listed in ALLOWED_ORIGINS
 // (comma separated, e.g. "https://expo.example.com"). Requests without an Origin header (curl, server-to-server)
 // are not affected; other websites can no longer call the API from a visitor's browser.
@@ -77,6 +83,11 @@ app.use('/api/auth', authRoutes);
 app.use('/api/audit-logs', auditRoutes);
 app.use('/api/ops', opsRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/errors', errorReportRoutes);
+app.use('/api/maintenance', maintenanceRoutes);
+
+// Unhandled route errors: recorded for the Pusat Maintenance, answered without internal details
+app.use(expressErrorHandler);
 
 // Start Server
 app.listen(PORT, () => {

@@ -602,14 +602,14 @@ if (facilityFormCount === 0) {
   );
 }
 
-// Users & Roles (superadmin, finance, sales, operations)
+// Users & Roles (superadmin, finance, sales, operations, developer)
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     phone TEXT DEFAULT '',
-    role TEXT NOT NULL CHECK (role IN ('superadmin', 'finance', 'sales', 'operations')),
+    role TEXT NOT NULL CHECK (role IN ('superadmin', 'finance', 'sales', 'operations', 'developer')),
     password_hash TEXT NOT NULL,
     is_active INTEGER DEFAULT 1,
     last_login_at DATETIME,
@@ -690,10 +690,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
 `);
 
-// Role "operations" (Tim Operasional): older databases have a CHECK constraint without it, rebuild the table once
+// Roles "operations" (Tim Operasional) and "developer" (Pusat Maintenance): older databases have a CHECK
+// constraint without them, rebuild the table once
 try {
   const usersSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()?.sql || '';
-  if (usersSql && !usersSql.includes("'operations'")) {
+  if (usersSql && !usersSql.includes("'developer'")) {
     db.transaction(() => {
       db.exec(`
         CREATE TABLE users_new (
@@ -701,7 +702,7 @@ try {
           name TEXT NOT NULL,
           email TEXT NOT NULL UNIQUE COLLATE NOCASE,
           phone TEXT DEFAULT '',
-          role TEXT NOT NULL CHECK (role IN ('superadmin', 'finance', 'sales', 'operations')),
+          role TEXT NOT NULL CHECK (role IN ('superadmin', 'finance', 'sales', 'operations', 'developer')),
           password_hash TEXT NOT NULL,
           is_active INTEGER DEFAULT 1,
           last_login_at DATETIME,
@@ -716,7 +717,7 @@ try {
     })();
   }
 } catch (e) {
-  console.error('Migrasi role operations gagal:', e.message);
+  console.error('Migrasi role users gagal:', e.message);
 }
 
 // Operational layer (Denah Operasional): one layer per sales floorplan, stored apart from the sales canvas.
@@ -788,6 +789,67 @@ db.exec(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read);
+`);
+
+// Pusat Maintenance, error tracking (AGENTS.md §22). Errors are grouped by fingerprint; personal data is scrubbed
+// before anything is stored and user IDs are kept only as masked references (never the real id, email or IP).
+//   error_groups          one row per distinct error (message + location), with priority and handling status
+//   error_events          individual occurrences (last 100 per group, 90 days)
+//   error_group_users     masked user references per group (count of affected users)
+//   maintenance_settings  key/value settings of the maintenance center (mask salt, later: AI model, cost limit)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS error_groups (
+    id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL,
+    error_type TEXT DEFAULT 'Error',
+    message TEXT NOT NULL,
+    location TEXT DEFAULT '',
+    area TEXT DEFAULT '',
+    feature TEXT DEFAULT '',
+    priority TEXT NOT NULL DEFAULT 'NORMAL',
+    status TEXT NOT NULL DEFAULT 'baru',
+    status_note TEXT DEFAULT '',
+    status_by TEXT DEFAULT '',
+    status_at DATETIME,
+    occurrences INTEGER DEFAULT 0,
+    affected_users INTEGER DEFAULT 0,
+    reopened_count INTEGER DEFAULT 0,
+    sample_stack TEXT DEFAULT '',
+    environment TEXT DEFAULT '',
+    app_version TEXT DEFAULT '',
+    first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_notified_at DATETIME
+  );
+  CREATE INDEX IF NOT EXISTS idx_error_groups_status ON error_groups(status, priority, last_seen_at);
+  CREATE TABLE IF NOT EXISTS error_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id TEXT NOT NULL,
+    occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    user_ref TEXT DEFAULT '',
+    user_role TEXT DEFAULT '',
+    method TEXT DEFAULT '',
+    url TEXT DEFAULT '',
+    status_code INTEGER,
+    browser TEXT DEFAULT '',
+    app_version TEXT DEFAULT '',
+    environment TEXT DEFAULT '',
+    stack TEXT DEFAULT '',
+    context_json TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_error_events_group ON error_events(group_id, occurred_at);
+  CREATE TABLE IF NOT EXISTS error_group_users (
+    group_id TEXT NOT NULL,
+    user_ref TEXT NOT NULL,
+    PRIMARY KEY (group_id, user_ref)
+  );
+  CREATE TABLE IF NOT EXISTS maintenance_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_by TEXT DEFAULT '',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Auto-merge booth (AGENTS.md §18): exhibitor identity per booth / order and the "Tampilkan Terpisah" switch

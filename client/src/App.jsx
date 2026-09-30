@@ -17,6 +17,7 @@ import { AuthProvider } from './context/AuthContext';
 import RequireAuth, { RoleHomeRedirect } from './components/auth/RequireAuth';
 import LoginPage from './pages/auth/LoginPage';
 import AuditLogPage from './pages/admin/AuditLogPage';
+import MaintenancePage from './pages/admin/MaintenancePage';
 
 function App() {
   return (
@@ -50,6 +51,7 @@ function App() {
           <Route path="settings" element={<RequireAuth page="settings"><SettingsPage /></RequireAuth>} />
           <Route path="users" element={<RequireAuth page="users"><UserManagementPage /></RequireAuth>} />
           <Route path="audit" element={<RequireAuth page="audit"><AuditLogPage /></RequireAuth>} />
+          <Route path="maintenance" element={<RequireAuth page="maintenance"><MaintenancePage /></RequireAuth>} />
         </Route>
 
         {/* Shortcut Routes */}

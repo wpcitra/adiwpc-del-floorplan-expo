@@ -4,7 +4,8 @@ export const ROLE_LABELS = {
   superadmin: 'Super Admin',
   finance: 'Keuangan',
   sales: 'Sales',
-  operations: 'Operasional'
+  operations: 'Operasional',
+  developer: 'Developer'
 };
 
 export const PAGE_ACCESS = {
@@ -16,7 +17,8 @@ export const PAGE_ACCESS = {
   facilities: ['superadmin', 'finance', 'sales'],
   settings: ['superadmin'],
   users: ['superadmin'],
-  audit: ['superadmin']
+  audit: ['superadmin'],
+  maintenance: ['superadmin', 'developer']
 };
 
 export const canAccessPage = (role, page) => Boolean(role && PAGE_ACCESS[page]?.includes(role));
@@ -26,5 +28,6 @@ export const HOME_PAGE = {
   superadmin: '/admin/analytics',
   finance: '/admin/invoices',
   sales: '/admin/floorplan',
-  operations: '/admin/ops'
+  operations: '/admin/ops',
+  developer: '/admin/maintenance'
 };

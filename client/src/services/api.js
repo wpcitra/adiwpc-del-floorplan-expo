@@ -1212,6 +1212,38 @@ export const api = {
     }
   },
 
+  // Pusat Maintenance (AGENTS.md §22)
+  async fetchMaintenanceErrors(params = {}) {
+    try {
+      const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== '' && v !== 'all')).toString();
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/errors?${qs}&_t=${Date.now()}`, { cache: 'no-store' });
+      const json = await res.json();
+      return json.success ? json : { errors: [], summary: null, error: json.error };
+    } catch (e) {
+      return { errors: [], summary: null, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+
+  async fetchMaintenanceError(id) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/errors/${encodeURIComponent(id)}?_t=${Date.now()}`, { cache: 'no-store' });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+
+  async setMaintenanceErrorStatus(id, status, note = '') {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/errors/${encodeURIComponent(id)}/status`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, note })
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+
   // 50. Fetch Users (Super Admin, Keuangan, Sales)
   async fetchUsers() {
     try {

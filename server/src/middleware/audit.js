@@ -73,6 +73,14 @@ const AUDIT_RULES = [
   { method: 'POST', path: /^\/facilities\/requests\/([^/]+)\/generate-invoice$/, category: 'Fasilitas', action: 'Terbitkan invoice fasilitas',
     describe: (req, m) => ({ target: m[1] }) },
 
+  // Pusat Maintenance
+  { method: 'POST', path: /^\/maintenance\/errors\/([^/]+)\/status$/, category: 'Maintenance', action: 'Ubah status error',
+    before: (m) => db.prepare('SELECT id, status, priority, message FROM error_groups WHERE id = ?').get(m[1]),
+    describe: (req, m, before) => ({
+      target: `${m[1]} (${before?.priority || '?'}) ${String(before?.message || '').slice(0, 80)}`,
+      summary: `${before?.status || '?'} → ${req.body.status || '?'}${req.body.note ? ` · ${String(req.body.note).slice(0, 120)}` : ''}`
+    }) },
+
   // Users
   { method: 'POST', path: /^\/users$/, category: 'User', action: 'Tambah user',
     describe: (req) => ({ target: `${req.body.name || ''} <${req.body.email || ''}>`, summary: `Role: ${req.body.role || '-'}` }) },

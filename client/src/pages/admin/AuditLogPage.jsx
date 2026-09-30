@@ -12,7 +12,8 @@ const CATEGORY_STYLES = {
   User: 'bg-violet-50 text-violet-700 border-violet-200',
   Pengaturan: 'bg-slate-100 text-slate-700 border-slate-200',
   Fasilitas: 'bg-cyan-50 text-cyan-700 border-cyan-200',
-  Operasional: 'bg-orange-50 text-orange-700 border-orange-200'
+  Operasional: 'bg-orange-50 text-orange-700 border-orange-200',
+  Maintenance: 'bg-sky-50 text-sky-700 border-sky-200'
 };
 
 // SQLite CURRENT_TIMESTAMP is UTC without a timezone suffix

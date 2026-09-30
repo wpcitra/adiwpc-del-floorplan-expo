@@ -13,8 +13,14 @@ export const ACCOUNTS = {
   superadmin: ['superadmin@expo.local', 'superadmin123'],
   finance: ['keuangan@expo.local', 'keuangan123'],
   sales: ['sales@expo.local', 'sales123'],
-  operations: ['operasional@expo.local', 'operasional123']
+  operations: ['operasional@expo.local', 'operasional123'],
+  developer: ['developer@expo.test', 'developer123'] // created by tests that need it (createDeveloper)
 };
+
+export async function createDeveloper(api) {
+  const r = await api('POST', '/users', { name: 'Dev Tes', email: ACCOUNTS.developer[0], role: 'developer', password: ACCOUNTS.developer[1] }, { as: 'superadmin' });
+  if (r.status !== 200 && r.status !== 201) throw new Error(`Buat akun developer gagal: ${r.text}`);
+}
 
 const freePort = () => new Promise((resolve, reject) => {
   const srv = net.createServer();

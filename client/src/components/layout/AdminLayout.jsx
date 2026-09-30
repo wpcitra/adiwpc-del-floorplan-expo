@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Map, Users, Settings, ArrowLeft, FileText, PackagePlus, UserCog, ScrollText, LogOut, KeyRound, X, HardHat } from 'lucide-react';
+import { LayoutDashboard, Map, Users, Settings, ArrowLeft, FileText, PackagePlus, UserCog, ScrollText, LogOut, KeyRound, X, HardHat, Activity } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
@@ -16,6 +16,7 @@ const MAIN_NAV = [
 ];
 
 const UTILITY_NAV = [
+  { page: 'maintenance', to: '/admin/maintenance', icon: Activity, label: 'Maintenance', title: 'Pusat Maintenance (error website)' },
   { page: 'audit', to: '/admin/audit', icon: ScrollText, label: 'Audit', title: 'Log Audit Aktivitas User' },
   { page: 'users', to: '/admin/users', icon: UserCog, label: 'User', title: 'Manajemen User & Role' },
   { page: 'settings', to: '/admin/settings', icon: Settings, label: 'Setting', title: 'Pengaturan & Konfigurasi Sistem' }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, UserPlus, Pencil, X, ShieldCheck, Wallet, Briefcase, Eye, EyeOff, UserCog, HardHat } from 'lucide-react';
+import { Search, UserPlus, Pencil, X, ShieldCheck, Wallet, Briefcase, Eye, EyeOff, UserCog, HardHat, Wrench } from 'lucide-react';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 
@@ -31,6 +31,13 @@ const ROLE_OPTIONS = [
     description: 'Mengelola Denah Operasional (listrik, CCTV, APAR, setup booth) tanpa akses harga & tagihan',
     icon: HardHat,
     badge: 'bg-orange-50 text-orange-700 border-orange-200'
+  },
+  {
+    key: 'developer',
+    label: 'Developer',
+    description: 'Memantau error website di Pusat Maintenance tanpa akses data tenant, harga & tagihan',
+    icon: Wrench,
+    badge: 'bg-sky-50 text-sky-700 border-sky-200'
   }
 ];
 const ROLE_MAP = Object.fromEntries(ROLE_OPTIONS.map(r => [r.key, r]));
