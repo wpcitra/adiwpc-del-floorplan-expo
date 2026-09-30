@@ -1,6 +1,8 @@
 # Dependencies & builds
 node_modules/
 dist/
+.vite/
+client/.vite/
 
 # Databases, backups and runtime data: NEVER committed (personal data of exhibitors)
 server/data/
