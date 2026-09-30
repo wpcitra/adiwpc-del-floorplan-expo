@@ -5,7 +5,7 @@
 // Reports made while the server is unreachable wait in localStorage and are sent once it is back.
 import { getSession } from './session';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:5001/api');
 const QUEUE_KEY = 'expo_error_queue';
 const MAX_QUEUE = 20;
 const MAX_REPORTS_PER_PAGE = 25;

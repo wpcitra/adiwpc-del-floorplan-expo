@@ -1,5 +1,8 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import floorplanRoutes from './routes/floorplanRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
 import statsRoutes from './routes/statsRoutes.js';
@@ -88,6 +91,18 @@ app.use('/api/maintenance', maintenanceRoutes);
 
 // Unhandled route errors: recorded for the Pusat Maintenance, answered without internal details
 app.use(expressErrorHandler);
+
+// Serve static frontend build in production (Railway, Render, VPS)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const clientDist = path.resolve(__dirname, '../../client/dist');
+if (fs.existsSync(clientDist)) {
+  app.use(express.static(clientDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+}
 
 // Start Server
 app.listen(PORT, () => {

@@ -6,7 +6,8 @@
   "scripts": {
     "test": "npm run lint && npm --prefix server test && npm --prefix client run build -- --logLevel error",
     "test:server": "npm --prefix server test",
-    "build": "npm --prefix client run build",
+    "build": "npm --prefix client install && npm --prefix client run build && npm --prefix server install",
+    "start": "node server/src/index.js",
     "backup": "npm --prefix server run backup",
     "staging:up": "node ops/staging.mjs up",
     "staging:down": "node ops/staging.mjs down",

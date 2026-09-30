@@ -1,7 +1,7 @@
 import { apiFetch } from './session';
 
-// API address per environment (client/.env: VITE_API_URL); production on this computer uses port 5001
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
+// API address per environment (client/.env: VITE_API_URL); in production defaults to '/api'
+const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:5001/api');
 
 export const api = {
   // 1. Fetch active floorplan from SQLite database with multi-hall support
