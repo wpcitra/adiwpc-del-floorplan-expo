@@ -9,7 +9,9 @@ const FP = 'FP-TEST-DISKON';
 const objects = (extra = {}) => [
   boothObject('G-01', { left: 0, top: 0, price: 5000000, extra: extra['G-01'] }),
   boothObject('G-02', { left: 60, top: 0, price: 5000000, extra: extra['G-02'] }),
-  boothObject('H-01', { left: 400, top: 0, price: 5000000, extra: extra['H-01'] })
+  boothObject('H-01', { left: 400, top: 0, price: 5000000, extra: extra['H-01'] }),
+  boothObject('K-03', { left: 0, top: 300, price: 3500000, extra: extra['K-03'] }),
+  boothObject('K-04', { left: 60, top: 300, price: 3500000, extra: extra['K-04'] })
 ];
 const invoiceOf = async (code) => (await s.api('GET', `/invoices?floorplanId=${FP}`, undefined, { as: 'finance' })).body.invoices
   .find(i => i.booth_code === code && i.payment_status !== 'CANCELED');
@@ -63,4 +65,24 @@ test('invoice yang sudah lunas tidak berubah saat diskon booth diubah di Studio'
   const after = await invoiceOf('H-01');
   assert.equal(after.total_amount, 5550000, 'total lunas tetap');
   assert.equal(after.payment_status, 'PAID');
+});
+
+test('invoice DP booth gabungan membawa diskon kontrak = jumlah diskon semua booth (kolom Diskon Privat)', async () => {
+  // G-/H- discounts from the tests above are kept in these objects so they do not trigger a recalculation
+  const keep = { 'G-01': { discountType: 'nominal', discountValue: 2000000, discountAmount: 2000000 }, 'G-02': { discountType: 'nominal', discountValue: 500000, discountAmount: 500000 }, 'H-01': { discountType: 'nominal', discountValue: 3000000, discountAmount: 3000000 } };
+  const save = await s.api('POST', '/floorplan/save', {
+    id: FP, eventId: `EVT-${FP}`, title: `Tes ${FP}`, status: 'published',
+    fabricJson: { version: '7.0.0', objects: objects({ ...keep, 'K-03': { discountType: 'nominal', discountValue: 1000000, discountAmount: 1000000 }, 'K-04': { discountType: 'nominal', discountValue: 1000000, discountAmount: 1000000 } }) }
+  }, { as: 'superadmin' });
+  assert.equal(save.status, 200, save.text);
+  const r = await s.api('POST', '/orders/checkout', {
+    floorplanId: FP, boothCodes: ['K-03', 'K-04'], fullName: 'Rw', brandName: 'rwrwer', email: 'rw@c.test', phone: '081234567890',
+    bookingType: 'booking', paymentType: 'dp', dpPercent: 40
+  });
+  assert.equal(r.status, 200, r.text);
+  const dp = await invoiceOf('K-03+K-04');
+  assert.equal(dp.invoice_kind, 'dp');
+  assert.equal(dp.contract.total, 5550000, '(7 jt - 2 jt) + PPN 11%');
+  assert.equal(dp.contract.discountAmount, 2000000, 'diskon kedua booth, bukan hanya booth pertama');
+  assert.equal(dp.total_amount, 2220000, 'DP 40%');
 });

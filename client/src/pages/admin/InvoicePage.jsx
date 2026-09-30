@@ -582,9 +582,13 @@ export default function InvoicePage() {
                 {displayedInvoices.map((inv) => {
                   const isPaid = (inv.payment_status || '').toUpperCase() === 'PAID';
                   const isCanceled = (inv.payment_status || '').toUpperCase() === 'CANCELED';
-                  const effectiveDiscountAmount = (inv.discount_amount && Number(inv.discount_amount) > 0)
-                    ? Number(inv.discount_amount)
-                    : Number(inv.booth_discount_amount || 0);
+                  // DP / Pelunasan: the private discount belongs to the booth CONTRACT (all its booths), shown here too
+                  const isContractSplit = ['dp', 'settlement'].includes(invoiceKind(inv)) && inv.contract;
+                  const effectiveDiscountAmount = isContractSplit
+                    ? Number(inv.contract.discountAmount) || 0
+                    : (inv.discount_amount && Number(inv.discount_amount) > 0)
+                      ? Number(inv.discount_amount)
+                      : Number(inv.booth_discount_amount || 0);
                   const effectiveDiscountReason = inv.discount_reason || inv.booth_discount_reason || '';
                   const hasDiscount = effectiveDiscountAmount > 0;
                   const effectiveBoothStatus = inv.current_booth_status || (isPaid ? 'sold' : 'reserved');
@@ -705,6 +709,7 @@ export default function InvoicePage() {
                           <div className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200" title={effectiveDiscountReason || 'Diskon Khusus'}>
                             <Lock size={10} className="text-emerald-600 shrink-0" />
                             <span>-Rp {effectiveDiscountAmount.toLocaleString('id-ID')}</span>
+                            {isContractSplit && <span className="text-emerald-600 font-normal">(kontrak)</span>}
                             {effectiveDiscountReason && (
                               <span className="text-emerald-600 font-normal max-w-[100px] truncate">({effectiveDiscountReason})</span>
                             )}

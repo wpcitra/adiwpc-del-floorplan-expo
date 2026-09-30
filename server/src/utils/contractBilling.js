@@ -186,7 +186,10 @@ export function summarizeContract(invoices, booth = null, { taxRate = 0 } = {}) 
     dpp: tax.dpp,
     ppn: tax.ppn,
     paidTax,
-    discountAmount: Number(booth?.discount_amount ?? latestLive?.discount_amount) || 0,
+    // Private discount of the whole contract: every booth of a multi-booth / merged invoice ("A-03+A-04"), not only the first
+    discountAmount: latestLive && latestLive.floorplan_id && invoiceCodeTokens(latestLive.booth_code).length > 1
+      ? boothsForCode(latestLive.floorplan_id, latestLive.booth_code).reduce((acc, b) => acc + Math.min(Number(b.price) || 0, Number(b.discount_amount) || 0), 0)
+      : (Number(booth?.discount_amount ?? latestLive?.discount_amount) || 0),
     billed,
     paid,
     remaining: Math.max(0, contractTotal - paid),
