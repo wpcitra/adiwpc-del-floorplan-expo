@@ -19,7 +19,9 @@ before(async () => {
   await createPublishedFloorplan(s.api, FP, [
     boothObject('E-01', { left: 0, top: 0, price: 5000000 }),
     boothObject('E-02', { left: 300, top: 0, price: 5000000 }),
-    boothObject('E-03', { left: 600, top: 0, price: 5000000 })
+    boothObject('E-03', { left: 600, top: 0, price: 5000000 }),
+    boothObject('M-01', { left: 0, top: 300, price: 5000000 }),
+    boothObject('M-02', { left: 60, top: 300, price: 5000000 })
   ]);
 });
 after(async () => { await s?.stop(); });
@@ -87,4 +89,32 @@ test('edit data klien tanpa mengirim item tidak menghapus item invoice', async (
   assert.equal(after.client_name, 'Rina Baru');
   assert.equal(JSON.stringify(after.items), before);
   assert.equal(after.total_amount, inv.total_amount);
+});
+
+test('invoice multi-booth / booth gabungan ("M-01+M-02") bisa dibuka & diedit, tidak lagi "booth tidak ditemukan"', async () => {
+  const r = await s.api('POST', '/orders/checkout', { ...reg('M-01'), boothCodes: ['M-01', 'M-02'] }, { as: 'superadmin' });
+  assert.equal(r.status, 200, r.text);
+  const [inv] = (await s.api('GET', `/invoices?floorplanId=${FP}`, undefined, { as: 'finance' })).body.invoices.filter(i => i.booth_code === 'M-01+M-02');
+  const c = await s.api('GET', `/invoices/contract?floorplanId=${FP}&boothCode=${encodeURIComponent(inv.booth_code)}`, undefined, { as: 'finance' });
+  assert.equal(c.status, 200, c.text);
+  assert.equal(c.body.contract.contractCode, 'M-01+M-02');
+  assert.equal(c.body.contract.base.subtotal, 10000000, 'kontrak = kedua booth');
+  const split = await s.api('POST', '/invoices', { invoiceKind: 'dp', floorplanId: FP, boothCode: c.body.contract.booth.code, dpMode: 'percent', dpValue: 30 }, { as: 'finance' });
+  assert.equal(split.status, 200, split.text);
+  assert.equal(split.body.invoice.booth_code, 'M-01+M-02');
+  const t = await s.api('POST', `/invoices/${inv.id}/terms`, { display: { showBank: false } }, { as: 'finance' });
+  assert.equal(t.status, 200, t.text);
+});
+
+test('Sales melihat & membuka invoice buatan Keuangan di Data Exhibitor, tetapi tidak bisa mengubahnya', async () => {
+  const ex = await s.api('GET', '/exhibitors?projectId=all', undefined, { as: 'sales' });
+  assert.equal(ex.status, 200, ex.text);
+  const rows = ex.body.exhibitors || ex.body.data || [];
+  const row = rows.find(e => e.booth === 'E-03');
+  assert.ok(row?.invoices?.length >= 1, 'baris exhibitor memuat invoice');
+  const one = await s.api('GET', `/invoices/${row.invoices[0].id}`, undefined, { as: 'sales' });
+  assert.equal(one.status, 200, 'Sales bisa membuka / mengunduh');
+  assert.equal(one.body.invoice.invoice_number, row.invoices[0].invoiceNumber);
+  const edit = await s.api('POST', `/invoices/${row.invoices[0].id}/terms`, { display: { showBank: true } }, { as: 'sales' });
+  assert.equal(edit.status, 403, 'mengubah invoice hanya untuk Keuangan');
 });

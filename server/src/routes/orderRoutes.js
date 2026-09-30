@@ -1031,6 +1031,14 @@ export function getExhibitorsData(targetId) {
     return g ? { id: g.id, codes: g.codes, label: g.label, joinedCode: g.joinedCode, boothCount: g.boothCount, totalAreaM2: g.totalAreaM2, status: g.status, booths: g.booths } : null;
   };
 
+  const boothInvoicesStmt = db.prepare(`
+    SELECT id, invoice_number, invoice_kind, payment_status, total_amount, created_at FROM invoices
+    WHERE floorplan_id = ? AND deleted_at IS NULL AND UPPER(COALESCE(payment_status, '')) != 'CANCELED'
+      AND TRIM(COALESCE(booth_code, '')) != ''
+      AND (LOWER(TRIM(booth_code)) = LOWER(TRIM(?)) OR ('+' || LOWER(TRIM(booth_code)) || '+') LIKE ('%+' || LOWER(TRIM(?)) || '+%'))
+    ORDER BY created_at ASC
+  `);
+
   // Payment status per booth CONTRACT (DP + Pelunasan / Penuh), not the latest single invoice
   const exhibitors = Array.from(uniqueMap.values()).map(item => {
     if (!item.floorplanId || !item.booth) return item;
@@ -1062,9 +1070,15 @@ export function getExhibitorsData(targetId) {
       taxMethod: c.status ? c.taxMethod : 'none', taxDisplay: c.status ? c.taxDisplay : 'show', taxNote: c.status ? c.taxNote : ''
     };
 
+    // Every active invoice of this booth (contract DP / Pelunasan / Penuh and add-on facilities), the same
+    // invoices as Manajemen Invoice: Sales can open and download what Finance issued (precise matching, §12)
+    const boothInvoices = boothInvoicesStmt.all(item.floorplanId, item.booth, item.booth)
+      .map(i => ({ id: i.id, invoiceNumber: i.invoice_number, kind: i.invoice_kind || 'full', paymentStatus: String(i.payment_status || 'UNPAID').toUpperCase(), totalAmount: Number(i.total_amount) || 0, createdAt: i.created_at }));
+
     const baseItem = !c.status ? {
       ...item,
       ...taxInfo,
+      invoices: boothInvoices,
       price: effectivePrice,
       boothValue,
       contractMismatch: false,
@@ -1073,6 +1087,7 @@ export function getExhibitorsData(targetId) {
     } : {
       ...item,
       ...taxInfo,
+      invoices: boothInvoices,
       boothValue,
       contractMismatch: contractValue !== null && contractValue > 0 && Math.abs(contractValue - c.contractTotal) > 1,
       contractShare,

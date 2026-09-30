@@ -51,8 +51,18 @@ export const invoicePaidAmount = (inv) => {
 };
 
 export function findBooth(floorplanId, boothCode, boothId) {
-  return db.prepare(`SELECT * FROM booths WHERE ${BOOTH_MATCH} ORDER BY CASE WHEN LOWER(TRIM(code)) = LOWER(TRIM(@boothCode)) THEN 0 ELSE 1 END LIMIT 1`)
-    .get({ floorplanId, boothCode: boothCode || '', boothId: boothId || '' });
+  const find = (code, id) => db.prepare(`SELECT * FROM booths WHERE ${BOOTH_MATCH} ORDER BY CASE WHEN LOWER(TRIM(code)) = LOWER(TRIM(@boothCode)) THEN 0 ELSE 1 END LIMIT 1`)
+    .get({ floorplanId, boothCode: code || '', boothId: id || '' });
+  const direct = find(boothCode, boothId);
+  if (direct) return direct;
+  // One invoice for several booths ("A-01+A-09", checkout / auto-merge): the contract is found through its first booth
+  // (getContractInvoices matches every invoice that contains that booth)
+  for (const token of String(boothCode || '').split('+').map(t => t.trim()).filter(Boolean)) {
+    if (token === String(boothCode).trim()) break;
+    const byToken = find(token, '');
+    if (byToken) return byToken;
+  }
+  return null;
 }
 
 export function getContractInvoices(floorplanId, boothCode, boothId) {

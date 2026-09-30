@@ -18,7 +18,8 @@ export function collapseMergedRows(rows) {
         mergeLabel: g.label,
         areaSqm: g.totalAreaM2 ?? row.areaSqm,
         price: 0, finalPrice: 0, originalPrice: 0, paidAmount: 0, remainingAmount: 0, dppAmount: 0, taxAmount: 0,
-        invoiceNumbers: []
+        invoiceNumbers: [],
+        invoices: []
       };
       groups.set(key, merged);
       out.push(merged);
@@ -27,6 +28,7 @@ export function collapseMergedRows(rows) {
     m.mergedBooths.push({ code: row.booth, widthM: row.widthM, heightM: row.heightM, status: row.status, payment_status: row.payment_status, price: row.price });
     ['price', 'finalPrice', 'originalPrice', 'paidAmount', 'remainingAmount', 'dppAmount', 'taxAmount'].forEach(k => { m[k] += Number(row[k]) || 0; });
     if (row.invoiceNumber && !m.invoiceNumbers.includes(row.invoiceNumber)) m.invoiceNumbers.push(row.invoiceNumber);
+    (row.invoices || []).forEach(inv => { if (!m.invoices.some(x => x.id === inv.id)) m.invoices.push(inv); });
     m.invoiceNumber = m.invoiceNumbers.join(', ');
     m.contractMismatch = Boolean(m.contractMismatch || row.contractMismatch);
     // Different statuses inside the group: "Sebagian Lunas"

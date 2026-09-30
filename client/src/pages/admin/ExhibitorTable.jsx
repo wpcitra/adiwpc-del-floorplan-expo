@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Search, Download, Send, Filter, Users, Layers, Tag, FileText, Sliders, Calendar, Eye, EyeOff, AlertTriangle, ChevronDown } from 'lucide-react';
 import { api } from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
 import ProjectYearFolderSelector, { getProjectDateInfo } from '../../components/admin/ProjectYearFolderSelector';
 import InvoiceEditorModal from '../../components/admin/InvoiceEditorModal';
 import InvoiceA4View from '../../components/admin/InvoiceA4View';
@@ -26,6 +27,9 @@ export default function ExhibitorTable() {
   const exportMenuRef = useRef(null);
   const [isInvoiceEditorOpen, setIsInvoiceEditorOpen] = useState(false);
   const [selectedInvoiceForA4, setSelectedInvoiceForA4] = useState(null);
+  // Sales can open / print / download invoices; editing and issuing stay with Finance (server enforces it too)
+  const { user } = useAuth();
+  const canEditInvoice = ['superadmin', 'finance'].includes(user?.role);
   const [invoicePicker, setInvoicePicker] = useState(null); // { exh, invoices }
   const [noInvoiceFor, setNoInvoiceFor] = useState(null); // exhibitor row without an invoice
   const [wizardFor, setWizardFor] = useState(null); // { projectId, boothCode }
@@ -408,6 +412,23 @@ Salam hangat,
         <Send size={12} />
         <span>Kirim WA</span>
       </button>
+      {/* The invoices Finance issued in Manajemen Invoice: open, print or download (also for Sales) */}
+      {exh.invoices?.length > 0 && (
+        <div className="w-full flex flex-wrap justify-end gap-1 pt-0.5">
+          {exh.invoices.map(inv => {
+            const kindLabel = { dp: 'DP', settlement: 'Pelunasan', full: 'Penuh', facility: 'Fasilitas' }[inv.kind] || 'Invoice';
+            const paid = inv.paymentStatus === 'PAID';
+            return (
+              <button key={inv.id} type="button" onClick={() => openInvoice(inv.id)}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-semibold transition-colors cursor-pointer ${paid ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                title={`${kindLabel} ${inv.invoiceNumber} • Rp ${Number(inv.totalAmount).toLocaleString('id-ID')} • ${paid ? 'Lunas' : 'Belum lunas'} — buka, cetak atau unduh PDF`}>
+                <Download size={10} />
+                <span>{kindLabel} {inv.invoiceNumber}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 
@@ -597,15 +618,17 @@ Salam hangat,
             <span>Form Fasilitas Tenant</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setIsInvoiceEditorOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer shrink-0"
-            title="Kustomisasi Visual Layout, Logo, Warna & Stempel Invoice A4"
-          >
-            <Sliders size={13} className="text-slate-500" />
-            <span>Layout Invoice</span>
-          </button>
+          {canEditInvoice && (
+            <button
+              type="button"
+              onClick={() => setIsInvoiceEditorOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer shrink-0"
+              title="Kustomisasi Visual Layout, Logo, Warna & Stempel Invoice A4"
+            >
+              <Sliders size={13} className="text-slate-500" />
+              <span>Layout Invoice</span>
+            </button>
+          )}
 
           <div className="relative shrink-0" ref={exportMenuRef}>
             <button
@@ -703,11 +726,11 @@ Salam hangat,
         <InvoiceA4View
           invoice={selectedInvoiceForA4}
           onClose={() => setSelectedInvoiceForA4(null)}
-          onEdit={(inv) => setEditingInvoice(inv)}
-          onOpenEditor={() => {
+          onEdit={canEditInvoice ? (inv) => setEditingInvoice(inv) : undefined}
+          onOpenEditor={canEditInvoice ? () => {
             setSelectedInvoiceForA4(null);
             setIsInvoiceEditorOpen(true);
-          }}
+          } : undefined}
         />
       )}
 
@@ -759,14 +782,17 @@ Salam hangat,
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3 text-center" onClick={(e) => e.stopPropagation()}>
             <AlertTriangle size={28} className="mx-auto text-amber-500" />
             <h3 className="font-bold text-slate-900 text-sm">Booth #{noInvoiceFor.booth} belum punya invoice</h3>
-            <p className="text-xs text-slate-500">Tenant {noInvoiceFor.company} sudah terdaftar, tetapi belum ada tagihan. Terbitkan invoice agar tercatat di Manajemen Invoice.</p>
+            <p className="text-xs text-slate-500">
+              Tenant {noInvoiceFor.company} sudah terdaftar, tetapi belum ada tagihan.
+              {canEditInvoice ? ' Terbitkan invoice agar tercatat di Manajemen Invoice.' : ' Minta tim Keuangan menerbitkan invoice di Manajemen Invoice; setelah itu invoice muncul di sini.'}
+            </p>
             <div className="flex gap-2">
               <button type="button" onClick={() => setNoInvoiceFor(null)} className="flex-1 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100">Nanti</button>
-              <button type="button" onClick={() => {
+              {canEditInvoice && <button type="button" onClick={() => {
                 const codes = noInvoiceFor.mergedBooths?.length ? noInvoiceFor.mergedBooths.map(b => b.code) : [noInvoiceFor.booth];
                 setWizardFor({ projectId: noInvoiceFor.floorplanId, boothCode: codes[0] });
                 setNoInvoiceFor(null);
-              }} className="flex-1 py-2 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700">Buat Invoice</button>
+              }} className="flex-1 py-2 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700">Buat Invoice</button>}
             </div>
           </div>
         </div>
