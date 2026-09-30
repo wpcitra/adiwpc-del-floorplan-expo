@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Search, Download, Send, Filter, Users, Layers, Tag, FileText, Sliders, Calendar, Eye, EyeOff, AlertTriangle, ChevronDown } from 'lucide-react';
+import { Search, Download, Filter, Users, Layers, Tag, FileText, Sliders, Calendar, Eye, EyeOff, AlertTriangle, ChevronDown } from 'lucide-react';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import ProjectYearFolderSelector, { getProjectDateInfo } from '../../components/admin/ProjectYearFolderSelector';
@@ -30,8 +30,6 @@ export default function ExhibitorTable() {
   // Sales can open / print / download invoices; editing and issuing stay with Finance (server enforces it too)
   const { user } = useAuth();
   const canEditInvoice = ['superadmin', 'finance'].includes(user?.role);
-  const [invoicePicker, setInvoicePicker] = useState(null); // { exh, invoices }
-  const [noInvoiceFor, setNoInvoiceFor] = useState(null); // exhibitor row without an invoice
   const [wizardFor, setWizardFor] = useState(null); // { projectId, boothCode }
   const [editingInvoice, setEditingInvoice] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -271,76 +269,12 @@ export default function ExhibitorTable() {
     document.body.removeChild(link);
   };
 
-  // Send Official Invoice via WhatsApp Web API (100% Gratis via Official WA Web DeepLink API)
-  const handleSendWhatsAppInvoice = (exh) => {
-    const contact = exh.contact || exh.phone || '';
-    if (!contact || contact === '-') {
-      alert('Nomor WhatsApp / HP kontak PIC tidak tersedia');
-      return;
-    }
-    const cleanPhone = contact.replace(/[^0-9]/g, '');
-    const phoneWithCountry = cleanPhone.startsWith('0') ? `62${cleanPhone.slice(1)}` : cleanPhone;
 
-    const invoiceNo = exh.invoiceNumber || `INV/EXP-${Date.now().toString().slice(-6)}`;
-    const isPaid = exh.status === 'sold' || exh.status === 'paid';
-    const isFree = exh.status === 'free' || exh.category === 'Free' || exh.price === 0;
-    const statusText = isFree ? '🎁 GRATIS (SPONSOR)' : isPaid ? '✅ LUNAS (PAID)' : '⏳ MENUNGGU PEMBAYARAN (UNPAID)';
-
-    // PPN lines follow the invoice's display setting: breakdown only when "Tampilkan rincian PPN"
-    const rpText = (n) => `Rp ${Math.round(Number(n) || 0).toLocaleString('id-ID')}`;
-    const withTax = exh.taxAmount > 0 && exh.taxMethod && exh.taxMethod !== 'none';
-    const taxLines = !withTax
-      ? `Total Tagihan: *${rpText(exh.price)}*\n`
-      : exh.taxDisplay === 'hide'
-        ? `Total Tagihan: *${rpText(exh.price)}* (${exh.taxNote || 'Harga sudah termasuk PPN'})\n`
-        : `Harga Booth (DPP): ${rpText(exh.dppAmount)}\nPPN ${exh.taxRate}%${exh.taxMethod === 'inclusive' ? ' (termasuk dalam harga)' : ''}: ${rpText(exh.taxAmount)}\nTotal Tagihan: *${rpText(exh.price)}*\n`;
-
-    const messageText = 
-`📌 *INVOICE & BUKTI RESERVASI BOOTH PAMERAN*
---------------------------------------------
-No. Invoice : *${invoiceNo}*
-Nama Brand  : *${exh.company}*
-PIC / Penanggung Jawab : ${exh.pic || exh.company} (${exh.contact})
-Nomor Booth : *#${exh.booth}*
-Kategori Brand : ${exh.brandCategory || 'Umum'}
-${taxLines}Status Pembayaran : *${statusText}*
-
-${isFree ? 'Booth ini merupakan booth fasilitas sponsor / gratis.' : isPaid ? 'Terima kasih atas pembayaran Anda! Booth resmi terkonfirmasi.' : 'Mohon segera lakukan konfirmasi pembayaran untuk mengamankan lokasi booth Anda.'}
-
-Salam hangat,
-*Tim Event Organizer & Floorplan Studio*`;
-
-    const encodedMsg = encodeURIComponent(messageText);
-
-    // Official WhatsApp Web & Mobile DeepLink API (Gratis tanpa biaya berlangganan)
-    const waWebUrl = `https://web.whatsapp.com/send?phone=${phoneWithCountry}&text=${encodedMsg}`;
-    const waApiUrl = `https://api.whatsapp.com/send?phone=${phoneWithCountry}&text=${encodedMsg}`;
-
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    window.open(isMobile ? waApiUrl : waWebUrl, '_blank');
-  };
-
-  // The invoices of this booth are the SAME invoices as in Manajemen Invoice (never a document generated here).
-  // One invoice opens directly; DP + Pelunasan (or several contracts of a merged booth) can be chosen;
-  // a booth without an invoice offers to issue one.
+  // The invoices of this booth are the SAME invoices as in Manajemen Invoice (never a document generated here)
   const openInvoice = async (id) => {
     const real = await api.fetchInvoiceById(id);
     if (real) setSelectedInvoiceForA4(real);
     else showToast('⚠️ Invoice tidak ditemukan');
-  };
-  const handleViewTenantInvoice = async (exh) => {
-    const codes = exh.mergedBooths?.length ? exh.mergedBooths.map(b => b.code) : [exh.booth];
-    const found = new Map();
-    for (const code of codes.filter(Boolean)) {
-      const res = exh.floorplanId ? await api.fetchContract({ floorplanId: exh.floorplanId, boothCode: code }) : null;
-      (res?.contract?.invoices || [])
-        .filter(i => String(i.payment_status).toUpperCase() !== 'CANCELED')
-        .forEach(i => found.set(i.id, i));
-    }
-    const list = [...found.values()];
-    if (list.length === 1) return openInvoice(list[0].id);
-    if (list.length > 1) return setInvoicePicker({ exh, invoices: list });
-    setNoInvoiceFor(exh);
   };
 
   const handleOpenFacilityForm = (exh = null) => {
@@ -394,40 +328,37 @@ Salam hangat,
         <FileText size={12} className="text-slate-600" />
         <span>Form Fasilitas</span>
       </button>
-      <button 
-        type="button"
-        onClick={() => handleViewTenantInvoice(exh)}
-        className="inline-flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold shadow-2xs hover:shadow transition-all cursor-pointer"
-        title="Lihat & Cetak Invoice A4 Resmi"
-      >
-        <FileText size={12} />
-        <span>Invoice A4</span>
-      </button>
-      <button 
-        type="button"
-        onClick={() => handleSendWhatsAppInvoice(exh)}
-        className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold shadow-2xs hover:shadow transition-all cursor-pointer"
-        title="Kirim Invoice resmi via WhatsApp Web API"
-      >
-        <Send size={12} />
-        <span>Kirim WA</span>
-      </button>
       {/* The invoices Finance issued in Manajemen Invoice: open, print or download (also for Sales) */}
-      {exh.invoices?.length > 0 && (
+      {exh.invoices?.length > 0 ? (
         <div className="w-full flex flex-wrap justify-end gap-1 pt-0.5">
           {exh.invoices.map(inv => {
             const kindLabel = { dp: 'DP', settlement: 'Pelunasan', full: 'Penuh', facility: 'Fasilitas' }[inv.kind] || 'Invoice';
             const paid = inv.paymentStatus === 'PAID';
+            // Invoice DP red, Invoice Pelunasan blue, others neutral
+            const tone = inv.kind === 'dp'
+              ? 'bg-red-50 border-red-300 text-red-700 hover:bg-red-100'
+              : inv.kind === 'settlement'
+                ? 'bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100'
+                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50';
             return (
               <button key={inv.id} type="button" onClick={() => openInvoice(inv.id)}
-                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-semibold transition-colors cursor-pointer ${paid ? 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-semibold transition-colors cursor-pointer ${tone}`}
                 title={`${kindLabel} ${inv.invoiceNumber} • Rp ${Number(inv.totalAmount).toLocaleString('id-ID')} • ${paid ? 'Lunas' : 'Belum lunas'} — buka, cetak atau unduh PDF`}>
                 <Download size={10} />
                 <span>{kindLabel} {inv.invoiceNumber}</span>
+                {paid && <span className="font-bold">✓</span>}
               </button>
             );
           })}
         </div>
+      ) : canEditInvoice ? (
+        <button type="button"
+          onClick={() => setWizardFor({ projectId: exh.floorplanId, boothCode: exh.mergedBooths?.length ? exh.mergedBooths[0].code : exh.booth })}
+          className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 underline decoration-dotted cursor-pointer">
+          Belum ada invoice — buat
+        </button>
+      ) : (
+        <span className="text-[10px] text-slate-400">Belum ada invoice</span>
       )}
     </div>
   );
@@ -746,57 +677,6 @@ Salam hangat,
           setReloadKey(k => k + 1);
         }}
       />
-
-      {/* Several invoices for this booth (DP + Pelunasan, or several contracts of a merged booth) */}
-      {invoicePicker && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onClick={() => setInvoicePicker(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
-            <div>
-              <h3 className="font-bold text-slate-900 text-sm">Pilih Invoice #{invoicePicker.exh.booth}</h3>
-              <p className="text-xs text-slate-500">{invoicePicker.exh.company} • invoice yang sama dengan di Manajemen Invoice</p>
-            </div>
-            <div className="space-y-2">
-              {invoicePicker.invoices.map(inv => {
-                const kindLabel = { dp: 'DP', settlement: 'Pelunasan', full: 'Penuh' }[inv.invoice_kind] || 'Invoice';
-                const st = String(inv.payment_status || '').toUpperCase();
-                return (
-                  <button key={inv.id} type="button" onClick={() => { setInvoicePicker(null); openInvoice(inv.id); }}
-                    className="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-bold text-slate-900"><span className="mr-1.5 px-1.5 py-0.5 rounded bg-slate-100 text-[10px]">{kindLabel}</span>{inv.invoice_number}</div>
-                      <div className="text-[11px] text-slate-500 mt-0.5">{st === 'PAID' ? 'Lunas' : st === 'PARTIAL' ? 'Dibayar sebagian' : st === 'PENDING' ? 'Menunggu verifikasi' : 'Belum dibayar'}</div>
-                    </div>
-                    <span className="font-mono font-bold text-xs text-slate-800">Rp {Number(inv.total_amount || 0).toLocaleString('id-ID')}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <button type="button" onClick={() => setInvoicePicker(null)} className="w-full py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100">Tutup</button>
-          </div>
-        </div>
-      )}
-
-      {/* Booth without an invoice: issue a real one (never a document generated here) */}
-      {noInvoiceFor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onClick={() => setNoInvoiceFor(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3 text-center" onClick={(e) => e.stopPropagation()}>
-            <AlertTriangle size={28} className="mx-auto text-amber-500" />
-            <h3 className="font-bold text-slate-900 text-sm">Booth #{noInvoiceFor.booth} belum punya invoice</h3>
-            <p className="text-xs text-slate-500">
-              Tenant {noInvoiceFor.company} sudah terdaftar, tetapi belum ada tagihan.
-              {canEditInvoice ? ' Terbitkan invoice agar tercatat di Manajemen Invoice.' : ' Minta tim Keuangan menerbitkan invoice di Manajemen Invoice; setelah itu invoice muncul di sini.'}
-            </p>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setNoInvoiceFor(null)} className="flex-1 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100">Nanti</button>
-              {canEditInvoice && <button type="button" onClick={() => {
-                const codes = noInvoiceFor.mergedBooths?.length ? noInvoiceFor.mergedBooths.map(b => b.code) : [noInvoiceFor.booth];
-                setWizardFor({ projectId: noInvoiceFor.floorplanId, boothCode: codes[0] });
-                setNoInvoiceFor(null);
-              }} className="flex-1 py-2 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700">Buat Invoice</button>}
-            </div>
-          </div>
-        </div>
-      )}
 
       <ContractInvoiceWizard
         isOpen={Boolean(wizardFor)}
