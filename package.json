@@ -1,0 +1,16 @@
+{
+  "name": "floorplan",
+  "private": true,
+  "type": "module",
+  "description": "Exhibition floorplan & booth booking (client + server). Operations: AGENTS.md §21",
+  "scripts": {
+    "test": "npm --prefix server test && npm --prefix client run build -- --logLevel error",
+    "test:server": "npm --prefix server test",
+    "build": "npm --prefix client run build",
+    "backup": "npm --prefix server run backup",
+    "staging:up": "node ops/staging.mjs up",
+    "staging:down": "node ops/staging.mjs down",
+    "staging:status": "node ops/staging.mjs status",
+    "staging:refresh-db": "node ops/staging.mjs refresh-db"
+  }
+}

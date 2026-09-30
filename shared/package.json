@@ -1,0 +1,6 @@
+{
+  "name": "floorplan-shared",
+  "private": true,
+  "type": "module",
+  "description": "Pure JS shared by server and client (booth auto-merge geometry)"
+}

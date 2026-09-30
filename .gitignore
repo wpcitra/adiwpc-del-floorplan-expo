@@ -1,0 +1,26 @@
+# Dependencies & builds
+node_modules/
+dist/
+
+# Databases, backups and runtime data: NEVER committed (personal data of exhibitors)
+server/data/
+*.db
+*.db-wal
+*.db-shm
+*.db.backup_*
+backups/
+
+# Secrets: the Claude API key and other settings live in .env on the server only
+.env
+.env.*
+!.env.example
+
+# Staging copy (git worktree + anonymized database) and logs
+.staging/
+logs/
+*.log
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

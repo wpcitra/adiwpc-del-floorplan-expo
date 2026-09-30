@@ -1,0 +1,837 @@
+import 'dotenv/config'; // .env must be loaded before the database path is resolved (imports run before index.js code)
+import Database from 'better-sqlite3';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { hashPassword } from './utils/password.js';
+import { exhibitorIdFor } from './utils/exhibitorIdentity.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Ensure data directory exists. DATA_DIR (.env) points staging / tests at their own database copy.
+export const dataDir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, '../data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+export const dbPath = path.join(dataDir, 'floorplan.db');
+const db = new Database(dbPath);
+
+// Enable WAL mode for high concurrency
+db.pragma('journal_mode = WAL');
+
+// Initialize schema according to PRD
+db.exec(`
+  CREATE TABLE IF NOT EXISTS events (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    start_date TEXT,
+    end_date TEXT,
+    status TEXT DEFAULT 'active',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS floorplans (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    canvas_fabric_json TEXT,
+    metadata_json TEXT,
+    blueprint_json TEXT,
+    status TEXT DEFAULT 'draft',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS booths (
+    id TEXT PRIMARY KEY,
+    floorplan_id TEXT NOT NULL,
+    code TEXT NOT NULL,
+    category TEXT DEFAULT 'Standard',
+    price INTEGER DEFAULT 5000000,
+    status TEXT DEFAULT 'available',
+    owner_name TEXT DEFAULT '',
+    width_m REAL DEFAULT 3,
+    height_m REAL DEFAULT 3,
+    shape TEXT DEFAULT 'rectangle',
+    facilities_json TEXT,
+    coordinates_json TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (floorplan_id) REFERENCES floorplans(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY,
+    floorplan_id TEXT NOT NULL,
+    booth_id TEXT,
+    booth_code TEXT NOT NULL,
+    company_name TEXT NOT NULL,
+    pic_name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    total_amount INTEGER NOT NULL,
+    payment_method TEXT DEFAULT 'qris',
+    payment_status TEXT DEFAULT 'PAID',
+    invoice_number TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (floorplan_id) REFERENCES floorplans(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS venue_items (
+    id TEXT PRIMARY KEY,
+    floorplan_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    category TEXT,
+    label TEXT,
+    width_m REAL,
+    height_m REAL,
+    coordinates_json TEXT,
+    FOREIGN KEY (floorplan_id) REFERENCES floorplans(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS invoices (
+    id TEXT PRIMARY KEY,
+    invoice_number TEXT NOT NULL UNIQUE,
+    floorplan_id TEXT,
+    booth_id TEXT,
+    booth_code TEXT,
+    event_id TEXT,
+    event_title TEXT,
+    event_venue TEXT,
+    client_name TEXT NOT NULL,
+    company_name TEXT NOT NULL,
+    client_email TEXT,
+    client_phone TEXT,
+    client_address TEXT,
+    client_npwp TEXT,
+    issue_date TEXT NOT NULL,
+    due_date TEXT NOT NULL,
+    items_json TEXT,
+    subtotal INTEGER NOT NULL,
+    discount_type TEXT DEFAULT 'nominal',
+    discount_value INTEGER DEFAULT 0,
+    discount_amount INTEGER DEFAULT 0,
+    discount_reason TEXT DEFAULT '',
+    tax_rate REAL DEFAULT 0,
+    tax_amount INTEGER DEFAULT 0,
+    total_amount INTEGER NOT NULL,
+    payment_status TEXT DEFAULT 'UNPAID',
+    payment_method TEXT DEFAULT 'Bank Transfer',
+    bank_details_json TEXT,
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS invoice_settings (
+    id TEXT PRIMARY KEY,
+    config_json TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS booth_categories (
+    id TEXT PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    width_m REAL DEFAULT 3,
+    height_m REAL DEFAULT 3,
+    default_price INTEGER DEFAULT 5000000,
+    color TEXT DEFAULT '#3b82f6',
+    border_color TEXT DEFAULT '#1d4ed8',
+    is_free INTEGER DEFAULT 0,
+    description TEXT DEFAULT '',
+    sort_order INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS brand_categories (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    is_active INTEGER DEFAULT 1,
+    sort_order INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS payment_methods (
+    id TEXT PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    icon_type TEXT DEFAULT 'qris',
+    is_active INTEGER DEFAULT 1,
+    sort_order INTEGER DEFAULT 0,
+    instructions TEXT DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS preset_layouts (
+    id TEXT PRIMARY KEY,
+    key TEXT UNIQUE,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    tag TEXT DEFAULT 'Preset Custom',
+    canvas_fabric_json TEXT,
+    metadata_json TEXT,
+    is_system INTEGER DEFAULT 0,
+    sort_order INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS facility_forms (
+    id TEXT PRIMARY KEY,
+    project_id TEXT DEFAULT 'global',
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    event_title TEXT DEFAULT 'Indonesia International Expo 2026',
+    deadline_date TEXT,
+    terms_notes TEXT DEFAULT '',
+    is_active INTEGER DEFAULT 1,
+    is_template INTEGER DEFAULT 0,
+    template_name TEXT DEFAULT '',
+    items_json TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS facility_requests (
+    id TEXT PRIMARY KEY,
+    form_id TEXT NOT NULL,
+    project_id TEXT DEFAULT 'global',
+    booth_code TEXT NOT NULL,
+    company_name TEXT NOT NULL,
+    pic_name TEXT NOT NULL,
+    phone TEXT DEFAULT '',
+    email TEXT DEFAULT '',
+    items_json TEXT NOT NULL,
+    total_amount INTEGER NOT NULL DEFAULT 0,
+    status TEXT DEFAULT 'PENDING',
+    notes TEXT DEFAULT '',
+    invoice_id TEXT DEFAULT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// Migration: ensure shape & brand_category columns exist
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN shape TEXT DEFAULT 'rectangle'");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN brand_category TEXT DEFAULT ''");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE orders ADD COLUMN brand_category TEXT DEFAULT ''");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE brand_categories ADD COLUMN project_id TEXT DEFAULT 'global'");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE booth_categories ADD COLUMN project_id TEXT DEFAULT 'global'");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN discount_type TEXT DEFAULT 'nominal'");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN discount_value REAL DEFAULT 0");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN discount_amount REAL DEFAULT 0");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN discount_reason TEXT DEFAULT ''");
+} catch (e) {}
+
+// Migration: Down Payment (Uang Muka), Paid Amount, and Remaining Balance
+try {
+  db.exec("ALTER TABLE invoices ADD COLUMN paid_amount REAL DEFAULT 0");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE invoices ADD COLUMN remaining_amount REAL DEFAULT 0");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE invoices ADD COLUMN payment_type TEXT DEFAULT 'full'");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE invoices ADD COLUMN dp_percent REAL DEFAULT 0");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE orders ADD COLUMN paid_amount REAL DEFAULT 0");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE orders ADD COLUMN remaining_amount REAL DEFAULT 0");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE orders ADD COLUMN payment_type TEXT DEFAULT 'full'");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE orders ADD COLUMN dp_percent REAL DEFAULT 0");
+} catch (e) {}
+
+// Migration: Soft delete support across entities
+try {
+  db.exec("ALTER TABLE floorplans ADD COLUMN deleted_at DATETIME DEFAULT NULL");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN deleted_at DATETIME DEFAULT NULL");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE orders ADD COLUMN deleted_at DATETIME DEFAULT NULL");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE invoices ADD COLUMN deleted_at DATETIME DEFAULT NULL");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE venue_items ADD COLUMN deleted_at DATETIME DEFAULT NULL");
+} catch (e) {}
+
+// Migration: Full Tenant Biodata and Registration Source
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN pic_name TEXT DEFAULT ''");
+} catch (e) {}
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN email TEXT DEFAULT ''");
+} catch (e) {}
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN phone TEXT DEFAULT ''");
+} catch (e) {}
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN registration_source TEXT DEFAULT 'online'");
+} catch (e) {}
+try {
+  db.exec("ALTER TABLE booths ADD COLUMN registered_by TEXT DEFAULT ''");
+} catch (e) {}
+
+try {
+  db.exec("ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'online'");
+} catch (e) {}
+try {
+  db.exec("ALTER TABLE orders ADD COLUMN admin_name TEXT DEFAULT ''");
+} catch (e) {}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS activity_logs (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    target_title TEXT NOT NULL,
+    user_name TEXT DEFAULT 'Admin',
+    details_json TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// Populate initial remaining_amount and paid_amount for existing records if uninitialized
+try {
+  db.exec(`
+    UPDATE invoices 
+    SET paid_amount = total_amount, remaining_amount = 0, payment_type = 'full'
+    WHERE (paid_amount IS NULL OR (paid_amount = 0 AND (remaining_amount IS NULL OR remaining_amount = 0))) 
+      AND UPPER(payment_status) = 'PAID';
+
+    UPDATE invoices 
+    SET paid_amount = 0, remaining_amount = total_amount, payment_type = 'full'
+    WHERE (remaining_amount IS NULL OR (paid_amount = 0 AND remaining_amount = 0)) 
+      AND UPPER(payment_status) != 'PAID';
+
+    UPDATE orders 
+    SET paid_amount = total_amount, remaining_amount = 0, payment_type = 'full'
+    WHERE (paid_amount IS NULL OR (paid_amount = 0 AND (remaining_amount IS NULL OR remaining_amount = 0))) 
+      AND UPPER(payment_status) = 'PAID';
+
+    UPDATE orders 
+    SET paid_amount = 0, remaining_amount = total_amount, payment_type = 'full'
+    WHERE (remaining_amount IS NULL OR (paid_amount = 0 AND remaining_amount = 0)) 
+      AND UPPER(payment_status) != 'PAID';
+  `);
+} catch (e) {}
+
+// Populate default brand_category for existing sample booths & orders if empty
+try {
+  db.exec(`
+    UPDATE orders SET brand_category = 'Teknologi & Gadget' WHERE (brand_category IS NULL OR brand_category = '') AND (company_name LIKE '%Telkom%' OR company_name LIKE '%Samsung%' OR company_name LIKE '%Google%' OR company_name LIKE '%Tokopedia%');
+    UPDATE orders SET brand_category = 'Kuliner & F&B' WHERE (brand_category IS NULL OR brand_category = '') AND company_name LIKE '%Indofood%';
+    UPDATE orders SET brand_category = 'Otomotif & Aksesoris' WHERE (brand_category IS NULL OR brand_category = '') AND company_name LIKE '%Astra%';
+    UPDATE orders SET brand_category = 'Lainnya' WHERE (brand_category IS NULL OR brand_category = '');
+
+    UPDATE booths SET brand_category = 'Teknologi & Gadget' WHERE (brand_category IS NULL OR brand_category = '') AND (owner_name LIKE '%Telkom%' OR owner_name LIKE '%Samsung%' OR owner_name LIKE '%Google%' OR owner_name LIKE '%Tokopedia%');
+    UPDATE booths SET brand_category = 'Kuliner & F&B' WHERE (brand_category IS NULL OR brand_category = '') AND owner_name LIKE '%Indofood%';
+    UPDATE booths SET brand_category = 'Otomotif & Aksesoris' WHERE (brand_category IS NULL OR brand_category = '') AND owner_name LIKE '%Astra%';
+    UPDATE booths SET brand_category = 'Lainnya' WHERE (brand_category IS NULL OR brand_category = '') AND owner_name IS NOT NULL AND TRIM(owner_name) != '';
+  `);
+} catch (e) {}
+
+// Seed default categories if table is empty
+const catCount = db.prepare('SELECT COUNT(*) as count FROM booth_categories').get().count;
+if (catCount === 0) {
+  const defaultCats = [
+    { id: 'cat_standard', key: 'Standard', name: 'Standard (3x3m)', width_m: 3, height_m: 3, default_price: 5000000, color: '#3b82f6', border_color: '#1d4ed8', is_free: 0, description: 'Booth standar partisi 3x3m', sort_order: 1 },
+    { id: 'cat_corner', key: 'Corner', name: 'Corner Booth (3x3m)', width_m: 3, height_m: 3, default_price: 7500000, color: '#06b6d4', border_color: '#0891b2', is_free: 0, description: 'Booth sudut hook 2 sisi terbuka', sort_order: 2 },
+    { id: 'cat_premium', key: 'Premium', name: 'Premium (6x3m)', width_m: 6, height_m: 3, default_price: 12000000, color: '#8b5cf6', border_color: '#6d28d9', is_free: 0, description: 'Booth premium medium frontage lebar', sort_order: 3 },
+    { id: 'cat_island', key: 'Island', name: 'VIP Island (6x6m)', width_m: 6, height_m: 6, default_price: 25000000, color: '#f59e0b', border_color: '#d97706', is_free: 0, description: 'VIP Island pulau 4 sisi terbuka', sort_order: 4 },
+    { id: 'cat_free', key: 'Free', name: 'Free / Additional (Gratis)', width_m: 2, height_m: 2, default_price: 0, color: '#10b981', border_color: '#059669', is_free: 1, description: 'Booth gratis / sponsor / fasilitas tambahan (Rp 0)', sort_order: 5 },
+    { id: 'cat_custom', key: 'Custom', name: 'Custom Shape', width_m: 4, height_m: 4, default_price: 10000000, color: '#ec4899', border_color: '#be185d', is_free: 0, description: 'Kategori bentuk khusus fleksibel', sort_order: 6 }
+  ];
+
+  const insertCat = db.prepare(`
+    INSERT INTO booth_categories (id, key, name, width_m, height_m, default_price, color, border_color, is_free, description, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  defaultCats.forEach(c => {
+    insertCat.run(c.id, c.key, c.name, c.width_m, c.height_m, c.default_price, c.color, c.border_color, c.is_free, c.description, c.sort_order);
+  });
+}
+
+// Seed default brand categories if table is empty
+const brandCatCount = db.prepare('SELECT COUNT(*) as count FROM brand_categories').get().count;
+if (brandCatCount === 0) {
+  const defaultBrandCats = [
+    'Fashion & Apparel',
+    'Kuliner & F&B',
+    'Travel & Tourism',
+    'Education & Academy',
+    'Teknologi & Gadget',
+    'Kesehatan & Beauty',
+    'Otomotif & Aksesoris',
+    'Properti & Interior',
+    'Kerajinan & Craft',
+    'Lainnya'
+  ];
+
+  const insertBrandCat = db.prepare(`
+    INSERT INTO brand_categories (id, name, is_active, sort_order)
+    VALUES (?, ?, 1, ?)
+  `);
+
+  defaultBrandCats.forEach((name, idx) => {
+    insertBrandCat.run(`bcat_${idx + 1}`, name, idx + 1);
+  });
+}
+
+// Seed default payment methods if table is empty
+const pmCount = db.prepare('SELECT COUNT(*) as count FROM payment_methods').get().count;
+if (pmCount === 0) {
+  const defaultPMs = [
+    { id: 'pm_qris', key: 'qris', name: 'QRIS Instan', description: 'GoPay, OVO, Dana, Shopee, BCA QR', icon_type: 'qris', sort_order: 1 },
+    { id: 'pm_bca_va', key: 'bca_va', name: 'BCA Virtual Account', description: 'Verifikasi Otomatis Bank BCA', icon_type: 'bank', sort_order: 2 },
+    { id: 'pm_mandiri_va', key: 'mandiri_va', name: 'Mandiri / BNI VA', description: 'Virtual Account Bank Mandiri / BNI', icon_type: 'bank', sort_order: 3 },
+    { id: 'pm_cc', key: 'cc', name: 'Kartu Kredit / Debit', description: 'Visa, Mastercard, JCB', icon_type: 'card', sort_order: 4 },
+    { id: 'pm_transfer', key: 'manual_transfer', name: 'Transfer Bank Manual', description: 'Transfer ke Rekening Resmi EO', icon_type: 'transfer', sort_order: 5 }
+  ];
+
+  const insertPM = db.prepare(`
+    INSERT INTO payment_methods (id, key, name, description, icon_type, is_active, sort_order)
+    VALUES (?, ?, ?, ?, ?, 1, ?)
+  `);
+
+  defaultPMs.forEach(pm => {
+    insertPM.run(pm.id, pm.key, pm.name, pm.description, pm.icon_type, pm.sort_order);
+  });
+}
+
+// Seed default preset layouts if table is empty
+const presetCount = db.prepare('SELECT COUNT(*) as count FROM preset_layouts').get().count;
+if (presetCount === 0) {
+  const defaultPresets = [
+    {
+      id: 'preset_blank',
+      key: 'blank',
+      title: 'Kanvas Kosong (Blank)',
+      description: 'Mulai dari kanvas bersih dengan grid 1 meter untuk mendesain denah dari nol.',
+      tag: 'Kanvas Bersih',
+      is_system: 1,
+      sort_order: 1
+    }
+  ];
+
+  const insertPreset = db.prepare(`
+    INSERT INTO preset_layouts (id, key, title, description, tag, is_system, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  defaultPresets.forEach(p => {
+    insertPreset.run(p.id, p.key, p.title, p.description, p.tag, p.is_system, p.sort_order);
+  });
+}
+
+// Seed default facility templates and default active form if empty
+const facilityFormCount = db.prepare('SELECT COUNT(*) as count FROM facility_forms').get().count;
+if (facilityFormCount === 0) {
+  const defaultStandardItems = [
+    { id: 'item_pwr_2a', name: 'Daya Listrik 2 Ampere (440 Watt)', category: 'Listrik & Pencahayaan', unit: 'Unit', price: 750000, max_qty: 10, description: 'Termasuk instalasi kabel dan MCB pengaman' },
+    { id: 'item_pwr_4a', name: 'Daya Listrik 4 Ampere (880 Watt)', category: 'Listrik & Pencahayaan', unit: 'Unit', price: 1400000, max_qty: 5, description: 'Daya listrik ideal untuk display & komputer' },
+    { id: 'item_tbl_ibm', name: 'Meja IBM Standard (180 x 45 cm)', category: 'Furnitur & Meja-Kursi', unit: 'Unit', price: 150000, max_qty: 10, description: 'Rangka besi lipat dengan taplak meja kain putih/hitam' },
+    { id: 'item_chr_futura', name: 'Kursi Susun Futura (Cover Hitam)', category: 'Furnitur & Meja-Kursi', unit: 'Unit', price: 65000, max_qty: 20, description: 'Busa tebal empuk dan cover kain resmi' },
+    { id: 'item_spot_led', name: 'Lampu Spotlight LED 50 Watt', category: 'Listrik & Pencahayaan', unit: 'Titik', price: 120000, max_qty: 8, description: 'Pencahayaan warm white terarah ke produk display' },
+    { id: 'item_pwr_strip', name: 'Stop Kontak 4 Lubang + Kabel 5 Meter', category: 'Listrik & Pencahayaan', unit: 'Unit', price: 85000, max_qty: 6, description: 'Standar SNI dengan saklar on/off individual' },
+    { id: 'item_carpet', name: 'Karpet Buana Standar Baru (per m²)', category: 'Konstruksi & Karpet', unit: 'm²', price: 50000, max_qty: 36, description: 'Pilihan warna: Merah, Biru, Abu-abu, Hitam' },
+    { id: 'item_bin', name: 'Waste Basket / Tempat Sampah Kecil', category: 'Kebersihan & Aksesoris', unit: 'Unit', price: 35000, max_qty: 4, description: 'Termasuk 3 kantong plastik sampah per hari' }
+  ];
+
+  const defaultCulinaryItems = [
+    { id: 'item_pwr_10a', name: 'Daya Listrik Heavy Duty 10 Ampere (2200W)', category: 'Listrik & Pencahayaan', unit: 'Unit', price: 3200000, max_qty: 3, description: 'Khusus oven listrik, fryer, microwave F&B' },
+    { id: 'item_pwr_16a', name: 'Daya Listrik 16 Ampere (3500W)', category: 'Listrik & Pencahayaan', unit: 'Unit', price: 4800000, max_qty: 2, description: 'Daya ekstra untuk kompor induksi komersial' },
+    { id: 'item_sink_port', name: 'Wastafel Portable Cuci Piring & Tangan', category: 'Sanitasi & Air', unit: 'Unit', price: 650000, max_qty: 2, description: 'Lengkap dengan kran dan ember penampungan air' },
+    { id: 'item_water_conn', name: 'Instalasi Sambungan Air Bersih & Pembuangan', category: 'Sanitasi & Air', unit: 'Titik', price: 1200000, max_qty: 2, description: 'Koneksi langsung ke pipa pasokan gedung venue' },
+    { id: 'item_tbl_ss', name: 'Meja Kerja Stainless Steel 120x60cm', category: 'Furnitur & Meja-Kursi', unit: 'Unit', price: 350000, max_qty: 4, description: 'Food grade higienis anti karat' },
+    { id: 'item_bin_jumbo', name: 'Tempat Sampah Jumbo 120 Liter + Roda', category: 'Kebersihan & Aksesoris', unit: 'Unit', price: 90000, max_qty: 4, description: 'Kapasitas besar cocok untuk limbah basah makanan' },
+    { id: 'item_apar', name: 'Tabung APAR Dry Powder 3 Kg (Safety)', category: 'Keamanan & Safety', unit: 'Unit', price: 175000, max_qty: 2, description: 'Sesuai regulasi standar dinas pemadam kebakaran expo' }
+  ];
+
+  const defaultTechItems = [
+    { id: 'item_lan_50m', name: 'Dedicated Kabel LAN Internet 50 Mbps', category: 'Jaringan & IT', unit: 'Titik', price: 1500000, max_qty: 4, description: 'Koneksi fiber optik stabil tanpa gangguan WiFi' },
+    { id: 'item_tv_50', name: 'Smart TV LED 50 Inch + Standing Bracket', category: 'Multimedia & Display', unit: 'Hari', price: 1250000, max_qty: 4, description: 'Resolusi 4K UHD lengkap port HDMI dan USB' },
+    { id: 'item_stab_1200', name: 'Stabilizer Voltase Stavol 1200 VA', category: 'Listrik & Pencahayaan', unit: 'Unit', price: 300000, max_qty: 4, description: 'Melindungi server mini, laptop, dan perangkat sensitif' },
+    { id: 'item_cntr_bar', name: 'Meja Counter Bar Minimalis Glossy', category: 'Furnitur & Meja-Kursi', unit: 'Unit', price: 450000, max_qty: 4, description: 'Desain elegan untuk registrasi atau demo produk tech' },
+    { id: 'item_barstool', name: 'Kursi Barstool Putar Putih Chrome', category: 'Furnitur & Meja-Kursi', unit: 'Unit', price: 125000, max_qty: 6, description: 'Tinggi hidrolik dapat disesuaikan' },
+    { id: 'item_scanner', name: 'Barcode / 2D QR Scanner Handheld USB', category: 'Peralatan IT', unit: 'Unit', price: 200000, max_qty: 5, description: 'Untuk pemindaian badge tiket pengunjung pameran' }
+  ];
+
+  const defaultCustomItems = [
+    { id: 'item_spot_track', name: 'Lampu Sorot Track Rail High CRI 150W', category: 'Listrik & Pencahayaan', unit: 'Titik', price: 250000, max_qty: 12, description: 'Warna cahaya akurat untuk mobil/motor atau galeri seni' },
+    { id: 'item_stage_wood', name: 'Flooring Panggung Kayu Melamin Glossy (m²)', category: 'Konstruksi & Karpet', unit: 'm²', price: 180000, max_qty: 72, description: 'Tinggi panggung 10cm dengan lis aluminium' },
+    { id: 'item_brouch_stnd', name: 'Standing Akrilik Display Brosur 4 Tingkat', category: 'Aksesoris & Branding', unit: 'Unit', price: 100000, max_qty: 4, description: 'Bahan akrilik transparan tebal 3mm' },
+    { id: 'item_clean_daily', name: 'Layanan Pembersihan Booth Harian (Dedicated)', category: 'Kebersihan & Layanan', unit: 'Hari', price: 150000, max_qty: 4, description: 'Pembersihan sebelum expo buka & setelah tutup' }
+  ];
+
+  const insertForm = db.prepare(`
+    INSERT INTO facility_forms (
+      id, project_id, title, description, event_title, deadline_date, terms_notes, is_active, is_template, template_name, items_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  // 1. Template Standar Trade Expo
+  insertForm.run(
+    'tpl_standard_expo',
+    'global',
+    'Formulir Standar Fasilitas Pameran Dagang (All-in-One)',
+    'Paket kebutuhan umum untuk booth standar partisi maupun hook (listrik, meja kursi, lampu, stop kontak).',
+    'Indonesia International Expo 2026',
+    '2026-10-05',
+    '1. Pengajuan paling lambat H-10 sebelum loading in.\n2. Pembatalan setelah H-5 dikenakan denda 50%.\n3. Dilarang memasang sambungan listrik ilegal.',
+    0,
+    1,
+    'Template Standar Expo (All-in-One)',
+    JSON.stringify(defaultStandardItems)
+  );
+
+  // 2. Template Kuliner & F&B
+  insertForm.run(
+    'tpl_culinary_expo',
+    'global',
+    'Formulir Fasilitas Khusus Food & Beverage (F&B)',
+    'Dilengkapi daya listrik kapasitas besar, wastafel portable, instalasi saluran air, dan tempat sampah jumbo.',
+    'Indonesia International Expo 2026',
+    '2026-10-05',
+    '1. Wajib memiliki tabung APAR di dalam area booth memasak.\n2. Saluran pembuangan minyak wajib menggunakan grease trap.',
+    0,
+    1,
+    'Template Kuliner & F&B',
+    JSON.stringify(defaultCulinaryItems)
+  );
+
+  // 3. Template IT & Teknologi
+  insertForm.run(
+    'tpl_tech_expo',
+    'global',
+    'Formulir Fasilitas Teknologi, Gadget & Startup',
+    'Koneksi kabel LAN internet dedicated, TV LED display, stabilizer, dan meja counter demo.',
+    'Indonesia International Expo 2026',
+    '2026-10-05',
+    '1. Kabel internet tidak boleh di-share ke booth lain.\n2. Penggunaan display audio harap menjaga batas kebisingan 70dB.',
+    0,
+    1,
+    'Template Teknologi & Startup',
+    JSON.stringify(defaultTechItems)
+  );
+
+  // 4. Template Luxury / Otomotif
+  insertForm.run(
+    'tpl_custom_expo',
+    'global',
+    'Formulir Fasilitas Booth Khusus & Otomotif',
+    'Flooring panggung melamin, lampu spotlight track rel, dan dedicated cleaning service.',
+    'Indonesia International Expo 2026',
+    '2026-10-05',
+    '1. Pemasangan panggung dan konstruksi harus diverifikasi oleh Floor Manager venue.',
+    0,
+    1,
+    'Template Custom & Otomotif',
+    JSON.stringify(defaultCustomItems)
+  );
+
+  // 5. Formulir Aktif Default Utama (Siap Dipakai & Dikirim ke Tenant)
+  insertForm.run(
+    'form_active_default',
+    'global',
+    'Formulir Permintaan Fasilitas Tambahan Expo 2026',
+    'Silakan pilih kebutuhan fasilitas tambahan untuk booth pameran Anda. Tim teknis kami akan menyiapkan sebelum jadwal loading-in.',
+    'Indonesia International Expo 2026',
+    '2026-10-05',
+    '1. Batas akhir pengajuan fasilitas tambahan adalah H-10 sebelum pelaksanaan expo.\n2. Seluruh pesanan fasilitas akan diterbitkan invoice resmi dan wajib diselesaikan pembayarannya sebelum hari loading-in.\n3. Kerusakan atau kehilangan inventaris sewaan menjadi tanggung jawab tenant sepenuhnya.',
+    1,
+    0,
+    '',
+    JSON.stringify(defaultStandardItems)
+  );
+}
+
+// Users & Roles (superadmin, finance, sales, operations)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    phone TEXT DEFAULT '',
+    role TEXT NOT NULL CHECK (role IN ('superadmin', 'finance', 'sales', 'operations')),
+    password_hash TEXT NOT NULL,
+    is_active INTEGER DEFAULT 1,
+    last_login_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// Booth contract billing: DP + Pelunasan invoices (see utils/contractBilling.js)
+//   invoice_kind: 'full' (single/legacy invoice) | 'dp' | 'settlement' | 'facility' (add-on, not part of the booth contract)
+//   related_invoice_id: settlement -> its DP invoice
+//   contract_total / contract_tax_rate: booth contract value (after private discount, incl. PPN) when the invoice was issued
+for (const col of [
+  "ALTER TABLE invoices ADD COLUMN invoice_kind TEXT DEFAULT 'full'",
+  "ALTER TABLE invoices ADD COLUMN related_invoice_id TEXT",
+  "ALTER TABLE invoices ADD COLUMN contract_total REAL",
+  "ALTER TABLE invoices ADD COLUMN contract_tax_rate REAL"
+]) {
+  try { db.exec(col); } catch (e) {}
+}
+try {
+  db.exec(`
+    UPDATE invoices SET invoice_kind = 'facility'
+    WHERE (invoice_kind IS NULL OR invoice_kind = 'full') AND (id LIKE 'inv_fac_%' OR invoice_number LIKE 'INV/FAC/%');
+    UPDATE invoices SET invoice_kind = 'full' WHERE invoice_kind IS NULL;
+    -- Existing invoices are "Invoice Penuh": the contract value is the invoice total
+    UPDATE invoices SET contract_total = total_amount WHERE contract_total IS NULL AND invoice_kind = 'full';
+    UPDATE invoices SET contract_tax_rate = COALESCE(tax_rate, 0) WHERE contract_tax_rate IS NULL AND invoice_kind != 'facility';
+  `);
+} catch (e) {}
+
+// Public link per published floorplan: /live/<public_slug> (several floorplans can be live at once)
+try {
+  db.exec("ALTER TABLE floorplans ADD COLUMN public_slug TEXT");
+} catch (e) {}
+try {
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_floorplans_public_slug ON floorplans(public_slug) WHERE public_slug IS NOT NULL");
+} catch (e) {}
+
+// Element-specific attributes of venue items (e.g. doors: doorType, swing, mirrored, angle)
+try {
+  db.exec("ALTER TABLE venue_items ADD COLUMN properties_json TEXT");
+} catch (e) {}
+
+// Login sessions (only a SHA-256 hash of the bearer token is stored)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ip TEXT DEFAULT '',
+    user_agent TEXT DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+`);
+
+// Audit trail: who changed what, when (written automatically for every authenticated mutation + login events)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    user_name TEXT NOT NULL,
+    user_role TEXT,
+    action TEXT NOT NULL,
+    category TEXT NOT NULL,
+    target TEXT DEFAULT '',
+    summary TEXT DEFAULT '',
+    method TEXT,
+    path TEXT,
+    status_code INTEGER,
+    ip TEXT DEFAULT '',
+    details_json TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);
+  CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
+`);
+
+// Role "operations" (Tim Operasional): older databases have a CHECK constraint without it, rebuild the table once
+try {
+  const usersSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()?.sql || '';
+  if (usersSql && !usersSql.includes("'operations'")) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE users_new (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          phone TEXT DEFAULT '',
+          role TEXT NOT NULL CHECK (role IN ('superadmin', 'finance', 'sales', 'operations')),
+          password_hash TEXT NOT NULL,
+          is_active INTEGER DEFAULT 1,
+          last_login_at DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO users_new (id, name, email, phone, role, password_hash, is_active, last_login_at, created_at, updated_at)
+          SELECT id, name, email, phone, role, password_hash, is_active, last_login_at, created_at, updated_at FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+      `);
+    })();
+  }
+} catch (e) {
+  console.error('Migrasi role operations gagal:', e.message);
+}
+
+// Operational layer (Denah Operasional): one layer per sales floorplan, stored apart from the sales canvas.
+//   ops_elements    elements added by the operations team (Fabric object JSON), optionally anchored to a booth
+//   ops_booth_data  operations-only fields per booth (power, water, internet, setup status, notes)
+//   ops_layers      layer version (optimistic locking between operations users) & last editor
+//   ops_seen        per user: booth snapshot of the sales layer when the operational floorplan was last opened
+//   notifications   in-app notifications (e.g. "Denah Sales berubah" for the operations team)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ops_elements (
+    id TEXT NOT NULL,
+    floorplan_id TEXT NOT NULL,
+    type TEXT,
+    label TEXT DEFAULT '',
+    object_json TEXT NOT NULL,
+    anchor_booth_id TEXT,
+    anchor_booth_code TEXT,
+    public_visible INTEGER DEFAULT 0,
+    sort_order INTEGER DEFAULT 0,
+    created_by TEXT,
+    updated_by TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME,
+    PRIMARY KEY (floorplan_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ops_elements_fp ON ops_elements(floorplan_id, deleted_at);
+
+  CREATE TABLE IF NOT EXISTS ops_booth_data (
+    floorplan_id TEXT NOT NULL,
+    booth_key TEXT NOT NULL,
+    booth_code TEXT,
+    power_watt INTEGER DEFAULT 0,
+    water_needed INTEGER DEFAULT 0,
+    internet TEXT DEFAULT 'tidak' CHECK (internet IN ('tidak', 'wifi', 'lan')),
+    setup_status TEXT DEFAULT 'belum_datang' CHECK (setup_status IN ('belum_datang', 'proses_setup', 'siap', 'bongkar')),
+    notes TEXT DEFAULT '',
+    updated_by TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (floorplan_id, booth_key)
+  );
+
+  CREATE TABLE IF NOT EXISTS ops_layers (
+    floorplan_id TEXT PRIMARY KEY,
+    version INTEGER DEFAULT 0,
+    updated_by TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS ops_seen (
+    user_id TEXT NOT NULL,
+    floorplan_id TEXT NOT NULL,
+    snapshot_json TEXT,
+    seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, floorplan_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    floorplan_id TEXT,
+    title TEXT NOT NULL,
+    body TEXT DEFAULT '',
+    link TEXT DEFAULT '',
+    meta_json TEXT,
+    is_read INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read);
+`);
+
+// Auto-merge booth (AGENTS.md §18): exhibitor identity per booth / order and the "Tampilkan Terpisah" switch
+for (const col of [
+  "ALTER TABLE booths ADD COLUMN exhibitor_id TEXT DEFAULT ''",
+  "ALTER TABLE booths ADD COLUMN merge_separate INTEGER DEFAULT 0",
+  "ALTER TABLE orders ADD COLUMN exhibitor_id TEXT DEFAULT ''"
+]) {
+  try { db.exec(col); } catch (e) {}
+}
+try {
+  // Old data: booths / orders that already have a tenant get their exhibitor ID (email first, company name as fallback)
+  const needId = db.prepare(`
+    SELECT b.id, b.floorplan_id, b.code, b.email, b.owner_name,
+      (SELECT i.client_email FROM invoices i WHERE i.floorplan_id = b.floorplan_id AND i.deleted_at IS NULL
+         AND (LOWER(TRIM(i.booth_code)) = LOWER(TRIM(b.code)) OR ('+' || LOWER(TRIM(i.booth_code)) || '+') LIKE ('%+' || LOWER(TRIM(b.code)) || '+%'))
+       ORDER BY i.created_at DESC LIMIT 1) AS invoice_email
+    FROM booths b
+    WHERE COALESCE(b.exhibitor_id, '') = '' AND TRIM(COALESCE(b.owner_name, '')) != '' AND LOWER(COALESCE(b.status, '')) IN ('reserved', 'sold', 'booked')
+  `).all();
+  const setId = db.prepare('UPDATE booths SET exhibitor_id = ? WHERE id = ?');
+  needId.forEach(b => { const id = exhibitorIdFor(b.email || b.invoice_email, b.owner_name); if (id) setId.run(id, b.id); });
+  const orders = db.prepare("SELECT id, email, company_name FROM orders WHERE COALESCE(exhibitor_id, '') = ''").all();
+  const setOrder = db.prepare('UPDATE orders SET exhibitor_id = ? WHERE id = ?');
+  orders.forEach(o => { const id = exhibitorIdFor(o.email, o.company_name); if (id) setOrder.run(id, o.id); });
+} catch (e) {
+  console.error('Backfill exhibitor_id gagal:', e.message);
+}
+
+// Seed default users (one per role) if table is empty
+const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+if (userCount === 0) {
+  const insertUser = db.prepare(`
+    INSERT INTO users (id, name, email, phone, role, password_hash)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  insertUser.run('usr_superadmin', 'Super Admin', 'superadmin@expo.local', '', 'superadmin', hashPassword('superadmin123'));
+  insertUser.run('usr_finance', 'Tim Keuangan', 'keuangan@expo.local', '', 'finance', hashPassword('keuangan123'));
+  insertUser.run('usr_sales', 'Tim Sales', 'sales@expo.local', '', 'sales', hashPassword('sales123'));
+}
+// Default operations account (added with the operational floorplan feature)
+if (!db.prepare("SELECT 1 FROM users WHERE role = 'operations' LIMIT 1").get() && !db.prepare("SELECT 1 FROM users WHERE email = 'operasional@expo.local'").get()) {
+  db.prepare(`INSERT INTO users (id, name, email, phone, role, password_hash) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('usr_operations', 'Tim Operasional', 'operasional@expo.local', '', 'operations', hashPassword('operasional123'));
+}
+
+export default db;
