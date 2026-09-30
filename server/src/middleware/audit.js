@@ -24,6 +24,16 @@ const AUDIT_RULES = [
   { method: 'POST', path: /^\/invoices\/config$/, category: 'Invoice', action: 'Ubah pengaturan/template invoice' },
   { method: 'POST', path: /^\/invoices$/, category: 'Invoice', action: 'Buat invoice',
     describe: (req) => ({ target: `${req.body.invoiceNumber || req.body.invoice_number || ''} ${req.body.companyName || req.body.company_name || ''}`.trim() }) },
+  { method: 'POST', path: /^\/invoices\/([^/]+)\/terms$/, category: 'Invoice', action: 'Ubah DP / pajak / tampilan invoice',
+    before: (m) => invoiceById(m[1]),
+    describe: (req, m, before) => ({
+      target: invoiceLabel(before, m[1]),
+      summary: [
+        req.body.dpValue !== undefined ? `DP ${req.body.dpMode === 'nominal' ? `Rp ${Number(req.body.dpValue || 0).toLocaleString('id-ID')}` : `${req.body.dpValue}%`}` : '',
+        req.body.taxMethod ? `PPN: ${req.body.taxMethod}${req.body.taxDisplay ? ` (${req.body.taxDisplay})` : ''}` : '',
+        req.body.display ? 'pengaturan tampilan dokumen' : ''
+      ].filter(Boolean).join(', ')
+    }) },
   { method: 'PUT', path: /^\/invoices\/([^/]+)$/, category: 'Invoice', action: 'Edit invoice',
     before: (m) => invoiceById(m[1]), describe: (req, m, before) => ({ target: invoiceLabel(before, m[1]) }) },
   { method: 'DELETE', path: /^\/invoices\/([^/]+)$/, category: 'Invoice', action: 'Hapus invoice',

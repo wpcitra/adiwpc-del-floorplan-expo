@@ -33,7 +33,7 @@ const plusDays = (days) => new Date(Date.now() + days * 86400000).toISOString().
 
 // "+ Buat Invoice Baru": choose Invoice DP or Invoice Pelunasan, then pick project & booth. All amounts come
 // from the booth contract (price - private discount, + optional PPN) and are recomputed by the server.
-export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], defaultProjectId = '', onCreated, onOpenInvoice }) {
+export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], defaultProjectId = '', defaultBoothCode = '', onCreated, onOpenInvoice }) {
   const [kind, setKind] = useState(null);
   const [projectId, setProjectId] = useState('');
   const [booths, setBooths] = useState([]);
@@ -71,7 +71,7 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
     if (!isOpen) return;
     setKind(null);
     setProjectId(defaultProjectId || '');
-    setBoothCode('');
+    setBoothCode(defaultBoothCode || '');
     setContract(null);
     setDpMode('percent');
     setDpInput('30');
@@ -79,7 +79,7 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
     setNotes('');
     setAckUnpaidDp(false);
     setError('');
-  }, [isOpen, defaultProjectId]);
+  }, [isOpen, defaultProjectId, defaultBoothCode]);
 
   // Projects grouped by year, same folders as the invoice page
   const projectGroups = useMemo(() => {

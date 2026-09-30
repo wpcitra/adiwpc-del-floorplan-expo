@@ -4,6 +4,8 @@ import { api } from '../../services/api';
 import ProjectYearFolderSelector, { getProjectDateInfo } from '../../components/admin/ProjectYearFolderSelector';
 import InvoiceEditorModal from '../../components/admin/InvoiceEditorModal';
 import InvoiceA4View from '../../components/admin/InvoiceA4View';
+import InvoiceEditModal from '../../components/admin/InvoiceEditModal';
+import ContractInvoiceWizard from '../../components/admin/ContractInvoiceWizard';
 import GenerateTenantFacilityModal from '../../components/admin/GenerateTenantFacilityModal';
 import { collapseMergedRows } from '../../utils/mergeRows';
 
@@ -24,6 +26,11 @@ export default function ExhibitorTable() {
   const exportMenuRef = useRef(null);
   const [isInvoiceEditorOpen, setIsInvoiceEditorOpen] = useState(false);
   const [selectedInvoiceForA4, setSelectedInvoiceForA4] = useState(null);
+  const [invoicePicker, setInvoicePicker] = useState(null); // { exh, invoices }
+  const [noInvoiceFor, setNoInvoiceFor] = useState(null); // exhibitor row without an invoice
+  const [wizardFor, setWizardFor] = useState(null); // { projectId, boothCode }
+  const [editingInvoice, setEditingInvoice] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [isGenerateFacilityModalOpen, setIsGenerateFacilityModalOpen] = useState(false);
   const [selectedTenantForFacility, setSelectedTenantForFacility] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
@@ -126,7 +133,7 @@ export default function ExhibitorTable() {
     };
 
     loadData();
-  }, []);
+  }, [reloadKey]);
 
   // Projects shown as subfolders: /floorplan/list (date, venue, booth counts) + any project referenced by a tenant
   const allProjects = useMemo(() => {
@@ -309,50 +316,27 @@ Salam hangat,
     window.open(isMobile ? waApiUrl : waWebUrl, '_blank');
   };
 
+  // The invoices of this booth are the SAME invoices as in Manajemen Invoice (never a document generated here).
+  // One invoice opens directly; DP + Pelunasan (or several contracts of a merged booth) can be chosen;
+  // a booth without an invoice offers to issue one.
+  const openInvoice = async (id) => {
+    const real = await api.fetchInvoiceById(id);
+    if (real) setSelectedInvoiceForA4(real);
+    else showToast('⚠️ Invoice tidak ditemukan');
+  };
   const handleViewTenantInvoice = async (exh) => {
-    // Open the real invoice when the booth has one (DP / Pelunasan / Penuh with the contract breakdown)
-    if (exh.invoiceNumber && exh.invoiceNumber !== 'INV/MANUAL') {
-      const real = await api.fetchInvoiceById(exh.invoiceNumber);
-      if (real) {
-        setSelectedInvoiceForA4(real);
-        return;
-      }
+    const codes = exh.mergedBooths?.length ? exh.mergedBooths.map(b => b.code) : [exh.booth];
+    const found = new Map();
+    for (const code of codes.filter(Boolean)) {
+      const res = exh.floorplanId ? await api.fetchContract({ floorplanId: exh.floorplanId, boothCode: code }) : null;
+      (res?.contract?.invoices || [])
+        .filter(i => String(i.payment_status).toUpperCase() !== 'CANCELED')
+        .forEach(i => found.set(i.id, i));
     }
-    const isFree = exh.price === 0 || exh.category === 'Free';
-    const paymentStatus = (exh.payment_status || exh.invoicePaymentStatus || '').toUpperCase();
-    const isPaid = paymentStatus === 'PAID' || exh.status === 'sold' || exh.status === 'paid';
-    const effectivePaymentStatus = isPaid ? 'PAID' : (paymentStatus === 'PENDING' ? 'PENDING' : (paymentStatus === 'CANCELED' ? 'CANCELED' : (isFree ? 'FREE' : 'UNPAID')));
-    const priceVal = exh.price || 5000000;
-
-    const invObj = {
-      id: `INV-${exh.booth || '01'}`,
-      invoice_number: exh.invoiceNumber && exh.invoiceNumber !== 'INV/MANUAL' ? exh.invoiceNumber : `INV/2026/${exh.booth || '01'}`,
-      issue_date: new Date().toISOString().split('T')[0],
-      due_date: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
-      client_name: exh.pic || exh.owner_name || 'Penanggung Jawab Tenant',
-      company_name: exh.company || exh.brandName || 'Brand Tenant',
-      email: exh.email || 'tenant@exhibitor.co.id',
-      phone: exh.contact || exh.phone || '-',
-      address: exh.address || 'Alamat Peserta Pameran',
-      booth_code: exh.booth || 'A-01',
-      booth_category: exh.category || 'Standard',
-      event_name: selectedProjectInfo?.title || 'Indonesia International Expo 2026',
-      event_venue: selectedProjectInfo?.venue || 'Jakarta Convention Center (Hall A)',
-      subtotal: priceVal,
-      discount: 0,
-      tax_amount: Math.round(priceVal * 0.11),
-      grand_total: isFree ? 0 : Math.round(priceVal * 1.11),
-      payment_status: effectivePaymentStatus,
-      items: [
-        {
-          description: `Sewa Booth Pameran ${exh.booth || 'A-01'} (${exh.category || 'Standard'})`,
-          price: priceVal,
-          qty: 1,
-          total: priceVal
-        }
-      ]
-    };
-    setSelectedInvoiceForA4(invObj);
+    const list = [...found.values()];
+    if (list.length === 1) return openInvoice(list[0].id);
+    if (list.length > 1) return setInvoicePicker({ exh, invoices: list });
+    setNoInvoiceFor(exh);
   };
 
   const handleOpenFacilityForm = (exh = null) => {
@@ -719,12 +703,89 @@ Salam hangat,
         <InvoiceA4View
           invoice={selectedInvoiceForA4}
           onClose={() => setSelectedInvoiceForA4(null)}
+          onEdit={(inv) => setEditingInvoice(inv)}
           onOpenEditor={() => {
             setSelectedInvoiceForA4(null);
             setIsInvoiceEditorOpen(true);
           }}
         />
       )}
+
+      {/* Edit Invoice: the same form (and the same invoice) as in Manajemen Invoice */}
+      <InvoiceEditModal
+        isOpen={Boolean(editingInvoice)}
+        invoice={editingInvoice}
+        onClose={() => setEditingInvoice(null)}
+        onSaved={async (updated, message) => {
+          setEditingInvoice(null);
+          showToast(`✅ ${message}`);
+          if (selectedInvoiceForA4) setSelectedInvoiceForA4(await api.fetchInvoiceById(selectedInvoiceForA4.id) || updated);
+          setReloadKey(k => k + 1);
+        }}
+      />
+
+      {/* Several invoices for this booth (DP + Pelunasan, or several contracts of a merged booth) */}
+      {invoicePicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onClick={() => setInvoicePicker(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <h3 className="font-bold text-slate-900 text-sm">Pilih Invoice #{invoicePicker.exh.booth}</h3>
+              <p className="text-xs text-slate-500">{invoicePicker.exh.company} • invoice yang sama dengan di Manajemen Invoice</p>
+            </div>
+            <div className="space-y-2">
+              {invoicePicker.invoices.map(inv => {
+                const kindLabel = { dp: 'DP', settlement: 'Pelunasan', full: 'Penuh' }[inv.invoice_kind] || 'Invoice';
+                const st = String(inv.payment_status || '').toUpperCase();
+                return (
+                  <button key={inv.id} type="button" onClick={() => { setInvoicePicker(null); openInvoice(inv.id); }}
+                    className="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-slate-900"><span className="mr-1.5 px-1.5 py-0.5 rounded bg-slate-100 text-[10px]">{kindLabel}</span>{inv.invoice_number}</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">{st === 'PAID' ? 'Lunas' : st === 'PARTIAL' ? 'Dibayar sebagian' : st === 'PENDING' ? 'Menunggu verifikasi' : 'Belum dibayar'}</div>
+                    </div>
+                    <span className="font-mono font-bold text-xs text-slate-800">Rp {Number(inv.total_amount || 0).toLocaleString('id-ID')}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <button type="button" onClick={() => setInvoicePicker(null)} className="w-full py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100">Tutup</button>
+          </div>
+        </div>
+      )}
+
+      {/* Booth without an invoice: issue a real one (never a document generated here) */}
+      {noInvoiceFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onClick={() => setNoInvoiceFor(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3 text-center" onClick={(e) => e.stopPropagation()}>
+            <AlertTriangle size={28} className="mx-auto text-amber-500" />
+            <h3 className="font-bold text-slate-900 text-sm">Booth #{noInvoiceFor.booth} belum punya invoice</h3>
+            <p className="text-xs text-slate-500">Tenant {noInvoiceFor.company} sudah terdaftar, tetapi belum ada tagihan. Terbitkan invoice agar tercatat di Manajemen Invoice.</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setNoInvoiceFor(null)} className="flex-1 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100">Nanti</button>
+              <button type="button" onClick={() => {
+                const codes = noInvoiceFor.mergedBooths?.length ? noInvoiceFor.mergedBooths.map(b => b.code) : [noInvoiceFor.booth];
+                setWizardFor({ projectId: noInvoiceFor.floorplanId, boothCode: codes[0] });
+                setNoInvoiceFor(null);
+              }} className="flex-1 py-2 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-700">Buat Invoice</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ContractInvoiceWizard
+        isOpen={Boolean(wizardFor)}
+        onClose={() => setWizardFor(null)}
+        projects={allProjects}
+        defaultProjectId={wizardFor?.projectId || ''}
+        defaultBoothCode={wizardFor?.boothCode || ''}
+        onCreated={async (invoice, message) => {
+          setWizardFor(null);
+          showToast(`✅ ${message || `Invoice ${invoice?.invoice_number} diterbitkan`}`);
+          setReloadKey(k => k + 1);
+          if (invoice?.id) openInvoice(invoice.id);
+        }}
+        onOpenInvoice={(id) => { setWizardFor(null); openInvoice(id); }}
+      />
 
       {/* Generate Tenant Facility Modal (PDF & WA with Company Letterhead & Template Catalog) */}
       <GenerateTenantFacilityModal

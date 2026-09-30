@@ -654,7 +654,9 @@ for (const col of [
   'ALTER TABLE invoices ADD COLUMN contract_discount REAL',
   'ALTER TABLE invoices ADD COLUMN contract_dpp REAL',
   'ALTER TABLE invoices ADD COLUMN contract_tax_method TEXT',
-  'ALTER TABLE invoices ADD COLUMN contract_tax_display TEXT'
+  'ALTER TABLE invoices ADD COLUMN contract_tax_display TEXT',
+  // Per-invoice choices of what the document shows (JSON of booleans; missing = follow Desain Layout Invoice)
+  'ALTER TABLE invoices ADD COLUMN display_json TEXT'
 ]) {
   try { db.exec(col); } catch (e) {}
 }

@@ -76,6 +76,11 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 ## 6. Invoice PDF, A4 View & Database Hydration Lock (`invoiceRoutes.js` & `InvoiceA4View.jsx`)
 - **Full DB Column Selection & JSON Parsing**: `GET /api/invoices`, `POST /api/invoices`, and `PUT /api/invoices/:id` MUST perform `SELECT *` from `invoices` and parse `items_json` & `bank_details_json` into native JSON arrays/objects in API responses.
 - **Normalization Layer**: `InvoiceA4View.jsx` MUST maintain a data normalization layer (`inv`) mapping both `camelCase` (`clientName`, `companyName`, `totalAmount`) and `snake_case` (`client_name`, `company_name`, `total_amount`) properties.
+- **One invoice row for every page**: `GET /api/invoices` and `GET /api/invoices/:id` both build the row with `INVOICE_ROW_SQL` + `invoiceRowMapper()`, so Manajemen Invoice, Data Exhibitor, the A4 document and WhatsApp show exactly the same invoice. Data Exhibitor opens the booth's real invoices (a picker when there are several) and never generates a document of its own; a booth without an invoice is offered "Buat Invoice".
+- **Editing an issued invoice** (`InvoiceEditModal`, the same form in both menus): client data via `PUT /api/invoices/:id` (a missing `items` never wipes the items); DP amount, contract PPN and display choices via `POST /api/invoices/:id/terms`.
+  - The DP amount changes only while the DP is unpaid (409 `DP_ALREADY_PAID`); the unpaid Pelunasan follows (contract − DP). An unpaid "Penuh" invoice can be split into DP + Pelunasan (`POST /invoices` with `invoiceKind: 'dp'`).
+  - A contract PPN change needs `changeContractTax` (409 `TAX_CHANGE_CONFIRM`), is refused on a fully paid contract, and also recomputes an unpaid DP.
+  - `invoices.display_json` holds per-invoice choices (`INVOICE_DISPLAY_KEYS`): layout keys override Desain Layout Invoice for that invoice; `showDiscount`, `showContractBox`, `showBank`, `showNotes` default to shown. Hiding the discount shows the lines after the discount; the total never changes.
 - **Item Fallback Guarantee**: If `items` array is empty, `InvoiceA4View` MUST fallback to generating item entries from `booth_code`, `booth_category`, and total amount so PDF export & A4 view NEVER render empty item tables or blank client names.
 
 ---

@@ -504,6 +504,30 @@ export const api = {
   },
 
   // 15. Update an invoice
+  // Edit form (Manajemen Invoice & Data Exhibitor): always returns the server's answer, also on errors
+  async saveInvoiceDetails(id, details) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/invoices/${encodeURIComponent(id)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(details)
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Koneksi server gagal' };
+    }
+  },
+
+  // DP amount, contract PPN and what the document shows (POST /invoices/:id/terms)
+  async updateInvoiceTerms(id, terms) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/invoices/${encodeURIComponent(id)}/terms`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(terms)
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Koneksi server gagal' };
+    }
+  },
+
   async updateInvoice(id, invoiceData) {
     try {
       const res = await apiFetch(`${API_BASE_URL}/invoices/${id}`, {

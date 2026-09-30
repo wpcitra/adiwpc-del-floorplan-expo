@@ -23,7 +23,7 @@ import { terbilang } from '../../utils/numberToWords';
 import { DEFAULT_INVOICE_CONFIG } from '../../utils/invoiceTemplateConfig';
 import { printInvoiceElement, downloadInvoicePDF } from '../../utils/invoicePrintUtils';
 import { api } from '../../services/api';
-import { invoiceTaxView } from '../../utils/invoiceTax';
+import { invoiceTaxView, allocate } from '../../utils/invoiceTax';
 import InvoiceTotals from './InvoiceTotals';
 
 export default function InvoiceA4View({
@@ -74,7 +74,14 @@ export default function InvoiceA4View({
     }
   };
 
-  const cfg = activeConfig || DEFAULT_INVOICE_CONFIG;
+  // Per-invoice choices (Edit Invoice > "Yang Ditampilkan di Invoice") override Desain Layout Invoice for this invoice
+  const displayChoice = (invoice && typeof invoice.display === 'object' && invoice.display) || {};
+  const layoutOverrides = Object.fromEntries(Object.entries(displayChoice).filter(([, v]) => typeof v === 'boolean'));
+  const cfg = { ...(activeConfig || DEFAULT_INVOICE_CONFIG), ...layoutOverrides };
+  const showDiscountLine = displayChoice.showDiscount !== false;
+  const showContractBox = displayChoice.showContractBox !== false;
+  const showBank = displayChoice.showBank !== false;
+  const showNotes = displayChoice.showNotes !== false;
 
   const inv = {
     id: invoice.id || invoice._id || 'INV-DOC',
@@ -142,7 +149,18 @@ export default function InvoiceA4View({
 
   const rawItems = inv.items || [];
   // Booth price and PPN shown separately: lines before PPN (DPP basis) when the breakdown is shown (shared/invoiceTax.js)
-  const taxView = invoice.tax_view || invoiceTaxView(inv);
+  const fullTaxView = invoice.tax_view || invoiceTaxView(inv);
+  // "Baris diskon" hidden: the lines and subtotal are shown after the discount (the total never changes)
+  const taxView = !showDiscountLine && fullTaxView.discount > 0
+    ? (() => {
+      const net = fullTaxView.subtotal - fullTaxView.discount;
+      const amounts = allocate(fullTaxView.lines.map(l => l.amount), net);
+      return {
+        ...fullTaxView, subtotal: net, discount: 0,
+        lines: fullTaxView.lines.map((l, i) => ({ ...l, amount: amounts[i], unitPrice: (l.qty || 1) > 1 ? Math.round(amounts[i] / l.qty) : amounts[i] }))
+      };
+    })()
+    : fullTaxView;
   const items = taxView.lines.map(line => rawItems.length > 0 ? line : {
     ...line,
     description: `Sewa Booth Pameran ${inv.booth_code ? inv.booth_code : ''} (${inv.booth_category || 'Standard'})`
@@ -534,9 +552,13 @@ export default function InvoiceA4View({
                 {cfg.companyName || 'PT EXPO KARYA INDONESIA'}
               </h3>
               <div className="text-slate-600 space-y-0.5">
-                <p><span className="text-slate-400">Bank:</span> <b>{bankDetails.bankName || cfg.bankName}</b></p>
-                <p><span className="text-slate-400">No. Rekening:</span> <b className="font-mono text-slate-900">{bankDetails.accountNumber || cfg.accountNumber}</b></p>
-                <p><span className="text-slate-400">Atas Nama:</span> <b>{bankDetails.accountName || cfg.accountName}</b></p>
+                {showBank && (
+                  <>
+                    <p><span className="text-slate-400">Bank:</span> <b>{bankDetails.bankName || cfg.bankName}</b></p>
+                    <p><span className="text-slate-400">No. Rekening:</span> <b className="font-mono text-slate-900">{bankDetails.accountNumber || cfg.accountNumber}</b></p>
+                    <p><span className="text-slate-400">Atas Nama:</span> <b>{bankDetails.accountName || cfg.accountName}</b></p>
+                  </>
+                )}
                 <p className="text-[11px] text-slate-500 mt-1">{cfg.companyAddress}</p>
               </div>
             </div>
@@ -623,7 +645,7 @@ export default function InvoiceA4View({
                 </div>
               )}
 
-              {inv.notes && (
+              {showNotes && inv.notes && (
                 <div className="text-[11px] text-slate-600">
                   <span className="font-bold text-slate-700 block mb-0.5">Catatan & Ketentuan:</span>
                   <p className="text-slate-500 whitespace-pre-line leading-relaxed">{inv.notes}</p>
@@ -642,7 +664,7 @@ export default function InvoiceA4View({
               />
 
               {/* Booth contract breakdown for Invoice DP / Invoice Pelunasan */}
-              {isSplitInvoice && inv.contract_total > 0 && contractTax && (
+              {showContractBox && isSplitInvoice && inv.contract_total > 0 && contractTax && (
                 <div className="mt-2.5 p-2.5 rounded-xl border border-slate-200 bg-slate-50/90 space-y-1.5 text-[11px]">
                   <div className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Rincian Kontrak Booth {inv.booth_code}</div>
                   {taxView.showBreakdown ? (
@@ -747,8 +769,8 @@ export default function InvoiceA4View({
 
         {/* SECTION 5: INSTRUCTIONS & SIGNATURES */}
         <div className="pt-6 border-t border-slate-200 grid grid-cols-2 gap-6 items-end text-xs shrink-0">
-          {/* Payment Instructions */}
-          <div className="space-y-1.5 text-slate-600">
+          {/* Payment Instructions (hidden together with the bank account: they refer to it) */}
+          <div className={`space-y-1.5 text-slate-600 ${showBank ? '' : 'invisible'}`}>
             <div className="flex items-center gap-1.5 text-slate-900 font-bold text-xs">
               <ShieldCheck size={14} style={{ color: primaryColor }} />
               <span>Instruksi Pembayaran Resmi</span>

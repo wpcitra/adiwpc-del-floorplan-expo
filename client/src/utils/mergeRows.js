@@ -17,7 +17,7 @@ export function collapseMergedRows(rows) {
         isMerged: true,
         mergeLabel: g.label,
         areaSqm: g.totalAreaM2 ?? row.areaSqm,
-        price: 0, finalPrice: 0, originalPrice: 0, paidAmount: 0, remainingAmount: 0,
+        price: 0, finalPrice: 0, originalPrice: 0, paidAmount: 0, remainingAmount: 0, dppAmount: 0, taxAmount: 0,
         invoiceNumbers: []
       };
       groups.set(key, merged);
@@ -25,7 +25,7 @@ export function collapseMergedRows(rows) {
     }
     const m = groups.get(key);
     m.mergedBooths.push({ code: row.booth, widthM: row.widthM, heightM: row.heightM, status: row.status, payment_status: row.payment_status, price: row.price });
-    ['price', 'finalPrice', 'originalPrice', 'paidAmount', 'remainingAmount'].forEach(k => { m[k] += Number(row[k]) || 0; });
+    ['price', 'finalPrice', 'originalPrice', 'paidAmount', 'remainingAmount', 'dppAmount', 'taxAmount'].forEach(k => { m[k] += Number(row[k]) || 0; });
     if (row.invoiceNumber && !m.invoiceNumbers.includes(row.invoiceNumber)) m.invoiceNumbers.push(row.invoiceNumber);
     m.invoiceNumber = m.invoiceNumbers.join(', ');
     m.contractMismatch = Boolean(m.contractMismatch || row.contractMismatch);

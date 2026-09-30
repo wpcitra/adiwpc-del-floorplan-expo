@@ -29,6 +29,7 @@ import InvoiceA4View from '../../components/admin/InvoiceA4View';
 import InvoiceEditorModal from '../../components/admin/InvoiceEditorModal';
 import ProjectYearFolderSelector from '../../components/admin/ProjectYearFolderSelector';
 import ContractInvoiceWizard from '../../components/admin/ContractInvoiceWizard';
+import InvoiceEditModal from '../../components/admin/InvoiceEditModal';
 import { INVOICE_KIND_BADGE, invoiceKind, summarizeInvoices, matchesStatusTab, groupByContract } from '../../utils/invoiceSummary';
 import { Palette } from 'lucide-react';
 
@@ -49,6 +50,7 @@ export default function InvoicePage() {
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [isEditorModalOpen, setIsEditorModalOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState(null);
   const [selectedInvoiceForA4, setSelectedInvoiceForA4] = useState(null);
   const [activeBoothForModal, setActiveBoothForModal] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
@@ -813,6 +815,16 @@ export default function InvoicePage() {
                             <span>Cetak A4</span>
                           </button>
 
+                          {/* Edit: client data, DP, PPN, what the document shows */}
+                          <button
+                            type="button"
+                            onClick={() => setEditingInvoice(inv)}
+                            className="p-1.5 text-slate-500 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-indigo-200"
+                            title="Edit Invoice (data klien, DP, pajak, tampilan)"
+                          >
+                            <Edit3 size={14} />
+                          </button>
+
                           {/* Delete */}
                           <button
                             type="button"
@@ -839,9 +851,23 @@ export default function InvoicePage() {
         <InvoiceA4View
           invoice={selectedInvoiceForA4}
           onClose={() => setSelectedInvoiceForA4(null)}
+          onEdit={(inv) => setEditingInvoice(inv)}
           onOpenEditor={() => setIsEditorModalOpen(true)}
         />
       )}
+
+      {/* Edit Invoice: the same form (and the same invoice) as in Data Exhibitor */}
+      <InvoiceEditModal
+        isOpen={Boolean(editingInvoice)}
+        invoice={editingInvoice}
+        onClose={() => setEditingInvoice(null)}
+        onSaved={async (updated, message) => {
+          setEditingInvoice(null);
+          showToast(`✅ ${message}`);
+          await loadInvoices();
+          if (selectedInvoiceForA4) setSelectedInvoiceForA4(await api.fetchInvoiceById(selectedInvoiceForA4.id) || updated);
+        }}
+      />
 
       {/* Invoice Generator Modal */}
       <ContractInvoiceWizard

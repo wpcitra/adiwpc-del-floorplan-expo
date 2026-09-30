@@ -171,11 +171,9 @@ function boothSpecsFor(floorplanId, code) {
 
 const RELATED_INVOICE_SQL = 'SELECT id, invoice_number, payment_status, total_amount, dp_percent, dpp_amount, tax_amount, tax_method FROM invoices WHERE id = ?';
 
-// GET /api/invoices - List all invoices
-router.get('/', (req, res) => {
-  try {
-    const { status, search, floorplanId, projectId } = req.query;
-    let query = `
+// Invoice row as every page shows it (Manajemen Invoice, Data Exhibitor, A4 document, WhatsApp): the list and the
+// single-invoice endpoint build it here, so an invoice opened from any menu is exactly the same invoice.
+const INVOICE_ROW_SQL = `
       SELECT inv.*,
         (
           SELECT b.status 
@@ -237,7 +235,153 @@ router.get('/', (req, res) => {
           LIMIT 1
         ) AS project_title
       FROM invoices inv
-    `;
+`;
+
+function invoiceRowMapper() {
+  // One contract summary per booth, shared by its DP / Pelunasan / Penuh invoices
+  const contractCache = new Map();
+  const contractFor = (inv) => {
+    if (!CONTRACT_KINDS.includes(kindOf(inv)) || !inv.booth_code || !inv.floorplan_id) return null;
+    const key = `${inv.floorplan_id}_${String(inv.booth_code).trim().toLowerCase()}`;
+    if (!contractCache.has(key)) {
+      const c = getContract(inv.floorplan_id, inv.booth_code, inv.booth_id);
+      contractCache.set(key, {
+        key,
+        total: c.contractTotal,
+        paid: c.paid,
+        remaining: c.remaining,
+        billed: c.billed,
+        unbilled: c.unbilled,
+        discountAmount: c.discountAmount,
+        dpp: c.dpp,
+        ppn: c.ppn,
+        paidTax: c.paidTax,
+        taxMethod: c.taxMethod,
+        taxRate: c.taxRate,
+        status: c.status,
+        statusLabel: contractStatusLabel(c.status),
+        boothWidthM: c.booth?.width_m ?? null,
+        boothHeightM: c.booth?.height_m ?? null
+      });
+    }
+    return contractCache.get(key);
+  };
+  const relatedById = new Map();
+  const relatedInvoice = (relatedId) => {
+    if (!relatedId) return null;
+    if (!relatedById.has(relatedId)) {
+      relatedById.set(relatedId, db.prepare(RELATED_INVOICE_SQL).get(relatedId) || null);
+    }
+    return relatedById.get(relatedId);
+  };
+
+
+  return (inv) => {
+    // Auto-merge contract "A-01+A-03+A-04" (AGENTS.md §18): size of every booth + total area
+    const codeTokens = invoiceCodeTokens(inv.booth_code);
+    if (codeTokens.length > 1 && !(Number(inv.booth_width_m) > 0) && inv.floorplan_id) {
+      const rows = codeTokens
+        .map(t => db.prepare('SELECT code, width_m, height_m FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL AND LOWER(TRIM(code)) = LOWER(TRIM(?))').get(inv.floorplan_id, t))
+        .filter(Boolean);
+      if (rows.length) {
+        inv.merged_booths = rows.map(r => ({ code: r.code, widthM: r.width_m, heightM: r.height_m }));
+        inv.booth_area_m2 = Math.round(rows.reduce((acc, r) => acc + (Number(r.width_m) || 0) * (Number(r.height_m) || 0), 0) * 100) / 100;
+      }
+    }
+    let items = [];
+    try { if (inv.items_json) items = JSON.parse(inv.items_json); } catch (e) {}
+    let bankDetails = null;
+    try { if (inv.bank_details_json) bankDetails = JSON.parse(inv.bank_details_json); } catch (e) {}
+
+    const effectiveDiscountAmount = (inv.discount_amount && Number(inv.discount_amount) > 0)
+      ? Number(inv.discount_amount)
+      : Number(inv.booth_discount_amount || 0);
+    const effectiveDiscountType = inv.discount_type || inv.booth_discount_type || 'nominal';
+    const effectiveDiscountValue = (inv.discount_value !== null && inv.discount_value !== undefined && Number(inv.discount_value) > 0)
+      ? Number(inv.discount_value)
+      : Number(inv.booth_discount_value || 0);
+    const effectiveDiscountReason = inv.discount_reason || inv.booth_discount_reason || '';
+
+    const kind = kindOf(inv);
+    const isSplitInvoice = kind === 'dp' || kind === 'settlement';
+    const boothDiscountHint = Number(inv.booth_discount_amount || 0);
+    if (isSplitInvoice) {
+      // The private discount belongs to the contract (shown in its breakdown), never to a DP / Pelunasan line
+      inv.booth_discount_amount = 0;
+      inv.booth_discount_value = 0;
+      inv.booth_discount_reason = '';
+    }
+    const sub = inv.subtotal || (effectiveDiscountAmount > 0 ? (inv.total_amount + effectiveDiscountAmount) : inv.total_amount) || inv.booth_price || 5000000;
+    let effectiveTotal = inv.total_amount;
+    // DP / Pelunasan amounts are already net of the contract's private discount: never subtract it again
+    // (older invoices only: an invoice with a stored PPN split already carries its discount)
+    if (!isSplitInvoice && kind !== 'facility' && !inv.tax_method && (!inv.discount_amount || Number(inv.discount_amount) === 0) && effectiveDiscountAmount > 0) {
+      effectiveTotal = Math.max(0, sub - effectiveDiscountAmount);
+    }
+
+    // Resolve Down Payment & Remaining Balance
+    const pStatus = (inv.payment_status || 'UNPAID').toUpperCase();
+    let paidAmt = inv.paid_amount !== undefined && inv.paid_amount !== null ? Number(inv.paid_amount) : 0;
+    let remainingAmt = inv.remaining_amount !== undefined && inv.remaining_amount !== null ? Number(inv.remaining_amount) : 0;
+
+    if (pStatus === 'PAID') {
+      paidAmt = effectiveTotal;
+      remainingAmt = 0;
+    } else if (pStatus === 'CANCELED') {
+      // A canceled invoice is neither money received nor a receivable (DB paid_amount is kept for audit)
+      paidAmt = 0;
+      remainingAmt = 0;
+    } else if (pStatus === 'PARTIAL' || pStatus === 'DP' || pStatus === 'DP_PAID' || (inv.payment_type === 'dp' && kind === 'full')) {
+      if (paidAmt === 0 && remainingAmt === 0) {
+        paidAmt = Math.round(effectiveTotal / 2);
+      }
+      remainingAmt = Math.max(0, effectiveTotal - paidAmt);
+    } else if (pStatus === 'UNPAID' || pStatus === 'PENDING') {
+      if (paidAmt === 0 && remainingAmt === 0) {
+        remainingAmt = effectiveTotal;
+      } else {
+        remainingAmt = Math.max(0, effectiveTotal - paidAmt);
+      }
+    } else {
+      remainingAmt = Math.max(0, effectiveTotal - paidAmt);
+    }
+
+    const paymentType = inv.payment_type || (pStatus === 'PARTIAL' || (paidAmt > 0 && paidAmt < effectiveTotal) ? 'dp' : 'full');
+    const dpPercent = inv.dp_percent || (effectiveTotal > 0 && paidAmt > 0 ? Number(((paidAmt / effectiveTotal) * 100).toFixed(0)) : 0);
+
+    const row = {
+      ...inv,
+      invoice_kind: kind,
+      contract: contractFor(inv),
+      related_invoice: relatedInvoice(inv.related_invoice_id),
+      subtotal: sub,
+      discount_amount: effectiveDiscountAmount,
+      discount_type: effectiveDiscountType,
+      discount_value: effectiveDiscountValue,
+      discount_reason: effectiveDiscountReason,
+      total_amount: effectiveTotal,
+      paid_amount: paidAmt,
+      remaining_amount: remainingAmt,
+      payment_type: paymentType,
+      dp_percent: dpPercent,
+      contract_discount_hint: boothDiscountHint,
+      booth_specs: boothSpecsFor(inv.floorplan_id, inv.booth_code),
+      items,
+      bankDetails
+    };
+    // Booth price and PPN shown separately on the document, WhatsApp and reports (shared/invoiceTax.js)
+    // Per-invoice choices of what the document shows (null = follow Desain Layout Invoice)
+    try { row.display = inv.display_json ? JSON.parse(inv.display_json) : {}; } catch (e) { row.display = {}; }
+    row.tax_view = invoiceTaxView(row);
+    return row;
+  };
+}
+
+// GET /api/invoices - List all invoices
+router.get('/', (req, res) => {
+  try {
+    const { status, search, floorplanId, projectId } = req.query;
+    let query = INVOICE_ROW_SQL;
 
     const conditions = ['inv.deleted_at IS NULL'];
     const params = [];
@@ -267,140 +411,8 @@ router.get('/', (req, res) => {
 
     const rawInvoices = db.prepare(query).all(...params);
 
-    // One contract summary per booth, shared by its DP / Pelunasan / Penuh invoices
-    const contractCache = new Map();
-    const contractFor = (inv) => {
-      if (!CONTRACT_KINDS.includes(kindOf(inv)) || !inv.booth_code || !inv.floorplan_id) return null;
-      const key = `${inv.floorplan_id}_${String(inv.booth_code).trim().toLowerCase()}`;
-      if (!contractCache.has(key)) {
-        const c = getContract(inv.floorplan_id, inv.booth_code, inv.booth_id);
-        contractCache.set(key, {
-          key,
-          total: c.contractTotal,
-          paid: c.paid,
-          remaining: c.remaining,
-          billed: c.billed,
-          unbilled: c.unbilled,
-          discountAmount: c.discountAmount,
-          dpp: c.dpp,
-          ppn: c.ppn,
-          paidTax: c.paidTax,
-          taxMethod: c.taxMethod,
-          taxRate: c.taxRate,
-          status: c.status,
-          statusLabel: contractStatusLabel(c.status),
-          boothWidthM: c.booth?.width_m ?? null,
-          boothHeightM: c.booth?.height_m ?? null
-        });
-      }
-      return contractCache.get(key);
-    };
-    const relatedById = new Map();
-    const relatedInvoice = (relatedId) => {
-      if (!relatedId) return null;
-      if (!relatedById.has(relatedId)) {
-        relatedById.set(relatedId, db.prepare(RELATED_INVOICE_SQL).get(relatedId) || null);
-      }
-      return relatedById.get(relatedId);
-    };
-
-    const invoices = rawInvoices.map(inv => {
-      // Auto-merge contract "A-01+A-03+A-04" (AGENTS.md §18): size of every booth + total area
-      const codeTokens = invoiceCodeTokens(inv.booth_code);
-      if (codeTokens.length > 1 && !(Number(inv.booth_width_m) > 0) && inv.floorplan_id) {
-        const rows = codeTokens
-          .map(t => db.prepare('SELECT code, width_m, height_m FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL AND LOWER(TRIM(code)) = LOWER(TRIM(?))').get(inv.floorplan_id, t))
-          .filter(Boolean);
-        if (rows.length) {
-          inv.merged_booths = rows.map(r => ({ code: r.code, widthM: r.width_m, heightM: r.height_m }));
-          inv.booth_area_m2 = Math.round(rows.reduce((acc, r) => acc + (Number(r.width_m) || 0) * (Number(r.height_m) || 0), 0) * 100) / 100;
-        }
-      }
-      let items = [];
-      try { if (inv.items_json) items = JSON.parse(inv.items_json); } catch (e) {}
-      let bankDetails = null;
-      try { if (inv.bank_details_json) bankDetails = JSON.parse(inv.bank_details_json); } catch (e) {}
-
-      const effectiveDiscountAmount = (inv.discount_amount && Number(inv.discount_amount) > 0)
-        ? Number(inv.discount_amount)
-        : Number(inv.booth_discount_amount || 0);
-      const effectiveDiscountType = inv.discount_type || inv.booth_discount_type || 'nominal';
-      const effectiveDiscountValue = (inv.discount_value !== null && inv.discount_value !== undefined && Number(inv.discount_value) > 0)
-        ? Number(inv.discount_value)
-        : Number(inv.booth_discount_value || 0);
-      const effectiveDiscountReason = inv.discount_reason || inv.booth_discount_reason || '';
-
-      const kind = kindOf(inv);
-      const isSplitInvoice = kind === 'dp' || kind === 'settlement';
-      const boothDiscountHint = Number(inv.booth_discount_amount || 0);
-      if (isSplitInvoice) {
-        // The private discount belongs to the contract (shown in its breakdown), never to a DP / Pelunasan line
-        inv.booth_discount_amount = 0;
-        inv.booth_discount_value = 0;
-        inv.booth_discount_reason = '';
-      }
-      const sub = inv.subtotal || (effectiveDiscountAmount > 0 ? (inv.total_amount + effectiveDiscountAmount) : inv.total_amount) || inv.booth_price || 5000000;
-      let effectiveTotal = inv.total_amount;
-      // DP / Pelunasan amounts are already net of the contract's private discount: never subtract it again
-      // (older invoices only: an invoice with a stored PPN split already carries its discount)
-      if (!isSplitInvoice && kind !== 'facility' && !inv.tax_method && (!inv.discount_amount || Number(inv.discount_amount) === 0) && effectiveDiscountAmount > 0) {
-        effectiveTotal = Math.max(0, sub - effectiveDiscountAmount);
-      }
-
-      // Resolve Down Payment & Remaining Balance
-      const pStatus = (inv.payment_status || 'UNPAID').toUpperCase();
-      let paidAmt = inv.paid_amount !== undefined && inv.paid_amount !== null ? Number(inv.paid_amount) : 0;
-      let remainingAmt = inv.remaining_amount !== undefined && inv.remaining_amount !== null ? Number(inv.remaining_amount) : 0;
-
-      if (pStatus === 'PAID') {
-        paidAmt = effectiveTotal;
-        remainingAmt = 0;
-      } else if (pStatus === 'CANCELED') {
-        // A canceled invoice is neither money received nor a receivable (DB paid_amount is kept for audit)
-        paidAmt = 0;
-        remainingAmt = 0;
-      } else if (pStatus === 'PARTIAL' || pStatus === 'DP' || pStatus === 'DP_PAID' || (inv.payment_type === 'dp' && kind === 'full')) {
-        if (paidAmt === 0 && remainingAmt === 0) {
-          paidAmt = Math.round(effectiveTotal / 2);
-        }
-        remainingAmt = Math.max(0, effectiveTotal - paidAmt);
-      } else if (pStatus === 'UNPAID' || pStatus === 'PENDING') {
-        if (paidAmt === 0 && remainingAmt === 0) {
-          remainingAmt = effectiveTotal;
-        } else {
-          remainingAmt = Math.max(0, effectiveTotal - paidAmt);
-        }
-      } else {
-        remainingAmt = Math.max(0, effectiveTotal - paidAmt);
-      }
-
-      const paymentType = inv.payment_type || (pStatus === 'PARTIAL' || (paidAmt > 0 && paidAmt < effectiveTotal) ? 'dp' : 'full');
-      const dpPercent = inv.dp_percent || (effectiveTotal > 0 && paidAmt > 0 ? Number(((paidAmt / effectiveTotal) * 100).toFixed(0)) : 0);
-
-      const row = {
-        ...inv,
-        invoice_kind: kind,
-        contract: contractFor(inv),
-        related_invoice: relatedInvoice(inv.related_invoice_id),
-        subtotal: sub,
-        discount_amount: effectiveDiscountAmount,
-        discount_type: effectiveDiscountType,
-        discount_value: effectiveDiscountValue,
-        discount_reason: effectiveDiscountReason,
-        total_amount: effectiveTotal,
-        paid_amount: paidAmt,
-        remaining_amount: remainingAmt,
-        payment_type: paymentType,
-        dp_percent: dpPercent,
-        contract_discount_hint: boothDiscountHint,
-        booth_specs: boothSpecsFor(inv.floorplan_id, inv.booth_code),
-        items,
-        bankDetails
-      };
-      // Booth price and PPN shown separately on the document, WhatsApp and reports (shared/invoiceTax.js)
-      row.tax_view = invoiceTaxView(row);
-      return row;
-    });
+    const toRow = invoiceRowMapper();
+    const invoices = rawInvoices.map(toRow);
 
     res.json({
       success: true,
@@ -482,79 +494,12 @@ router.get('/contract', (req, res) => {
 // GET /api/invoices/:id - Get single invoice with parsed items & bank details
 router.get('/:id', (req, res) => {
   try {
-    const invoice = db.prepare('SELECT * FROM invoices WHERE id = ? OR invoice_number = ?').get(req.params.id, req.params.id);
-
+    // Same row as the list (Manajemen Invoice): Data Exhibitor, WhatsApp and the A4 document show the same invoice
+    const invoice = db.prepare(`${INVOICE_ROW_SQL} WHERE inv.id = ? OR inv.invoice_number = ?`).get(req.params.id, req.params.id);
     if (!invoice) {
       return res.status(404).json({ success: false, error: 'Invoice tidak ditemukan' });
     }
-
-    // Parse JSON fields
-    let items = [];
-    try {
-      if (invoice.items_json) items = JSON.parse(invoice.items_json);
-    } catch (e) {
-      items = [];
-    }
-
-    let bankDetails = null;
-    try {
-      if (invoice.bank_details_json) bankDetails = JSON.parse(invoice.bank_details_json);
-    } catch (e) {
-      bankDetails = null;
-    }
-
-    // Resolve Down Payment & Remaining Balance
-    const pStatus = (invoice.payment_status || 'UNPAID').toUpperCase();
-    const effectiveTotal = Number(invoice.total_amount) || 0;
-    let paidAmt = invoice.paid_amount !== undefined && invoice.paid_amount !== null ? Number(invoice.paid_amount) : 0;
-    let remainingAmt = invoice.remaining_amount !== undefined && invoice.remaining_amount !== null ? Number(invoice.remaining_amount) : 0;
-
-    if (pStatus === 'PAID') {
-      paidAmt = effectiveTotal;
-      remainingAmt = 0;
-    } else if (pStatus === 'PARTIAL' || pStatus === 'DP' || pStatus === 'DP_PAID' || (invoice.payment_type === 'dp' && kindOf(invoice) === 'full')) {
-      if (paidAmt === 0 && remainingAmt === 0) {
-        paidAmt = Math.round(effectiveTotal / 2);
-      }
-      remainingAmt = Math.max(0, effectiveTotal - paidAmt);
-    } else if (pStatus === 'UNPAID' || pStatus === 'PENDING') {
-      if (paidAmt === 0 && remainingAmt === 0) {
-        remainingAmt = effectiveTotal;
-      } else {
-        remainingAmt = Math.max(0, effectiveTotal - paidAmt);
-      }
-    } else {
-      remainingAmt = Math.max(0, effectiveTotal - paidAmt);
-    }
-
-    const paymentType = invoice.payment_type || (pStatus === 'PARTIAL' || (paidAmt > 0 && paidAmt < effectiveTotal) ? 'dp' : 'full');
-    const dpPercent = invoice.dp_percent || (effectiveTotal > 0 && paidAmt > 0 ? Number(((paidAmt / effectiveTotal) * 100).toFixed(0)) : 0);
-
-    const kind = kindOf(invoice);
-    const c = CONTRACT_KINDS.includes(kind) && invoice.floorplan_id && invoice.booth_code
-      ? getContract(invoice.floorplan_id, invoice.booth_code, invoice.booth_id)
-      : null;
-    const related = invoice.related_invoice_id ? db.prepare(RELATED_INVOICE_SQL).get(invoice.related_invoice_id) : null;
-
-    const row = {
-      ...invoice,
-      invoice_kind: kind,
-      related_invoice: related || null,
-      contract: c ? {
-        total: c.contractTotal, paid: c.paid, remaining: c.remaining, status: c.status, statusLabel: contractStatusLabel(c.status),
-        dpp: c.dpp, ppn: c.ppn, paidTax: c.paidTax, taxMethod: c.taxMethod, taxRate: c.taxRate
-      } : null,
-      paid_amount: paidAmt,
-      remaining_amount: remainingAmt,
-      payment_type: paymentType,
-      dp_percent: dpPercent,
-      contract_discount_hint: c?.booth ? Number(c.booth.discount_amount) || 0 : 0,
-      booth_specs: boothSpecsFor(invoice.floorplan_id, invoice.booth_code),
-      items,
-      bankDetails
-    };
-    row.tax_view = invoiceTaxView(row);
-    res.json({ success: true, invoice: row });
+    res.json({ success: true, invoice: invoiceRowMapper()(invoice) });
   } catch (error) {
     console.error("Fetch single invoice error:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -896,7 +841,7 @@ router.put('/:id', (req, res) => {
       clientNpwp,
       issueDate,
       dueDate,
-      items = [],
+      items,
       subtotal,
       discountType,
       discountValue,
@@ -1042,6 +987,126 @@ router.put('/:id', (req, res) => {
     });
   } catch (error) {
     console.error("Update invoice error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// What an invoice document may show or hide, per invoice (InvoiceA4View). Keys shared with Desain Layout Invoice
+// override the layout for this invoice; the others default to shown.
+const INVOICE_DISPLAY_KEYS = [
+  'showDiscount', 'showContractBox', 'showBank', 'showNotes', 'showTerbilang', 'showDimensionsCol', 'showFacilitiesCol',
+  'showClientNpwp', 'showClientAddress', 'showClientPhone', 'showClientEmail', 'showStamp', 'showWatermark'
+];
+
+// POST /api/invoices/:id/terms - Edit an issued invoice: DP amount (while the DP is unpaid), the contract's PPN
+// setting (unpaid invoices are recomputed, paid ones never change) and what the document shows. Amounts are computed here.
+router.post('/:id/terms', (req, res) => {
+  try {
+    const inv = db.prepare('SELECT * FROM invoices WHERE (id = ? OR invoice_number = ?) AND deleted_at IS NULL').get(req.params.id, req.params.id);
+    if (!inv) return res.status(404).json({ success: false, error: 'Invoice tidak ditemukan' });
+    const { dpMode = 'percent', dpValue, changeContractTax = false, display } = req.body || {};
+    const kind = kindOf(inv);
+    const statusOfInv = String(inv.payment_status || 'UNPAID').toUpperCase();
+    const unpaid = ['UNPAID', 'PENDING'].includes(statusOfInv);
+    const changes = [];
+
+    // 1. Display choices (any invoice, also paid: they never change the money)
+    let displayJson = null;
+    if (display && typeof display === 'object') {
+      const clean = {};
+      INVOICE_DISPLAY_KEYS.forEach(k => { if (typeof display[k] === 'boolean') clean[k] = display[k]; });
+      displayJson = JSON.stringify(clean);
+    }
+
+    // 2. Contract PPN and DP amount (booth contract invoices only)
+    const wantsDp = dpValue !== undefined && dpValue !== null && dpValue !== '';
+    const wantsTax = req.body.taxMethod !== undefined;
+    if ((wantsDp || wantsTax) && (!CONTRACT_KINDS.includes(kind) || !inv.floorplan_id)) {
+      return res.status(400).json({ success: false, error: 'DP dan pajak kontrak hanya untuk invoice sewa booth.' });
+    }
+    if (wantsDp && kind !== 'dp') {
+      return res.status(400).json({ success: false, error: 'Nominal DP hanya bisa diubah pada Invoice DP. Untuk invoice penuh, buat Invoice DP agar sisanya menjadi Pelunasan.' });
+    }
+    if (wantsDp && !unpaid) {
+      return res.status(409).json({ success: false, code: 'DP_ALREADY_PAID', error: `Invoice DP ${inv.invoice_number} sudah dibayar, nominalnya tidak bisa diubah. Batalkan dulu bila memang salah.` });
+    }
+
+    const c = CONTRACT_KINDS.includes(kind) && inv.floorplan_id ? getContract(inv.floorplan_id, inv.booth_code, inv.booth_id) : null;
+    let contract = null;
+    if (c && (wantsDp || wantsTax)) {
+      const latest = c.latestInvoice || inv;
+      const contractCode = invoiceCodeTokens(latest.booth_code).length > 1 ? latest.booth_code : (c.booth?.code || inv.booth_code);
+      const chosen = taxOptionsFrom(req.body, { isStaff: true });
+      const current = { method: c.taxMethod, rate: c.taxRate, display: c.taxDisplay };
+      const taxChanged = wantsTax && (chosen.method !== current.method || (chosen.method !== 'none' && (chosen.rate !== current.rate || chosen.display !== current.display)));
+      if (taxChanged && c.status === 'PAID') {
+        return res.status(409).json({ success: false, code: 'CONTRACT_PAID', error: 'Kontrak booth ini sudah lunas; pengaturan pajaknya tidak bisa diubah lagi.' });
+      }
+      if (taxChanged && !changeContractTax) {
+        return res.status(409).json({
+          success: false, code: 'TAX_CHANGE_CONFIRM', requireConfirmation: true,
+          error: 'Pengaturan pajak kontrak akan diubah. Invoice yang belum dibayar dihitung ulang; invoice yang sudah DP / Lunas tidak berubah otomatis.'
+        });
+      }
+      contract = taxChanged
+        ? { ...contractTaxFor(inv.floorplan_id, contractCode, chosen), display: chosen.display, note: chosen.note }
+        : { ...contractTaxOf(latest, c.booth?.discount_amount), note: latest.tax_note || chosen.note };
+      if (!contract || !(contract.total > 0)) return res.status(400).json({ success: false, error: 'Nilai kontrak booth tidak ditemukan / Rp 0.' });
+      if (taxChanged && c.paid > contract.total) {
+        return res.status(409).json({ success: false, code: 'TAX_CHANGE_BELOW_PAID', error: 'Nilai kontrak dengan pengaturan pajak baru lebih kecil dari pembayaran yang sudah diterima.' });
+      }
+      if (taxChanged) changes.push(`pajak kontrak: ${chosen.method}${chosen.method === 'inclusive' ? ` / ${chosen.display}` : ''}`);
+    }
+
+    // The DP of this contract (this invoice, or the DP behind a Pelunasan): its amount changes on request, and its
+    // DPP / PPN follow a changed contract PPN, but only while it is unpaid
+    const dpRow = kind === 'dp' ? inv : (c?.dpInvoice || null);
+    const dpUnpaid = dpRow && ['UNPAID', 'PENDING'].includes(String(dpRow.payment_status || 'UNPAID').toUpperCase());
+    let dpUpdate = null;
+    if (dpRow && dpUnpaid && contract && (wantsDp || wantsTax)) {
+      const raw = Number(String(wantsDp ? dpValue : '').replace(',', '.'));
+      const amount = wantsDp
+        ? (dpMode === 'nominal' ? Math.round(raw) : Math.round((contract.total * raw) / 100))
+        : Math.round(Number(dpRow.total_amount) || 0);
+      if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ success: false, error: 'Nilai DP tidak boleh 0.' });
+      if (amount >= contract.total) return res.status(400).json({ success: false, error: 'Nilai DP harus lebih kecil dari total kontrak.' });
+      const pct = Math.round((amount / contract.total) * 10000) / 100;
+      const part = taxPortion(contract, amount);
+      const size = c.booth?.width_m && c.booth?.height_m ? ` (${c.booth.width_m}x${c.booth.height_m}m)` : '';
+      dpUpdate = {
+        id: dpRow.id, amount, pct, part,
+        items: [{ id: 'item-1', description: `Uang Muka (DP ${pct}%) Sewa Booth #${dpRow.booth_code} ${c.booth?.category || ''}${size}`.replace(/\s+/g, ' ').trim(), qty: 1, unitPrice: amount, amount }]
+      };
+      if (wantsDp) changes.push(`DP Rp ${amount.toLocaleString('id-ID')} (${pct}%)`);
+    }
+
+    db.transaction(() => {
+      if (displayJson !== null) db.prepare('UPDATE invoices SET display_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(displayJson, inv.id);
+      if (dpUpdate) {
+        db.prepare(`
+          UPDATE invoices SET total_amount = @amount, remaining_amount = @amount, paid_amount = 0, subtotal = @amount, dp_percent = @pct,
+            items_json = @items, tax_rate = @rate, tax_amount = @ppn, dpp_amount = @dpp, tax_method = @method, tax_display = @display,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = @id
+        `).run({
+          amount: dpUpdate.amount, pct: dpUpdate.pct, items: JSON.stringify(dpUpdate.items),
+          rate: dpUpdate.part.ppn > 0 ? contract.rate : 0, ppn: dpUpdate.part.ppn, dpp: dpUpdate.part.dpp,
+          method: contract.method, display: contract.method === 'inclusive' && contract.display === 'hide' ? 'hide' : 'show', id: dpUpdate.id
+        });
+      }
+      // The unpaid balance (Pelunasan / Penuh) follows: contract - DP. Paid invoices are never rewritten.
+      if (contract) recalcContract(inv.floorplan_id, c.booth?.code || inv.booth_code, c.booth?.id || inv.booth_id, { contract });
+    })();
+    if (contract) syncPaymentStatusFromInvoices();
+
+    const updated = db.prepare(`${INVOICE_ROW_SQL} WHERE inv.id = ?`).get(inv.id);
+    res.json({
+      success: true,
+      message: `Invoice ${inv.invoice_number} diperbarui${changes.length ? `: ${changes.join(', ')}` : ''}.`,
+      invoice: invoiceRowMapper()(updated)
+    });
+  } catch (error) {
+    console.error('Update invoice terms error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
