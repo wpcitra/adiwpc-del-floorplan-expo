@@ -1190,6 +1190,13 @@ export default function LiveFloorplan() {
     let lastY = 0;
     let hoveredBoothObj = null;
     let pointerDownTarget = null;
+    // Two-finger pinch in progress (phones / tablets): { dist, zoom, mid }
+    let pinch = null;
+    // Mouse or finger position: touch events carry it in touches / changedTouches, not in clientX / clientY
+    const pointOf = (e) => {
+      const t = e?.touches?.[0] || e?.changedTouches?.[0];
+      return t ? { x: t.clientX, y: t.clientY } : { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
+    };
 
     // Element captions (public elements only: hidden / internal ones are invisible and skipped)
     canvas.on('after:render', ({ ctx }) => {
@@ -1379,10 +1386,12 @@ export default function LiveFloorplan() {
         canvas._currentTransform = null;
       }
       const evt = opt.e;
-      startX = evt.clientX;
-      startY = evt.clientY;
-      lastX = evt.clientX;
-      lastY = evt.clientY;
+      if (pinch || evt?.touches?.length > 1) return; // second finger: the pinch handler takes over
+      const p = pointOf(evt);
+      startX = p.x;
+      startY = p.y;
+      lastX = p.x;
+      lastY = p.y;
       hasPanned = false;
       pointerDownTarget = opt.target;
       isDragging = true;
@@ -1392,20 +1401,21 @@ export default function LiveFloorplan() {
       if (canvas._currentTransform) {
         canvas._currentTransform = null;
       }
+      if (pinch || opt.e?.touches?.length > 1) return;
       if (isDragging) {
-        const e = opt.e;
-        const moveDist = Math.hypot(e.clientX - startX, e.clientY - startY);
+        const p = pointOf(opt.e);
+        const moveDist = Math.hypot(p.x - startX, p.y - startY);
         if (moveDist > 6) {
           if (!hasPanned) closeCaptionTip();
           hasPanned = true;
           canvas.defaultCursor = 'grabbing';
           const vpt = canvas.viewportTransform;
-          vpt[4] += e.clientX - lastX;
-          vpt[5] += e.clientY - lastY;
+          vpt[4] += p.x - lastX;
+          vpt[5] += p.y - lastY;
           canvas.requestRenderAll();
         }
-        lastX = e.clientX;
-        lastY = e.clientY;
+        lastX = p.x;
+        lastY = p.y;
       } else {
         // Continuous rollover / hover check
         const scenePt = opt.scenePoint || (opt.e ? canvas.getScenePoint(opt.e) : null);
@@ -1458,7 +1468,8 @@ export default function LiveFloorplan() {
         canvas._currentTransform = null;
       }
       const evt = opt.e;
-      const dist = Math.hypot(evt.clientX - startX, evt.clientY - startY);
+      const up = pointOf(evt);
+      const dist = Math.hypot(up.x - startX, up.y - startY);
       isDragging = false;
       canvas.defaultCursor = 'grab';
       canvas.setViewportTransform(canvas.viewportTransform);
@@ -1564,6 +1575,49 @@ export default function LiveFloorplan() {
       setZoomLevel(zoom);
     });
 
+    // Pinch to zoom (two fingers) on phones & tablets; moving both fingers also pans. One finger pans (above).
+    const upper = canvas.upperCanvasEl;
+    const touchDist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const touchMid = (t) => {
+      const r = upper.getBoundingClientRect();
+      return { x: (t[0].clientX + t[1].clientX) / 2 - r.left, y: (t[0].clientY + t[1].clientY) / 2 - r.top };
+    };
+    const onTouchStart = (e) => {
+      if (e.touches.length !== 2) return;
+      pinch = { dist: touchDist(e.touches) || 1, zoom: canvas.getZoom(), mid: touchMid(e.touches) };
+      isDragging = false;
+      hasPanned = true; // a pinch is never a tap on a booth
+      closeCaptionTip();
+    };
+    const onTouchMove = (e) => {
+      if (!pinch || e.touches.length < 2) return;
+      e.preventDefault();
+      const mid = touchMid(e.touches);
+      const zoom = Math.min(4, Math.max(0.25, pinch.zoom * (touchDist(e.touches) / pinch.dist)));
+      canvas.zoomToPoint(new fabric.Point(mid.x, mid.y), zoom);
+      const vpt = canvas.viewportTransform;
+      vpt[4] += mid.x - pinch.mid.x;
+      vpt[5] += mid.y - pinch.mid.y;
+      pinch.mid = mid;
+      canvas.setViewportTransform(vpt);
+      setZoomLevel(zoom);
+    };
+    const onTouchEnd = (e) => {
+      if (!pinch || e.touches.length >= 2) return;
+      pinch = null;
+      // one finger still down: keep panning with it
+      if (e.touches.length === 1) {
+        const p = pointOf(e);
+        lastX = p.x;
+        lastY = p.y;
+        isDragging = true;
+      }
+    };
+    upper.addEventListener('touchstart', onTouchStart, { passive: true });
+    upper.addEventListener('touchmove', onTouchMove, { passive: false });
+    upper.addEventListener('touchend', onTouchEnd, { passive: true });
+    upper.addEventListener('touchcancel', onTouchEnd, { passive: true });
+
     // Handle resize
     const resizeObserver = new ResizeObserver(() => {
       if (containerRef.current && fabricRef.current) {
@@ -1578,6 +1632,10 @@ export default function LiveFloorplan() {
 
     return () => {
       resizeObserver.disconnect();
+      upper.removeEventListener('touchstart', onTouchStart);
+      upper.removeEventListener('touchmove', onTouchMove);
+      upper.removeEventListener('touchend', onTouchEnd);
+      upper.removeEventListener('touchcancel', onTouchEnd);
       canvas.dispose();
       fabricRef.current = null;
     };
