@@ -963,7 +963,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
       notifyObjectsUpdate();
       pushHistory();
-      handleSelection();
+      handleSelectionRef.current?.();
 
       return { 
         success: true, 

@@ -260,7 +260,9 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - It creates a git worktree in `.staging/app` and runs API on 5101 and web on 3101, with `APP_ENV=staging`.
   - Its database is `.staging/data`: a copy of production anonymized by `ops/mask-db.mjs` (no PIC names, emails, phones, addresses, NPWP, sessions, or audit IP; every staff password = `STAGING_PASSWORD`, default `staging123`).
   - Staging never reads or writes `server/data/`. The mask script refuses when source = target.
-- **Tests**: `npm test` (root) = server tests (`server/test/*.test.js`, `node:test`) + client build.
+- **Tests**: `npm test` (root) = `npm run lint` + server tests (`server/test/*.test.js`, `node:test`) + client build.
+  - `npm run lint` runs oxlint (client devDependency) with `no-undef` and `react/jsx-no-undef` as errors (`client/.oxlintrc.json`, `server/.oxlintrc.json` for server / shared / ops), so an icon or component used without an import fails the tests. Never turn these rules off.
+- **Error boundaries**: the app-wide `ErrorBoundary` is the last resort. Pages with independent parts (the Pengaturan tabs) wrap each part in `SectionErrorBoundary` (`resetKey` = the tab), so one broken tab never takes the header and the other tabs down.
   - Each test file starts its own server on a free port with an empty temporary `DATA_DIR`. Never import server modules (`src/db.js` runs migrations) against `server/data/floorplan.db`.
   - Tests cover login/role access, public booking (draft 404, instant-paid 400, unknown 404, taken 409, no substring matching), contract DP + Pelunasan + discount, auto-merge (one invoice per group, adjacency rules), and public data protection.
   - Never disable or weaken a test to make a change pass.

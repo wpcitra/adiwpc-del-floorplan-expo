@@ -30,13 +30,15 @@ import {
   Copy,
   RotateCcw,
   X,
-  Bot
+  Bot,
+  Palette
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { updateBoothCategoriesRegistry } from '../../utils/floorplanUtils';
 import InvoiceEditorModal from '../../components/admin/InvoiceEditorModal';
 import InvoiceA4View from '../../components/admin/InvoiceA4View';
 import ClaudeApiKeySettings from '../../components/admin/ClaudeApiKeySettings';
+import SectionErrorBoundary from '../../components/common/SectionErrorBoundary';
 
 export default function SettingsPage() {
   const [isInvoiceEditorOpen, setIsInvoiceEditorOpen] = useState(false);
@@ -375,7 +377,8 @@ Salam hangat,
         </button>
       </div>
 
-      {/* TAB CONTENT AREAS */}
+      {/* TAB CONTENT AREAS: an error in one tab stays inside that tab (header & tab bar keep working) */}
+      <SectionErrorBoundary resetKey={activeTab} label="Tab ini">
       <div className="space-y-6">
         {/* TAB 1: IDENTITAS PENYELENGGARA */}
         {activeTab === 'organizer' && (
@@ -1018,6 +1021,7 @@ Salam hangat,
           </div>
         )}
       </div>
+      </SectionErrorBoundary>
 
       {/* Invoice Layout Visual Editor Modal */}
       <InvoiceEditorModal
