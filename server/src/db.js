@@ -852,6 +852,73 @@ db.exec(`
   );
 `);
 
+// Pusat Maintenance: chat with the AI agent (AGENTS.md §27). One task = one conversation (later: one branch).
+//   agent_tasks        title, status (diskusi, menunggu_rencana, dikerjakan, siap_ditinjau, dideploy, dibatalkan)
+//   agent_messages     user / assistant / system messages (markdown text) + meta (attachments, context, tools used)
+//   agent_attachments  screenshots & files, stored under DATA_DIR/agent-files (never in Git)
+//   agent_runs         one agent run per user message: progress text, stop request, result
+//   agent_usage        tokens & estimated cost of every Claude API call (monthly budget)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS agent_tasks (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'diskusi',
+    created_by TEXT,
+    created_by_name TEXT DEFAULT '',
+    branch TEXT DEFAULT '',
+    pr_ref TEXT DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS agent_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT DEFAULT '',
+    meta_json TEXT,
+    created_by_name TEXT DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_agent_messages_task ON agent_messages(task_id, id);
+  CREATE TABLE IF NOT EXISTS agent_attachments (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    message_id INTEGER,
+    kind TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    name TEXT DEFAULT '',
+    size INTEGER DEFAULT 0,
+    file_name TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS agent_runs (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'berjalan',
+    phase TEXT DEFAULT '',
+    steps INTEGER DEFAULT 0,
+    stop_requested INTEGER DEFAULT 0,
+    error TEXT DEFAULT '',
+    started_by TEXT DEFAULT '',
+    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    finished_at DATETIME
+  );
+  CREATE INDEX IF NOT EXISTS idx_agent_runs_task ON agent_runs(task_id, started_at);
+  CREATE TABLE IF NOT EXISTS agent_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT,
+    run_id TEXT,
+    model TEXT,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cache_write_tokens INTEGER DEFAULT 0,
+    cache_read_tokens INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_agent_usage_month ON agent_usage(created_at);
+`);
+
 // Auto-merge booth (AGENTS.md §18): exhibitor identity per booth / order and the "Tampilkan Terpisah" switch
 for (const col of [
   "ALTER TABLE booths ADD COLUMN exhibitor_id TEXT DEFAULT ''",

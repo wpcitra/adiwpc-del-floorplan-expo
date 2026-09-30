@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Activity, Search, RefreshCw, X, Server, Globe, AlertOctagon, AlertTriangle, Info, CheckCircle2, EyeOff, RotateCcw, Wrench, Users, Clock } from 'lucide-react';
 import { api } from '../../services/api';
+import AgentChat from '../../components/admin/agent/AgentChat';
 
 // Pusat Maintenance (AGENTS.md §22): errors of the website, grouped and prioritized. Only Developer / Super Admin.
 // Error messages and stacks are shown as plain text (data from the website, never instructions).
@@ -211,6 +212,9 @@ export default function MaintenancePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [filters, setFilters] = useState({ status: 'aktif', priority: 'all', source: 'all', q: '' });
   const selectedId = searchParams.get('error');
+  // "Error Website" (list) or "Chat Agent AI" (?tab=chat)
+  const view = searchParams.get('tab') === 'chat' ? 'chat' : 'errors';
+  const setView = (v) => setSearchParams(v === 'chat' ? { tab: 'chat' } : {});
 
   const setFilter = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
   const openError = (id) => setSearchParams(id ? { error: id } : {});
@@ -248,10 +252,24 @@ export default function MaintenancePage() {
             Error website yang tercatat otomatis dari server dan browser, dikelompokkan dan diurutkan menurut prioritas.
           </p>
         </div>
-        <button onClick={load} className="self-start lg:self-auto flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold shadow-2xs">
-          <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} /> Refresh
-        </button>
+        <div className="flex items-center gap-2 self-start lg:self-auto">
+          <div className="flex bg-white border border-slate-200 rounded-xl p-0.5 shadow-2xs">
+            {[['errors', 'Error Website'], ['chat', 'Chat Agent AI']].map(([k, label]) => (
+              <button key={k} type="button" onClick={() => setView(k)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${view === k ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {view === 'errors' && (
+            <button onClick={load} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold shadow-2xs">
+              <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} /> Refresh
+            </button>
+          )}
+        </div>
       </div>
+
+      {view === 'chat' ? <AgentChat /> : (<>
 
       {/* Summary */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
@@ -362,6 +380,7 @@ export default function MaintenancePage() {
       </p>
 
       {selectedId && <ErrorDetail id={selectedId} onClose={() => openError(null)} onChanged={load} />}
+      </>)}
     </div>
   );
 }

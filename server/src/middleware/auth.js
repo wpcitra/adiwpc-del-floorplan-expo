@@ -102,7 +102,7 @@ const ACCESS_RULES = [
   // Pusat Maintenance: browser error reports are public (scrubbed + rate limited), the center itself is Developer / Super Admin
   { methods: ['POST'], path: /^\/errors\/report$/, access: 'public' },
   // The Claude API key is managed by the Super Admin only (write-only, never returned)
-  { methods: ['GET', ...WRITE], path: /^\/maintenance\/ai-key(\/.*)?$/, access: [] },
+  { methods: ['GET', ...WRITE], path: /^\/maintenance\/(ai-key|ai-config|ai-models)(\/.*)?$/, access: [] },
   { methods: ['GET', ...WRITE], path: /^\/maintenance(\/.*)?$/, access: DEVELOPER },
 
   // In-app notifications of the logged-in user

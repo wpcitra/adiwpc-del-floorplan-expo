@@ -14,6 +14,7 @@ import auditRoutes from './routes/auditRoutes.js';
 import opsRoutes from './routes/opsRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import maintenanceRoutes, { reportRouter as errorReportRoutes } from './routes/maintenanceRoutes.js';
+import agentRoutes from './routes/agentRoutes.js';
 import { authenticate, enforceAccessPolicy, stampActorIdentity } from './middleware/auth.js';
 import { auditTrail } from './middleware/audit.js';
 import { readBackupStatus, startBackupSchedule } from './utils/backup.js';
@@ -36,7 +37,7 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(o => o
 const isLocalOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(origin);
 app.use(cors({
   origin: (origin, callback) => callback(null, !origin || isLocalOrigin(origin) || allowedOrigins.includes(origin)),
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -82,6 +83,7 @@ app.use('/api/audit-logs', auditRoutes);
 app.use('/api/ops', opsRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/errors', errorReportRoutes);
+app.use('/api/maintenance/agent', agentRoutes);
 app.use('/api/maintenance', maintenanceRoutes);
 
 // Unhandled route errors: recorded for the Pusat Maintenance, answered without internal details

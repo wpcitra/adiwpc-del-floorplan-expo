@@ -3,6 +3,7 @@ import db from '../db.js';
 import { recordError, ERROR_STATUSES, PRIORITIES } from '../utils/errorTracker.js';
 import { clientIp } from '../middleware/auth.js';
 import { getApiKey, isValidKeyFormat, keyHint, listModels } from '../utils/claudeApi.js';
+import { readAiConfig, writeAiConfig, usageSummary, priceFor } from '../utils/agent/aiConfig.js';
 import { envFileHas, setEnvFileValue } from '../utils/envFile.js';
 
 // Pusat Maintenance (AGENTS.md §22)
@@ -230,6 +231,48 @@ router.delete('/ai-key', (req, res) => {
   }
   writeKeyMeta({ updatedAt: new Date().toISOString(), updatedBy: req.user?.name || '', lastCheck: null });
   res.json({ success: true, status: keyStatus() });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// AI settings (Super Admin): model from GET /v1/models, monthly budget, price estimates (AGENTS.md §27)
+// ---------------------------------------------------------------------------------------------------------------
+router.get('/ai-models', async (req, res) => {
+  const result = await listModels();
+  if (!result.ok) return res.status(result.code === 'NO_KEY' ? 409 : 502).json({ success: false, code: result.code, error: result.message });
+  res.json({ success: true, models: result.models });
+});
+
+router.get('/ai-config', (req, res) => {
+  const config = readAiConfig();
+  res.json({ success: true, config, price: priceFor(config.model, config), usage: usageSummary() });
+});
+
+router.put('/ai-config', async (req, res) => {
+  const b = req.body || {};
+  const patch = {};
+  if (b.model !== undefined) {
+    const model = String(b.model || '').trim();
+    if (model) {
+      // Only a model the key can use (listed by GET /v1/models)
+      const result = await listModels();
+      if (!result.ok) return res.status(502).json({ success: false, error: `Daftar model tidak dapat diambil: ${result.message}` });
+      if (!result.models.some(m => m.id === model)) return res.status(400).json({ success: false, error: 'Model tidak tersedia untuk API key ini.' });
+    }
+    patch.model = model;
+  }
+  const num = (v, max) => {
+    if (v === null || v === '') return null;
+    const n = Number(String(v).replace(',', '.'));
+    return Number.isFinite(n) && n >= 0 && n <= max ? Math.round(n * 10000) / 10000 : NaN;
+  };
+  for (const [key, max] of [['monthlyBudgetUsd', 100000], ['priceInputPerMTok', 1000], ['priceOutputPerMTok', 1000]]) {
+    if (b[key] === undefined) continue;
+    const n = num(b[key], max);
+    if (Number.isNaN(n)) return res.status(400).json({ success: false, error: 'Angka biaya / harga tidak valid' });
+    patch[key] = n;
+  }
+  const config = writeAiConfig(patch, req.user?.name);
+  res.json({ success: true, config, price: priceFor(config.model, config), usage: usageSummary() });
 });
 
 export default router;

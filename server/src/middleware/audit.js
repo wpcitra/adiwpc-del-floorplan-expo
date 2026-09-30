@@ -74,6 +74,20 @@ const AUDIT_RULES = [
     describe: (req, m) => ({ target: m[1] }) },
 
   // Pusat Maintenance
+  // AI agent chat (the agent's own tool calls are written by agentRunner.js)
+  { method: 'POST', path: /^\/maintenance\/agent\/tasks$/, category: 'Maintenance', action: 'Buat tugas AI Agent',
+    describe: (req) => ({ target: String(req.body?.title || 'Percakapan baru').slice(0, 120) }) },
+  { method: 'POST', path: /^\/maintenance\/agent\/tasks\/([^/]+)\/messages$/, category: 'Maintenance', action: 'Kirim pesan ke AI Agent',
+    describe: (req, m) => ({
+      target: `Tugas ${m[1]}`,
+      summary: `${String(req.body?.text || '').replace(/\s+/g, ' ').slice(0, 160)}${(req.body?.attachments || []).length ? ` · ${(req.body.attachments || []).length} lampiran` : ''}${(req.body?.context || []).length ? ` · ${(req.body.context || []).length} konteks` : ''}`
+    }) },
+  { method: 'POST', path: /^\/maintenance\/agent\/tasks\/([^/]+)\/stop$/, category: 'Maintenance', action: 'Hentikan AI Agent',
+    describe: (req, m) => ({ target: `Tugas ${m[1]}` }) },
+  { method: 'PATCH', path: /^\/maintenance\/agent\/tasks\/([^/]+)$/, category: 'Maintenance', action: 'Ubah tugas AI Agent',
+    describe: (req, m) => ({ target: `Tugas ${m[1]}`, summary: [req.body?.title ? `judul: ${String(req.body.title).slice(0, 80)}` : '', req.body?.status ? `status: ${req.body.status}` : ''].filter(Boolean).join(' · ') }) },
+  { method: 'PUT', path: /^\/maintenance\/ai-config$/, category: 'Maintenance', action: 'Ubah pengaturan AI (model / batas biaya)',
+    describe: (req) => ({ target: 'Integrasi AI', summary: Object.entries(req.body || {}).map(([k, v]) => `${k}: ${v}`).join(', ').slice(0, 200) }) },
   // Claude API key: the key itself is never logged (SENSITIVE_KEYS drops `apiKey` from the details too)
   { method: 'PUT', path: /^\/maintenance\/ai-key$/, category: 'Maintenance', action: 'Simpan API key Claude',
     describe: () => ({ target: 'ANTHROPIC_API_KEY (server/.env)', summary: 'Key baru disimpan (nilai tidak dicatat)' }) },

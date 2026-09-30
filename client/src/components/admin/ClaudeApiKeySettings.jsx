@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, KeyRound, ShieldCheck, CheckCircle2, AlertTriangle, RefreshCw, Trash2, Eye, EyeOff, Save } from 'lucide-react';
+import { Bot, KeyRound, ShieldCheck, CheckCircle2, AlertTriangle, RefreshCw, Trash2, Eye, EyeOff, Save, Cpu, Wallet } from 'lucide-react';
 import { api } from '../../services/api';
 
 // Setting > Integrasi AI (Claude): the Super Admin enters the Claude API key (AGENTS.md §23).
@@ -12,6 +12,85 @@ const formatDateTime = (value) => {
   const d = new Date(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`);
   return isNaN(d) ? value : d.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
+
+// Model (from GET /v1/models), monthly budget and price estimates of the AI agent (AGENTS.md §27)
+function AiModelBudgetSettings() {
+  const [data, setData] = useState(null);
+  const [models, setModels] = useState([]);
+  const [modelError, setModelError] = useState('');
+  const [form, setForm] = useState({ model: '', monthlyBudgetUsd: '', priceInputPerMTok: '', priceOutputPerMTok: '' });
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState(null);
+
+  const load = async () => {
+    const [cfg, list] = await Promise.all([api.fetchAiConfig(), api.fetchAiModels()]);
+    if (cfg.success) {
+      setData(cfg);
+      setForm({
+        model: cfg.config.model || '',
+        monthlyBudgetUsd: String(cfg.config.monthlyBudgetUsd ?? ''),
+        priceInputPerMTok: cfg.config.priceInputPerMTok ?? '',
+        priceOutputPerMTok: cfg.config.priceOutputPerMTok ?? ''
+      });
+    }
+    if (list.success) { setModels(list.models || []); setModelError(''); } else setModelError(list.error || 'Daftar model tidak dapat diambil');
+  };
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    setBusy(true);
+    setNotice(null);
+    const res = await api.saveAiConfig(form);
+    setBusy(false);
+    if (res.success) { setData(res); setNotice({ type: 'success', text: 'Pengaturan AI disimpan.' }); } else setNotice({ type: 'error', text: res.error || 'Gagal menyimpan' });
+  };
+
+  const usage = data?.usage;
+  const input = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-violet-400';
+  return (
+    <div className="p-4 rounded-2xl border border-slate-200 space-y-4">
+      <div className="flex items-center gap-2 text-sm font-bold text-slate-900"><Cpu size={16} className="text-violet-600" /> Model &amp; Batas Biaya AI Agent</div>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">Model Claude</label>
+          <select value={form.model} onChange={(e) => setForm(f => ({ ...f, model: e.target.value }))} className={input}>
+            <option value="">— Pilih model —</option>
+            {form.model && !models.some(m => m.id === form.model) && <option value={form.model}>{form.model}</option>}
+            {models.map(m => <option key={m.id} value={m.id}>{m.name} ({m.id})</option>)}
+          </select>
+          <p className="text-[11px] text-slate-500 mt-1">{modelError || 'Daftar diambil langsung dari Anthropic (/v1/models) untuk API key ini.'}</p>
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">Batas biaya per bulan (USD)</label>
+          <input type="text" inputMode="decimal" value={form.monthlyBudgetUsd} onChange={(e) => setForm(f => ({ ...f, monthlyBudgetUsd: e.target.value }))} className={input} placeholder="10" />
+          <p className="text-[11px] text-slate-500 mt-1">Agent berhenti memanggil Claude saat batas tercapai; peringatan muncul di chat pada 80%.</p>
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">Harga input per 1 juta token (USD, opsional)</label>
+          <input type="text" inputMode="decimal" value={form.priceInputPerMTok} onChange={(e) => setForm(f => ({ ...f, priceInputPerMTok: e.target.value }))} className={input} placeholder={data?.price ? String(data.price.input) : ''} />
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">Harga output per 1 juta token (USD, opsional)</label>
+          <input type="text" inputMode="decimal" value={form.priceOutputPerMTok} onChange={(e) => setForm(f => ({ ...f, priceOutputPerMTok: e.target.value }))} className={input} placeholder={data?.price ? String(data.price.output) : ''} />
+        </div>
+      </div>
+      <p className="text-[11px] text-slate-500">
+        Biaya dihitung sebagai <b>perkiraan</b> dari jumlah token × harga di atas (kosong = harga umum per jenis model). Cocokkan dengan harga resmi di anthropic.com/pricing; tagihan sebenarnya ada di console.anthropic.com.
+      </p>
+      {usage && (
+        <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-xl border ${usage.exhausted ? 'bg-rose-50 border-rose-200 text-rose-700' : usage.warning ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+          <Wallet size={14} /> Terpakai bulan ini ± USD {Number(usage.monthCostUsd || 0).toFixed(3)} dari batas USD {Number(usage.budgetUsd || 0).toFixed(2)} ({usage.monthCalls} panggilan)
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={save} disabled={busy} className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 disabled:opacity-50 cursor-pointer">
+          {busy ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />} Simpan Pengaturan AI
+        </button>
+        {notice && <span className={`text-xs font-semibold ${notice.type === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>{notice.text}</span>}
+      </div>
+    </div>
+  );
+}
 
 export default function ClaudeApiKeySettings() {
   const [status, setStatus] = useState(null);
@@ -168,6 +247,8 @@ export default function ClaudeApiKeySettings() {
       )}
 
       {notice && <div className={`px-3 py-2 rounded-xl border text-xs font-semibold ${noticeStyle[notice.type]}`}>{notice.text}</div>}
+
+      {status?.configured && <AiModelBudgetSettings key={status.hint} />}
     </div>
   );
 }

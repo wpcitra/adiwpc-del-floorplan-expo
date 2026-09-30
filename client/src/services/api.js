@@ -1244,6 +1244,70 @@ export const api = {
     }
   },
 
+  // Pusat Maintenance: chat with the AI agent (AGENTS.md §27)
+  async agentRequest(method, path, body) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/agent${path}`, {
+        method,
+        cache: 'no-store',
+        headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+        body: body !== undefined ? JSON.stringify(body) : undefined
+      });
+      const json = await res.json().catch(() => ({}));
+      return { status: res.status, ...json, success: res.ok && json.success !== false };
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+  agentListTasks(params = {}) {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== '')).toString();
+    return this.agentRequest('GET', `/tasks?${qs}&_t=${Date.now()}`);
+  },
+  agentCreateTask(title) { return this.agentRequest('POST', '/tasks', title ? { title } : {}); },
+  agentGetTask(id) { return this.agentRequest('GET', `/tasks/${encodeURIComponent(id)}?_t=${Date.now()}`); },
+  agentUpdateTask(id, patch) { return this.agentRequest('PATCH', `/tasks/${encodeURIComponent(id)}`, patch); },
+  agentSendMessage(id, payload) { return this.agentRequest('POST', `/tasks/${encodeURIComponent(id)}/messages`, payload); },
+  agentStop(id) { return this.agentRequest('POST', `/tasks/${encodeURIComponent(id)}/stop`, {}); },
+  agentModules() { return this.agentRequest('GET', '/context/modules'); },
+  agentFiles(q) { return this.agentRequest('GET', `/context/files?q=${encodeURIComponent(q || '')}`); },
+  async agentAttachmentUrl(id) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/agent/attachments/${encodeURIComponent(id)}`);
+      if (!res.ok) return null;
+      return URL.createObjectURL(await res.blob());
+    } catch (e) {
+      return null;
+    }
+  },
+
+  // AI settings (Super Admin): model from /v1/models, monthly budget, price estimates
+  async fetchAiConfig() {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/ai-config?_t=${Date.now()}`, { cache: 'no-store' });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+  async fetchAiModels() {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/ai-models?_t=${Date.now()}`, { cache: 'no-store' });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+  async saveAiConfig(patch) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/ai-config`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch)
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+
   // Claude API key (Super Admin, write-only: only the status comes back, never the key)
   async fetchClaudeKeyStatus() {
     try {
