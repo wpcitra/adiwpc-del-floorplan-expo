@@ -1290,6 +1290,7 @@ export default function AdminDashboard() {
             propertyTick={propertyTick}
             onUpdateProperty={handleUpdateProperty}
             onBatchUpdate={handleBatchUpdate}
+            onApplyShapeStyle={(style) => editorRef.current?.applyShapeStyle(style)}
             onDeleteSelected={() => {
               const canvas = editorRef.current?.getCanvas();
               if (canvas) {

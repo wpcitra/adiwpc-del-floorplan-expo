@@ -44,8 +44,8 @@ const LEGACY_AUTO_LABELS = new Set([
   'MAIN STAGE & PRESENTATION', 'MAIN ENTRANCE / REGISTRATION', 'EMERGENCY EXIT', 'RESTROOM & VIP LOUNGE', 'FOOD COURT & CAFE', 'PILLAR'
 ]);
 
-// No caption: walls are plain lines and a free text label is already text
-const NO_CAPTION_TYPES = new Set(['wall', 'wall_line', 'text_label']);
+// No caption: walls are plain lines, a free text label / Text Box / Bentuk carry their own text
+const NO_CAPTION_TYPES = new Set(['wall', 'wall_line', 'text_label', 'textbox', 'shape_rect', 'shape_triangle', 'shape_parallelogram', 'shape_ellipse']);
 // Large original venue blocks: caption inside the block, under their own emoji label
 const VENUE_AREA_TYPES = new Set(['stage', 'loading', 'storage', 'greenroom', 'toilet', 'cafe', 'entrance']);
 const LINE_KINDS = new Set(['aisle', 'lane', 'queue', 'measure', 'path']);

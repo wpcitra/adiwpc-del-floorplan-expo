@@ -16,13 +16,16 @@ import { exportFloorplanToPdf } from '../../utils/floorplanPdfExport';
 import { createDoorObject, rebuildDoorObject, snapDoorToWall, applyDoorBehavior } from '../../utils/doorSymbols';
 import {
   ELEMENTS, isLibraryElement, createLibraryElement, rebuildLibraryElement, placeOnLayer, snapGateToWallOrDoor,
-  connectQueueEnds, findPillarConflicts, applyLibraryBehavior, elementCenter
+  connectQueueEnds, findPillarConflicts, applyLibraryBehavior, elementCenter, isShapeElement, syncShapeElement, applyShapeStyle
 } from '../../utils/elementLibrary';
 import { drawElementCaptions, findCaptionHit } from '../../utils/elementCaptions';
 import {
-  SNAP_SCREEN_PX, boxOf, containsBooth, snapTargets, computeSnap, computeGuides, limitStepToTouch, findBoothOverlaps, roundToStep
+  SNAP_SCREEN_PX, boxOf, containsBooth, movingMembers, snapTargets, computeSnap, computeGuides, limitStepToTouch, findBoothOverlaps, roundToStep
 } from '../../utils/boothSnap';
 import CanvasRuler from './CanvasRuler';
+
+// Booths, and the Text Box & Bentuk elements, follow "Snap ke Booth" when they are moved
+const snapsToBooths = (target) => containsBooth(target) || movingMembers(target).some(isShapeElement);
 
 const CanvasEditor = forwardRef(function CanvasEditor({
   onSelectionChange,
@@ -229,6 +232,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   }, [isPreviewMode, isPanMode]);
 
   // Helper to push history state
+  const styleHistoryTimerRef = useRef(null);
+  // Size badge (metres) shown while a Text Box / Bentuk is being resized, whatever the "Dimensi" switch says
+  const [shapeResizeBadge, setShapeResizeBadge] = useState(null);
   const pushHistory = useCallback(() => {
     if (isStateRestoringRef.current) return;
     const canvas = fabricRef.current;
@@ -631,6 +637,20 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     },
 
     // Batch update
+    // Text Box & Bentuk colours for the selected element(s): shown live, one undo step per burst of changes
+    applyShapeStyle: (style) => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      const targets = canvas.getActiveObjects().filter(isShapeElement);
+      if (!targets.length) return;
+      targets.forEach(obj => applyShapeStyle(obj, style));
+      canvas.requestRenderAll();
+      notifyObjectsUpdate();
+      handleSelectionRef.current?.();
+      clearTimeout(styleHistoryTimerRef.current);
+      styleHistoryTimerRef.current = setTimeout(() => pushHistory(), 400);
+    },
+
     batchUpdateProperties: (newProps) => {
       const canvas = fabricRef.current;
       if (!canvas) return;
@@ -693,6 +713,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         const clone = createLibraryElement(active.venueData.type, {
           ...active.venueData,
           label: active.text !== undefined ? active.text : active.venueData.label,
+          textStyles: isShapeElement(active) ? active.styles : undefined,
           points: active.points ? active.points.map(p => ({ x: p.x - off.x, y: p.y - off.y })) : undefined,
           id: null,
           cx: c.x + gridScaleRef.current * 2,
@@ -1349,6 +1370,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     });
 
     canvas.on('mouse:up', () => {
+      setShapeResizeBadge(null);
       if (snapGuidesRef.current) {
         snapGuidesRef.current = null;
         canvas.requestRenderAll();
@@ -1463,7 +1485,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       }
 
       // 2a. Snap ke Booth: edges / corners of other booths win over the grid; each axis falls back to the grid
-      if (snapToBoothsRef.current && !freeMove && containsBooth(target)) {
+      if (snapToBoothsRef.current && !freeMove && snapsToBooths(target)) {
         const gridPos = { left: target.left, top: target.top };
         target.set(rawPos);
         target.setCoords();
@@ -1512,9 +1534,39 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       if (target?.isBooth) target.__transformStartBox = boxOf(target);
     });
 
+    // Text Box & Bentuk resize: the dragged side sticks to the nearest booth side, like booths do
+    // (straight elements only; Alt = from the centre and Shift = keep proportion are never snapped)
+    canvas.__snapShapeResize = (target, transform, { w, h, axis }) => {
+      const angle = ((Math.round(target.angle || 0) % 360) + 360) % 360;
+      if (!snapToBoothsRef.current || angle !== 0) return null;
+      const targets = snapTargets(canvas, target, { includeWalls: snapToWallsRef.current });
+      if (!targets.length) return null;
+      const anchor = target.getPositionByOrigin(transform.originX, transform.originY);
+      const thr = SNAP_SCREEN_PX / (canvas.getZoom() || 1);
+      const nearest = (value, edges) => edges.reduce((best, e) => (Math.abs(e - value) <= thr && (best === null || Math.abs(e - value) < Math.abs(best - value)) ? e : best), null);
+      const next = { w, h };
+      if (axis !== 'y' && (transform.originX === 'left' || transform.originX === 'right')) {
+        const dir = transform.originX === 'left' ? 1 : -1;
+        const edge = nearest(anchor.x + dir * w, targets.flatMap(t => [t.box.l, t.box.r]));
+        if (edge !== null && (edge - anchor.x) * dir > 0) next.w = Math.abs(edge - anchor.x);
+      }
+      if (axis !== 'x' && (transform.originY === 'top' || transform.originY === 'bottom')) {
+        const dir = transform.originY === 'top' ? 1 : -1;
+        const edge = nearest(anchor.y + dir * h, targets.flatMap(t => [t.box.t, t.box.b]));
+        if (edge !== null && (edge - anchor.y) * dir > 0) next.h = Math.abs(edge - anchor.y);
+      }
+      return next;
+    };
+
     // Object Scaling: Live dimension updates
     canvas.on('object:scaling', (opt) => {
       const target = opt.target;
+      if (isShapeElement(target)) {
+        const gs = gridScaleRef.current;
+        const fmt = (px) => (Math.round((px / gs) * 100) / 100).toString().replace('.', ',');
+        const top = target.oCoords?.mt || target.oCoords?.tl;
+        if (top) setShapeResizeBadge({ text: `${fmt(target.width)} × ${fmt(target.boxHeight || target.height)} m`, x: top.x, y: top.y });
+      }
       // Snap ke Booth while resizing: the dragged side sticks to the nearest booth side (0 / 90 / 180 / 270 deg)
       const angle = ((Math.round(target?.angle || 0) % 360) + 360) % 360;
       if (target?.isBooth && target.__transformStartBox && snapToBoothsRef.current && !opt.e?.altKey && angle % 90 === 0) {
@@ -1567,7 +1619,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     // Object Modified: Normalize scale factors & keep text neatly inside boundaries!
     canvas.on('object:modified', (opt) => {
       const target = opt.target;
-      if (isLibraryElement(target)) {
+      if (isShapeElement(target)) {
+        // Text Box & Bentuk resize without scaling: store the new size in metres (and the text) on the element
+        syncShapeElement(target);
+        setShapeResizeBadge(null);
+      } else if (isLibraryElement(target)) {
         const def = ELEMENTS[target.venueData.type];
         const sx = Math.abs(target.scaleX || 1);
         const sy = Math.abs(target.scaleY || 1);
@@ -1751,6 +1807,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
     canvas.on('selection:created', handleSelection);
     canvas.on('selection:updated', handleSelection);
+    // Text Box & Bentuk: the colour panel knows when part of the text is selected while typing
+    canvas.on('text:selection:changed', (opt) => { if (isShapeElement(opt?.target)) handleSelection(); });
+    canvas.on('text:editing:entered', (opt) => { if (isShapeElement(opt?.target)) handleSelection(); });
     // Canvas selection cleared listener
     canvas.on('selection:cleared', () => {
       onSelectionChange?.(null, []);
@@ -1788,7 +1847,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         canvas.defaultCursor = 'grab';
         canvas.selection = false;
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && e.target.tagName !== 'INPUT') {
+      // Not while typing: a text field, or the text of a Teks / Text Box / Bentuk being edited on the canvas
+      if ((e.key === 'Delete' || e.key === 'Backspace') && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA' && !canvas.getActiveObject()?.isEditing) {
         const active = canvas.getActiveObjects();
         if (active.length) {
           canvas.discardActiveObject();
@@ -1810,7 +1870,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           e.preventDefault();
           const [sx, sy, dir] = ARROWS[e.key];
           let step = (e.shiftKey ? 1 : 0.1) * gridScaleRef.current;
-          if (!e.altKey && snapToBoothsRef.current && containsBooth(active)) {
+          if (!e.altKey && snapToBoothsRef.current && snapsToBooths(active)) {
             step = limitStepToTouch(boxOf(active), snapTargets(canvas, active, { includeWalls: false }), dir, step);
           }
           if (step > 0.01) {
@@ -2149,6 +2209,15 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       />
 
       {/* Real-time Dimension Guide Pill */}
+      {shapeResizeBadge && (
+        <div
+          className="pointer-events-none absolute z-20 bg-violet-700/95 text-white px-2 py-0.5 rounded-md text-[11px] font-mono font-bold shadow-lg -translate-x-1/2 -translate-y-full"
+          style={{ left: shapeResizeBadge.x, top: shapeResizeBadge.y - 28 }}
+        >
+          {shapeResizeBadge.text}
+        </div>
+      )}
+
       {showDimensions && activeDimension && (
         <div 
           className="pointer-events-none absolute z-20 bg-slate-900/90 backdrop-blur-sm text-white px-2.5 py-1 rounded-md text-[10px] font-mono shadow-lg border border-slate-700/80 -translate-x-1/2 -translate-y-full transition-all"

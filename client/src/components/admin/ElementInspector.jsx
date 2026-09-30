@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ArrowUp, ArrowDown, Copy, Trash2, RotateCw, Globe, EyeOff, Link2, Info } from 'lucide-react';
 import ElementIcon from './ElementIcon';
 import CaptionSection from './CaptionSection';
+import ShapeStyleSection from './ShapeStyleSection';
 import { captionText } from '../../utils/elementCaptions';
 import { ELEMENTS, LIBRARY_TABS, accentOf } from '../../utils/elementLibrary';
 
@@ -30,7 +31,7 @@ function BufferedInput({ value, onApply, type = 'text', multiline = false, ...re
 }
 
 // Right-panel inspector for the new library elements
-export default function ElementInspector({ element, canvasObjects = [], captionsEnabled = true, extraTop = null, hidePublicToggle = false, onUpdateProperty, onBringForward, onSendBackward, onDeleteSelected, onDuplicateSelected }) {
+export default function ElementInspector({ element, canvasObjects = [], captionsEnabled = true, extraTop = null, hidePublicToggle = false, onUpdateProperty, onApplyShapeStyle, onBringForward, onSendBackward, onDeleteSelected, onDuplicateSelected }) {
   const data = element.venueData || {};
   const def = ELEMENTS[data.type];
   const accent = accentOf(data.type);
@@ -38,6 +39,7 @@ export default function ElementInspector({ element, canvasObjects = [], captions
   const isText = def.kind === 'text';
   const isQueue = def.kind === 'queue';
   const isMeasure = def.kind === 'measure';
+  const isShape = def.kind === 'shape'; // Text Box & Bentuk: own text, free size, "Warna" section
 
   const num = (v) => {
     const n = parseFloat(String(v).replace(',', '.'));
@@ -123,7 +125,7 @@ export default function ElementInspector({ element, canvasObjects = [], captions
             <ElementIcon type={data.type} size={22} />
           </div>
           <div className="min-w-0">
-            <h2 className="font-semibold text-slate-800 text-base truncate">{isText ? (data.label || def.name) : captionText(element)}</h2>
+            <h2 className="font-semibold text-slate-800 text-base truncate">{isText ? (data.label || def.name) : isShape ? def.name : captionText(element)}</h2>
             <p className="text-[11px] text-slate-500">{def.name}{!isText && !isQueue ? ` • ${data.widthM} × ${data.heightM} m` : ''}</p>
           </div>
         </div>
@@ -132,11 +134,12 @@ export default function ElementInspector({ element, canvasObjects = [], captions
       <div className="p-4 space-y-4 flex-1">
         {extraTop}
         {/* Free text content / caption (short name shown next to the icon) */}
-        {isText ? (
+        {isText || isShape ? (
           <div>
             <label className="block text-xs text-slate-500 mb-1 font-medium">Isi Teks</label>
-            <BufferedInput value={element.text ?? data.label} multiline placeholder="Tulis teks..."
+            <BufferedInput value={element.text ?? data.label} multiline placeholder={isShape ? 'Teks di dalam bentuk (opsional)' : 'Tulis teks...'}
               onApply={(v) => onUpdateProperty({ label: v })} />
+            {isShape && <p className="text-[11px] text-slate-400 mt-1">Atau klik dua kali elemen di kanvas untuk mengetik langsung.</p>}
           </div>
         ) : (
           <CaptionSection element={element} onUpdateProperty={onUpdateProperty} captionsEnabled={captionsEnabled} />
@@ -176,6 +179,12 @@ export default function ElementInspector({ element, canvasObjects = [], captions
             {renderProp(p)}
           </div>
         ))}
+
+        {/* Text Box & Bentuk: fill, border & text colours */}
+        {isShape && onApplyShapeStyle && <ShapeStyleSection elements={[element]} onApply={onApplyShapeStyle} />}
+        {isShape && (
+          <p className="text-[11px] text-slate-500 flex items-start gap-1"><Info size={12} className="mt-0.5 shrink-0" /> Tarik handle sisi untuk lebar / tinggi saja, handle sudut untuk keduanya. Tahan Shift untuk menjaga proporsi, Alt (Option) untuk menarik dari tengah.</p>
+        )}
 
         {/* Rotation */}
         <div>

@@ -2,7 +2,7 @@ import * as fabric from 'fabric';
 
 // ============================================================================================
 // Floorplan element library: every new element (Struktur, Zona & Jalur, Tiket & Akses, Utilitas,
-// Signage & Media, Operasional, Musholla/Wudhu, Teks, Alat Ukur) is defined once here:
+// Signage & Media, Operasional, Musholla/Wudhu, Teks, Alat Ukur, Text Box & Bentuk) is defined once here:
 //   - ICONS: hand-drawn 24x24 outline icons (viewBox 0 0 24 24, stroke 1.8, round caps/joins,
 //     currentColor). The same path data renders the catalog card (React <svg>) and the canvas symbol.
 //   - ELEMENTS: tab, group, default size in metres, layer, public visibility, inspector properties.
@@ -86,6 +86,11 @@ export const ICONS = {
 
   // Shapes
   text_label: [R(4, 4, 16, 16, 2), L(8, 8, 16, 8), L(12, 8, 12, 17)],
+  textbox: [dashed(R(3, 5, 18, 14, 2)), L(7, 10, 17, 10), L(7, 14, 14, 14)],
+  shape_rect: [R(4, 5, 16, 14, 1.5)],
+  shape_triangle: [D('M12 4L21 19.5H3Z')],
+  shape_parallelogram: [D('M8.5 6H21L15.5 18H3Z')],
+  shape_ellipse: [C(12, 12, 8.5)],
   measure: [L(3, 15, 21, 15), L(3, 11.5, 3, 18.5), L(21, 11.5, 21, 18.5), L(9, 15, 9, 13), L(15, 15, 15, 13), R(8, 4.5, 8, 5, 1)]
 };
 
@@ -103,8 +108,17 @@ export const TAB_ACCENT = Object.fromEntries(LIBRARY_TABS.map(t => [t.id, t.acce
 const PAYMENT_OPTIONS = [['tunai', 'Tunai'], ['qris', 'QRIS'], ['kartu', 'Kartu Debit/Kredit']];
 const ZONE_CATEGORIES = ['Umum', 'Pameran', 'Kuliner', 'VIP', 'Istirahat', 'Panggung', 'Lainnya'];
 
+// Text settings of Text Box & Bentuk (colours live in the "Warna" section, see SHAPE_STYLE_KEYS)
+function SHAPE_TEXT_PROPS(fontSize) {
+  return [
+    { key: 'fontSize', label: 'Ukuran Huruf (px)', type: 'number', min: 6, max: 120, step: 1, default: fontSize },
+    { key: 'bold', label: 'Tebal', type: 'toggle', default: false }
+  ];
+}
+
 // kind: marker (footprint + centred icon) | hatch (obstacle) | area (resizable tinted block) | aisle | lane
 //       | curve (flow arrow) | path (dashed route + icon) | queue (editable polyline) | measure | text | cctv
+//       | shape (Text Box & Bentuk: one ShapeBox, freely resizable, colours in props)
 // layer: 'bottom' (behind booths) | 'top'
 export const ELEMENTS = {
   // ---------------- Struktur ----------------
@@ -199,7 +213,30 @@ export const ELEMENTS = {
     tab: 'shapes', name: 'Teks / Label', desc: 'Teks bebas di denah', kind: 'text', w: 4, h: 1, layer: 'top', publicDefault: true, accent: '#0f172a', keywords: 'teks label tulisan text',
     props: [{ key: 'fontSize', label: 'Ukuran Huruf (px)', type: 'number', min: 6, max: 120, step: 1, default: 16 }, { key: 'bold', label: 'Tebal', type: 'toggle', default: true }, { key: 'textColor', label: 'Warna Teks', type: 'color', default: '#0f172a' }]
   },
-  measure: { tab: 'shapes', name: 'Alat Ukur / Dimensi', desc: 'Garis ukur, jarak otomatis dalam meter', kind: 'measure', w: 5, h: 0.6, layer: 'top', publicDefault: false, accent: '#e11d48', keywords: 'ukur dimensi jarak meter measure' }
+  measure: { tab: 'shapes', name: 'Alat Ukur / Dimensi', desc: 'Garis ukur, jarak otomatis dalam meter', kind: 'measure', w: 5, h: 0.6, layer: 'top', publicDefault: false, accent: '#e11d48', keywords: 'ukur dimensi jarak meter measure' },
+
+  // ---------------- Text Box & Bentuk (kind 'shape': one ShapeBox object, text wraps inside the shape) ----------------
+  textbox: {
+    tab: 'shapes', name: 'Text Box', desc: 'Kotak teks, teks mengikuti lebar kotak', kind: 'shape', shape: 'textbox', w: 4, h: 1, layer: 'top', publicDefault: true, accent: '#0f172a',
+    defaultLabel: 'Ketik teks di sini', keywords: 'text box textbox kotak teks paragraf tulisan keterangan',
+    style: { fillNone: true, strokeNone: true, textColor: '#0f172a' }, props: SHAPE_TEXT_PROPS(16)
+  },
+  shape_rect: {
+    tab: 'shapes', name: 'Kotak', desc: 'Persegi / persegi panjang', kind: 'shape', shape: 'rect', w: 3, h: 3, layer: 'top', publicDefault: true, accent: '#4f46e5',
+    keywords: 'kotak persegi panjang segi empat rectangle square box bentuk', props: SHAPE_TEXT_PROPS(14)
+  },
+  shape_triangle: {
+    tab: 'shapes', name: 'Segitiga', desc: 'Bentuk segitiga', kind: 'shape', shape: 'triangle', w: 3, h: 3, layer: 'top', publicDefault: true, accent: '#4f46e5',
+    keywords: 'segitiga triangle bentuk', props: SHAPE_TEXT_PROPS(14)
+  },
+  shape_parallelogram: {
+    tab: 'shapes', name: 'Jajaran Genjang', desc: 'Bentuk miring (parallelogram)', kind: 'shape', shape: 'parallelogram', w: 4, h: 2, layer: 'top', publicDefault: true, accent: '#4f46e5',
+    keywords: 'jajaran genjang parallelogram miring bentuk', props: SHAPE_TEXT_PROPS(14)
+  },
+  shape_ellipse: {
+    tab: 'shapes', name: 'Bulat', desc: 'Lingkaran / elips', kind: 'shape', shape: 'ellipse', w: 3, h: 3, layer: 'top', publicDefault: true, accent: '#4f46e5',
+    keywords: 'bulat lingkaran elips oval circle ellipse bundar bentuk', props: SHAPE_TEXT_PROPS(14)
+  }
 };
 
 // Existing elements shown as shortcuts in the new tabs (same template, not a duplicate)
@@ -241,6 +278,8 @@ export function defaultProps(type) {
   const out = {};
   (ELEMENTS[type]?.props || []).forEach(p => { if (p.default !== undefined && !p.geometry) out[p.key] = p.default; });
   if (ELEMENTS[type]?.color) out.color = ELEMENTS[type].color;
+  // Text Box & Bentuk: built-in colours, then the style this browser saved with "Jadikan Default"
+  if (ELEMENTS[type]?.kind === 'shape') Object.assign(out, baseShapeStyle(type), readShapeDefault(type));
   return out;
 }
 
@@ -282,6 +321,10 @@ export function applyLibraryBehavior(obj) {
   }
   if (obj.venueData.type === 'text_label') {
     obj.lockScalingFlip = true;
+  }
+  if (ELEMENTS[obj.venueData.type].kind === 'shape') {
+    obj.controls = shapeControls();
+    obj.set({ lockScalingFlip: true, objectCaching: false, strokeWidth: 0 });
   }
   // Elements saved before captions existed carry a baked-in label text: the caption overlay replaces it
   if (obj.venueData.type !== 'measure' && typeof obj.getObjects === 'function') {
@@ -419,7 +462,7 @@ export function normalizeElementData(type, data = {}) {
     props: { ...defaultProps(type), ...(data.props || {}) },
     publicVisible: data.publicVisible !== undefined ? Boolean(data.publicVisible) : def.publicDefault,
     // Caption (see elementCaptions.js): custom text ('' = default name) and per-element visibility
-    caption: typeof data.caption === 'string' ? data.caption : (def.kind === 'text' ? '' : String(data.label || '')),
+    caption: typeof data.caption === 'string' ? data.caption : (def.kind === 'text' || def.kind === 'shape' ? '' : String(data.label || '')),
     showCaption: data.showCaption !== false
   };
 }
@@ -443,6 +486,20 @@ export function createLibraryElement(type, { cx = 200, cy = 200, angle = 0, grid
       editable: true
     });
     if (!vd.label) vd.label = 'Teks Label';
+  } else if (def.kind === 'shape') {
+    obj = new ShapeBox(vd.label, {
+      originX: 'center', originY: 'center', left: cx, top: cy, angle,
+      width: W, boxHeight: H,
+      fontSize: Number(vd.props.fontSize) || 14,
+      fontWeight: vd.props.bold ? 'bold' : 'normal',
+      fill: vd.props.textColor || '#0f172a',
+      textAlign: def.shape === 'textbox' ? 'left' : 'center',
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      styles: data.textStyles ? JSON.parse(JSON.stringify(data.textStyles)) : {},
+      // the shape kind is read from venueData while the text is measured
+      venueData: { ...vd },
+      cornerColor: '#6366f1', cornerSize: 8, transparentCorners: false
+    });
   } else if (def.kind === 'queue') {
     const lane = (Number(vd.props.laneWidth) || 1.2) * gridScale;
     const pts = Array.isArray(data.points) && data.points.length >= 2
@@ -483,6 +540,8 @@ export function elementCenter(obj) {
 export function rebuildLibraryElement(canvas, obj, changes = {}) {
   const current = obj.venueData;
   const def = ELEMENTS[current.type];
+  // Text Box & Bentuk change in place: the text, its per-character colours and an ongoing edit are kept
+  if (def.kind === 'shape') return updateShapeElement(obj, changes);
   const gridScale = current.gridScale || 20;
   const center = elementCenter(obj);
   const merged = {
@@ -631,3 +690,258 @@ export function findPillarConflicts(canvas) {
   });
   return conflicts;
 }
+
+// ============================================================================================
+// Text Box & Bentuk (kind 'shape')
+//   One ShapeBox object = a Fabric Textbox that paints its own shape (kotak, segitiga, jajaran genjang,
+//   bulat, or none for the Text Box) behind the text. The text wraps to the shape's width and is edited
+//   in place; per-character colours are Fabric text `styles`. Size is real width / boxHeight (never a
+//   scale): side handles resize one direction, corners freely, Shift keeps the proportion, Alt resizes
+//   from the centre, 0,2 m minimum. Colours live in venueData.props (SHAPE_STYLE_KEYS).
+// ============================================================================================
+export const MIN_SHAPE_M = 0.2;
+export const SHAPE_STYLE_KEYS = ['fillColor', 'fillOpacity', 'fillNone', 'strokeColor', 'strokeOpacity', 'strokeWidth', 'strokeStyle', 'strokeNone', 'textColor'];
+const SHAPE_BASE_STYLE = {
+  fillColor: '#4f46e5', fillOpacity: 15, fillNone: false,
+  strokeColor: '#4f46e5', strokeOpacity: 100, strokeWidth: 2, strokeStyle: 'solid', strokeNone: false,
+  textColor: '#1e1b4b'
+};
+// Share of the width the text wraps in (the text stays inside round / slanted shapes)
+const SHAPE_TEXT_AREA = { textbox: 1, rect: 0.9, ellipse: 0.72, triangle: 0.56, parallelogram: 0.66 };
+const SHAPE_DEFAULTS_KEY = 'floorplan_shape_defaults';
+
+export const isShapeElement = (obj) => Boolean(isLibraryElement(obj) && ELEMENTS[obj.venueData.type].kind === 'shape');
+const baseShapeStyle = (type) => ({ ...SHAPE_BASE_STYLE, ...(ELEMENTS[type]?.style || {}) });
+const pickStyle = (src = {}) => Object.fromEntries(SHAPE_STYLE_KEYS.filter(k => src[k] !== undefined).map(k => [k, src[k]]));
+
+// Current colours of a shape element (built-in defaults filled in)
+export const shapeStyleOf = (vd = {}) => ({ ...baseShapeStyle(vd.type), ...pickStyle(vd.props) });
+
+// "Jadikan Default": per element type, in this browser
+function readShapeDefault(type) {
+  try { return pickStyle(JSON.parse(localStorage.getItem(SHAPE_DEFAULTS_KEY) || '{}')[type]); } catch (e) { return {}; }
+}
+export function saveShapeDefault(type, style) {
+  try {
+    const all = JSON.parse(localStorage.getItem(SHAPE_DEFAULTS_KEY) || '{}');
+    all[type] = pickStyle(style);
+    localStorage.setItem(SHAPE_DEFAULTS_KEY, JSON.stringify(all));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+const dashFor = (style, width) => (style === 'dashed' ? [width * 4, width * 2.5] : style === 'dotted' ? [0.01, width * 2.2] : []);
+
+export class ShapeBox extends fabric.Textbox {
+  static type = 'ShapeBox';
+  // boxHeight = height of the shape; the object grows taller only when the text needs more room
+  static customProperties = ['boxHeight'];
+
+  get shapeKind() { return ELEMENTS[this.venueData?.type]?.shape || 'rect'; }
+
+  _textPadding() { return this.shapeKind === 'textbox' ? Math.min(8, this.width * 0.06) : 0; }
+  _wrapWidth(width) { return Math.max(8, width * (SHAPE_TEXT_AREA[this.shapeKind] ?? 0.9) - 2 * this._textPadding()); }
+  _wrapText(lines, desiredWidth) { return super._wrapText(lines, this._wrapWidth(desiredWidth)); }
+
+  initDimensions() {
+    if (!this.initialized) return;
+    super.initDimensions();
+    this.textHeight = this.height;
+    this.height = Math.max(Number(this.boxHeight) || 0, this.textHeight);
+  }
+
+  // Text block centred in the shape (a triangle's text sits lower, where the shape is wider)
+  _getTopOffset() {
+    const textHeight = this.textHeight ?? this.height;
+    return -textHeight / 2 + (this.shapeKind === 'triangle' ? this.height / 6 : 0);
+  }
+
+  _getLineLeftOffset(lineIndex) {
+    const base = super._getLineLeftOffset(lineIndex);
+    const inset = (this.width - this._wrapWidth(this.width)) / 2;
+    if (this.textAlign === 'left' || this.textAlign === 'justify-left') return base + inset;
+    if (this.textAlign === 'right' || this.textAlign === 'justify-right') return base - inset;
+    return base;
+  }
+
+  _shapePath(ctx, inset) {
+    const w = Math.max(0.5, this.width / 2 - inset);
+    const h = Math.max(0.5, this.height / 2 - inset);
+    ctx.beginPath();
+    switch (this.shapeKind) {
+      case 'ellipse':
+        ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
+        break;
+      case 'triangle':
+        ctx.moveTo(0, -h); ctx.lineTo(w, h); ctx.lineTo(-w, h); ctx.closePath();
+        break;
+      case 'parallelogram': {
+        const slant = Math.min(w, w * 2 * 0.22);
+        ctx.moveTo(-w + slant, -h); ctx.lineTo(w, -h); ctx.lineTo(w - slant, h); ctx.lineTo(-w, h); ctx.closePath();
+        break;
+      }
+      default:
+        ctx.rect(-w, -h, w * 2, h * 2);
+    }
+  }
+
+  _render(ctx) {
+    const s = shapeStyleOf(this.venueData);
+    ctx.save();
+    if (!s.fillNone && Number(s.fillOpacity) > 0) {
+      this._shapePath(ctx, 0);
+      ctx.fillStyle = withAlpha(s.fillColor, Math.min(100, Number(s.fillOpacity)) / 100);
+      ctx.fill();
+    }
+    const sw = Math.max(0, Number(s.strokeWidth) || 0);
+    if (!s.strokeNone && sw > 0 && Number(s.strokeOpacity) > 0) {
+      this._shapePath(ctx, sw / 2); // stroke inside the outline: the size stays the size
+      ctx.lineWidth = sw;
+      ctx.strokeStyle = withAlpha(s.strokeColor, Math.min(100, Number(s.strokeOpacity)) / 100);
+      ctx.lineJoin = this.shapeKind === 'triangle' || this.shapeKind === 'parallelogram' ? 'round' : 'miter';
+      ctx.lineCap = s.strokeStyle === 'dotted' ? 'round' : 'butt';
+      ctx.setLineDash(dashFor(s.strokeStyle, sw));
+      ctx.stroke();
+    }
+    ctx.restore();
+    super._render(ctx);
+  }
+}
+fabric.classRegistry.setClass(ShapeBox);
+
+// Resize without scaling: the pointer sets width / boxHeight directly (text re-wraps live)
+const resizeShapeAction = (axis) => (eventData, transform, x, y) => {
+  const t = transform.target;
+  const min = MIN_SHAPE_M * (t.venueData?.gridScale || 20);
+  if (!t.__resizeStart || t.__resizeStart.transform !== transform) t.__resizeStart = { transform, w: t.width, h: t.boxHeight || t.height };
+  const start = t.__resizeStart;
+  const local = fabric.controlsUtils.getLocalPoint(transform, transform.originX, transform.originY, x, y);
+  // Pointer dragged past the opposite side: stop at the minimum instead of flipping
+  const along = (value, origin, low, high) => (origin === low ? Math.max(0, value) : origin === high ? Math.max(0, -value) : Math.abs(value) * 2);
+  let w = t.width;
+  let h = t.boxHeight || t.height;
+  if (axis !== 'y') w = along(local.x, transform.originX, 'left', 'right');
+  if (axis !== 'x') h = along(local.y, transform.originY, 'top', 'bottom');
+  if (axis === 'both' && eventData.shiftKey && start.w > 0 && start.h > 0) {
+    const ratio = Math.max(w / start.w, h / start.h);
+    w = start.w * ratio;
+    h = start.h * ratio;
+  } else if (!eventData.altKey && typeof t.canvas?.__snapShapeResize === 'function') {
+    ({ w, h } = t.canvas.__snapShapeResize(t, transform, { w, h, axis }) || { w, h });
+  }
+  w = Math.max(min, w);
+  h = Math.max(min, h);
+  if (Math.abs(w - t.width) < 0.01 && Math.abs(h - (t.boxHeight || 0)) < 0.01) return false;
+  t.set('width', w);
+  t.boxHeight = h;
+  t.initDimensions();
+  t.dirty = true;
+  return true;
+};
+
+let cachedShapeControls = null;
+function shapeControls() {
+  if (cachedShapeControls) return cachedShapeControls;
+  const cu = fabric.controlsUtils;
+  // Alt / Option pressed or released during the drag switches between resizing from the centre and from the
+  // opposite side (Fabric only reads it when the drag starts). Done before the anchor is fixed for this step.
+  const followAltKey = (handler) => (eventData, transform, x, y) => {
+    if (!transform.__startOrigin) transform.__startOrigin = { x: transform.originX, y: transform.originY };
+    const centred = Boolean(eventData.altKey);
+    transform.originX = centred ? 'center' : transform.__startOrigin.x;
+    transform.originY = centred ? 'center' : transform.__startOrigin.y;
+    return handler(eventData, transform, x, y);
+  };
+  const wrap = (axis) => cu.wrapWithFireEvent('scaling', followAltKey(cu.wrapWithFixedAnchor(resizeShapeAction(axis))));
+  const axisOf = { tl: 'both', tr: 'both', bl: 'both', br: 'both', ml: 'x', mr: 'x', mt: 'y', mb: 'y' };
+  const actionOf = { both: 'scale', x: 'scaleX', y: 'scaleY' };
+  const controls = {};
+  Object.entries(cu.createObjectDefaultControls()).forEach(([key, control]) => {
+    controls[key] = axisOf[key]
+      ? new fabric.Control({ ...control, actionHandler: wrap(axisOf[key]), cursorStyleHandler: cu.scaleCursorStyleHandler, actionName: actionOf[axisOf[key]] })
+      : control;
+  });
+  cachedShapeControls = controls;
+  return controls;
+}
+
+// Size / text / props / rotation changes applied to the same object (keeps id, z-order, text styles)
+export function updateShapeElement(obj, changes = {}) {
+  const vd = obj.venueData;
+  const gs = vd.gridScale || 20;
+  const center = obj.getCenterPoint();
+  const { props, label, widthM, heightM, angle, ...rest } = changes;
+  Object.assign(vd, rest);
+  if (label !== undefined) {
+    obj.set('text', String(label));
+    vd.label = obj.text;
+  }
+  if (props) {
+    vd.props = { ...vd.props, ...props };
+    if (props.fontSize !== undefined) obj.set('fontSize', Math.max(6, Math.min(120, Number(props.fontSize) || 14)));
+    if (props.bold !== undefined) obj.set('fontWeight', props.bold ? 'bold' : 'normal');
+    if (props.textColor !== undefined) obj.set('fill', props.textColor);
+  }
+  if (widthM !== undefined) {
+    vd.widthM = Math.max(MIN_SHAPE_M, Math.round(Number(widthM) * 100) / 100);
+    obj.set('width', vd.widthM * gs);
+  }
+  if (heightM !== undefined) {
+    vd.heightM = Math.max(MIN_SHAPE_M, Math.round(Number(heightM) * 100) / 100);
+    obj.boxHeight = vd.heightM * gs;
+  }
+  if (angle !== undefined) obj.set('angle', Number(angle) || 0);
+  obj.initDimensions();
+  obj.setPositionByOrigin(center, 'center', 'center');
+  obj.setCoords();
+  obj.dirty = true;
+  return obj;
+}
+
+// After a drag / resize: any scale (e.g. from a multi-selection) becomes real size, then size & text go to venueData
+export function syncShapeElement(obj) {
+  const vd = obj.venueData;
+  const gs = vd.gridScale || 20;
+  const sx = Math.abs(obj.scaleX || 1);
+  const sy = Math.abs(obj.scaleY || 1);
+  if (Math.abs(sx - 1) > 0.001 || Math.abs(sy - 1) > 0.001) {
+    const center = obj.getCenterPoint();
+    obj.set({ width: obj.width * sx, scaleX: 1, scaleY: 1, flipX: false, flipY: false });
+    obj.boxHeight = (obj.boxHeight || obj.height) * sy;
+    obj.initDimensions();
+    obj.setPositionByOrigin(center, 'center', 'center');
+  }
+  vd.widthM = Math.max(MIN_SHAPE_M, Math.round((obj.width / gs) * 100) / 100);
+  vd.heightM = Math.max(MIN_SHAPE_M, Math.round(((obj.boxHeight || obj.height) / gs) * 100) / 100);
+  vd.label = obj.text;
+  delete obj.__resizeStart;
+  obj.setCoords();
+  return obj;
+}
+
+/**
+ * Colours of a shape element. `textColor` goes to the selected characters while the text is being edited
+ * with a selection, otherwise to the whole text (per-character colours are then cleared).
+ */
+export function applyShapeStyle(obj, style = {}) {
+  const vd = obj.venueData;
+  const { textColor, ...rest } = pickStyle(style);
+  const next = { ...vd.props, ...rest };
+  if (textColor !== undefined) {
+    const start = obj.selectionStart;
+    const end = obj.selectionEnd;
+    if (obj.isEditing && end > start) {
+      obj.setSelectionStyles({ fill: textColor }, start, end);
+    } else {
+      next.textColor = textColor;
+      obj.set('fill', textColor);
+      if (obj.styles && Object.keys(obj.styles).length) obj.removeStyle('fill');
+    }
+  }
+  vd.props = next;
+  obj.dirty = true;
+  return obj;
+}
+

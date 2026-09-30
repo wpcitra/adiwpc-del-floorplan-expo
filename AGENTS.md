@@ -313,3 +313,28 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Audit.** Saving, testing, and deleting are audited (category `Maintenance`) without the value. `SENSITIVE_KEYS` in `audit.js` drops `apiKey` from request details.
 - **Staging and tests never receive the production key** (`ANTHROPIC_API_KEY=''` is set by `ops/staging.mjs` and the test harness).
 
+
+---
+
+## 24. Text Box & Bentuk Lock (`elementLibrary.js` `ShapeBox`, `ShapeStyleSection.jsx`, `ShapeColorPicker.jsx`)
+- **Elements** (tab Shapes, Studio and Denah Operasional): `textbox` (in "Teks & Pengukuran"), `shape_rect`, `shape_triangle`, `shape_parallelogram`, `shape_ellipse` (subheading "Bentuk"). They are library elements with `kind: 'shape'`, so they are saved, copied, exported, and listed like the others.
+- **One object each: `ShapeBox`** (a Fabric `Textbox`, registered in `classRegistry`). It paints its shape behind the text.
+  - The text wraps inside the shape (`SHAPE_TEXT_AREA`), is centred vertically, and is edited in place on the canvas.
+  - Per-character colours are Fabric text `styles` and are saved with the object.
+  - `boxHeight` (custom property) is the shape height. The object grows only when the text needs more room.
+- **Size is real `width` / `boxHeight`, never a scale.**
+  - `shapeControls()`: side handles resize one axis, corners resize both axes freely. Shift keeps the proportion; Alt / Option resizes from the centre (also when pressed mid-drag). Minimum `MIN_SHAPE_M` (0,2 m); no flipping.
+  - Resize sticks to booth sides (`canvas.__snapShapeResize`, straight elements only). Moving follows Snap to Grid and Snap ke Booth (`snapsToBooths`).
+  - `syncShapeElement()` on `object:modified` writes `widthM` / `heightM` / `label` to venueData. A size badge in metres is shown while resizing.
+  - Never rebuild a shape with `createLibraryElement`: `rebuildLibraryElement` delegates to `updateShapeElement()` (in place) so text styles and an ongoing edit survive.
+- **Colours** live in `venueData.props` (`SHAPE_STYLE_KEYS`):
+  - fill colour + opacity or "Tanpa Isi";
+  - border colour + opacity, width 0,5–10 px, `solid` / `dashed` / `dotted`, or "Tanpa Border";
+  - text colour.
+  - `applyShapeStyle()` applies `textColor` to the selected characters while editing with a selection, otherwise to the whole text (clears per-character fills).
+  - The editor's `applyShapeStyle(style)` works on every shape in the selection, live, with one undo step per burst.
+- **Panel "Warna"** (single element, Studio multi-select, Ops multi-select):
+  - The palette includes the booth status colours (`STATUS_CONFIG`), plus a HEX input and the last 8 colours used (`floorplan_recent_colors`, this browser).
+  - Salin / Tempel Gaya uses `floorplan_shape_style_clipboard`. "Jadikan Default" saves the style per element type in this browser (`floorplan_shape_defaults`) and is used by `defaultProps()` for new elements.
+- No caption overlay for these types (`NO_CAPTION_TYPES`). Backspace / Delete never delete an element while its text is being edited.
+- The older "Bentuk & Anotasi Vektor" palette (`ShapePalette`, `isBasicShape`) is separate and unchanged.

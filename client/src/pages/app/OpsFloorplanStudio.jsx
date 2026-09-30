@@ -17,6 +17,8 @@ import {
   hasWideDrawing, footprintPolygon, pointInPolygon
 } from '../../utils/opsLayer';
 import { exportOpsFloorplan } from '../../utils/opsExport';
+import { isShapeElement } from '../../utils/elementLibrary';
+import ShapeStyleSection from '../../components/admin/ShapeStyleSection';
 import { refreshMergeRendering } from '../../utils/boothMerge';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -60,6 +62,8 @@ export default function OpsFloorplanStudio() {
 
   // Selection
   const [selectedObject, setSelectedObject] = useState(null);
+  // Several Text Box / Bentuk selected together: one "Warna" panel for all of them
+  const [selectedShapes, setSelectedShapes] = useState([]);
   const [inspected, setInspected] = useState(null);
   const [opsObjects, setOpsObjects] = useState([]);
   const [boothObjects, setBoothObjects] = useState([]);
@@ -475,8 +479,9 @@ export default function OpsFloorplanStudio() {
     }
   };
 
-  const handleSelectionChange = useCallback((active) => {
+  const handleSelectionChange = useCallback((active, actives = []) => {
     setSelectedObject(active && active.isOpsItem ? active : null);
+    setSelectedShapes(actives.length > 1 ? actives.filter(o => o.isOpsItem && isShapeElement(o)) : []);
     if (active) {
       overlayRef.current.inspected = null;
       setInspected(null);
@@ -489,6 +494,19 @@ export default function OpsFloorplanStudio() {
 
   // ---------- right panel ----------
   const renderInspector = () => {
+    if (selectedShapes.length > 1) {
+      return (
+        <aside className="w-80 lg:w-[340px] shrink-0 bg-white border-l border-slate-200 flex flex-col h-full shadow-sm z-10 select-none overflow-y-auto overflow-x-hidden">
+          <div className="p-4 border-b border-slate-200 bg-slate-50">
+            <h2 className="font-semibold text-slate-800 text-sm">{selectedShapes.length} Text Box / Bentuk dipilih</h2>
+            <p className="text-xs text-slate-500 mt-1">Atur warna semuanya sekaligus.</p>
+          </div>
+          <div className="p-4">
+            <ShapeStyleSection elements={selectedShapes} onApply={(style) => { editorRef.current?.applyShapeStyle(style); setPropertyTick(t => t + 1); }} />
+          </div>
+        </aside>
+      );
+    }
     if (selectedObject?.isOpsItem && selectedObject.canvas) {
       const extra = (
         <OpsElementSection
@@ -515,6 +533,7 @@ export default function OpsFloorplanStudio() {
           hidePublicToggle
           propertyTick={propertyTick}
           onUpdateProperty={(props) => { editorRef.current?.updateActiveProperty(props); setPropertyTick(t => t + 1); setTimeout(refreshDerived, 0); }}
+          onApplyShapeStyle={(style) => { editorRef.current?.applyShapeStyle(style); setPropertyTick(t => t + 1); }}
           onDeleteSelected={() => { editorRef.current?.deleteSelected(); setSelectedObject(null); }}
           onDuplicateSelected={() => editorRef.current?.duplicateSelected()}
           onBringForward={() => editorRef.current?.bringForward()}

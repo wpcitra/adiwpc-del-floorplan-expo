@@ -47,11 +47,12 @@ import {
 } from 'lucide-react';
 import DoorInspector from './DoorInspector';
 import ElementInspector from './ElementInspector';
+import ShapeStyleSection from './ShapeStyleSection';
 import CaptionSection from './CaptionSection';
 import MergeGroupSection from './MergeGroupSection';
 import BoothCornerControl from './BoothCornerControl';
 import { isCaptionable } from '../../utils/elementCaptions';
-import { isLibraryElement } from '../../utils/elementLibrary';
+import { isLibraryElement, isShapeElement } from '../../utils/elementLibrary';
 import { BOOTH_CATEGORIES, BOOTH_SHAPES, STATUS_CONFIG } from '../../utils/floorplanUtils';
 import { api } from '../../services/api';
 
@@ -61,6 +62,8 @@ export default function PropertyPanel({
   currentFloorplanId,
   onUpdateProperty, 
   onBatchUpdate, 
+  // Text Box & Bentuk colours (single element or every one in a multi-selection)
+  onApplyShapeStyle,
   onDeleteSelected, 
   onDuplicateSelected,
   onGroupSelected,
@@ -107,11 +110,18 @@ export default function PropertyPanel({
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Mengatur {boothCount} booth terpilih secara bersamaan
+            {boothCount > 0
+              ? `Mengatur ${boothCount} booth terpilih secara bersamaan`
+              : `Mengatur ${selectedObjects.length} elemen terpilih secara bersamaan`}
           </p>
         </div>
 
         <div className="p-4 space-y-5 flex-1">
+          {/* Text Box & Bentuk in the selection: one colour setting for all of them */}
+          {onApplyShapeStyle && selectedObjects.some(isShapeElement) && (
+            <ShapeStyleSection elements={selectedObjects.filter(isShapeElement)} onApply={onApplyShapeStyle} />
+          )}
+
           {/* "Sudut Booth" for every selected booth at once */}
           {boothCount > 0 && (() => {
             const values = [...new Set(selectedObjects.filter(o => o.isBooth).map(o => o.boothData?.cornerPct ?? null))];
@@ -385,6 +395,7 @@ export default function PropertyPanel({
         extraTop={extraTop}
         hidePublicToggle={hidePublicToggle}
         onUpdateProperty={onUpdateProperty}
+        onApplyShapeStyle={onApplyShapeStyle}
         onBringForward={onBringForward}
         onSendBackward={onSendBackward}
         onDeleteSelected={onDeleteSelected}

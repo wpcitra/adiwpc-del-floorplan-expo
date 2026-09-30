@@ -1444,7 +1444,14 @@ export default function ToolSidebar({
             <div className="space-y-2">
               <div className="px-1 text-[11px] font-bold text-slate-700 uppercase tracking-wider">Teks & Pengukuran</div>
               <ElementCard id="text_label" onAdd={(id) => onAddLibraryElement?.(id)} />
+              <ElementCard id="textbox" onAdd={(id) => onAddLibraryElement?.(id)} />
               <ElementCard id="measure" onAdd={(id) => onAddLibraryElement?.(id)} />
+            </div>
+            <div className="space-y-2">
+              <div className="px-1 text-[11px] font-bold text-slate-700 uppercase tracking-wider">Bentuk</div>
+              {['shape_rect', 'shape_triangle', 'shape_parallelogram', 'shape_ellipse'].map(id => (
+                <ElementCard key={id} id={id} onAdd={(elId) => onAddLibraryElement?.(elId)} />
+              ))}
             </div>
           </div>
         )}
