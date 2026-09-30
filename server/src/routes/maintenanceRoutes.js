@@ -2,12 +2,16 @@ import express from 'express';
 import db from '../db.js';
 import { recordError, ERROR_STATUSES, PRIORITIES } from '../utils/errorTracker.js';
 import { clientIp } from '../middleware/auth.js';
+import { getApiKey, isValidKeyFormat, keyHint, listModels } from '../utils/claudeApi.js';
+import { envFileHas, setEnvFileValue } from '../utils/envFile.js';
 
 // Pusat Maintenance (AGENTS.md §22)
 //   POST /api/errors/report                 browser error reports (public, rate limited, scrubbed server-side)
 //   GET  /api/maintenance/errors            error groups + summary          (Developer / Super Admin)
 //   GET  /api/maintenance/errors/:id        one group with recent events
 //   POST /api/maintenance/errors/:id/status baru | ditangani | selesai | diabaikan (audited)
+//   GET|PUT|DELETE /api/maintenance/ai-key  Claude API key, write-only (Super Admin, AGENTS.md §23)
+//   POST /api/maintenance/ai-key/test       check the stored key against GET /v1/models
 export const reportRouter = express.Router();
 const router = express.Router();
 
@@ -140,6 +144,92 @@ router.post('/errors/:id/status', (req, res) => {
     UPDATE error_groups SET status = ?, status_note = ?, status_by = ?, status_at = CURRENT_TIMESTAMP WHERE id = ?
   `).run(status, String(note).slice(0, 500), req.user?.name || '', g.id);
   res.json({ success: true, error: toGroup(db.prepare('SELECT * FROM error_groups WHERE id = ?').get(g.id)) });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Claude API key (Super Admin only, see ACCESS_RULES). WRITE-ONLY: responses carry only whether a key is set, its
+// last 4 characters and the last check. The key lives in server/.env (never in the database, never in Git).
+// ---------------------------------------------------------------------------------------------------------------
+const readKeyMeta = () => {
+  try { return JSON.parse(db.prepare("SELECT value FROM maintenance_settings WHERE key = 'ai_key_meta'").get()?.value || '{}'); } catch (e) { return {}; }
+};
+const writeKeyMeta = (meta) => db.prepare(`
+  INSERT INTO maintenance_settings (key, value, updated_at) VALUES ('ai_key_meta', ?, CURRENT_TIMESTAMP)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+`).run(JSON.stringify(meta));
+
+const checkSummary = (result) => ({
+  ok: result.ok,
+  at: new Date().toISOString(),
+  code: result.code || null,
+  message: result.ok ? `Terhubung. ${result.models.length} model tersedia untuk key ini.` : result.message,
+  modelCount: result.ok ? result.models.length : null
+});
+
+const keyStatus = () => {
+  const key = getApiKey();
+  const meta = readKeyMeta();
+  return {
+    configured: Boolean(key),
+    hint: keyHint(key),
+    // 'env-file' = server/.env (can be changed here); 'environment' = set outside the app (cannot be overridden here)
+    source: key ? (envFileHas('ANTHROPIC_API_KEY') ? 'env-file' : 'environment') : null,
+    updatedAt: meta.updatedAt || null,
+    updatedBy: meta.updatedBy || '',
+    lastCheck: meta.lastCheck || null
+  };
+};
+
+router.get('/ai-key', (req, res) => {
+  res.json({ success: true, status: keyStatus() });
+});
+
+router.put('/ai-key', async (req, res) => {
+  const apiKey = String(req.body?.apiKey ?? '').trim();
+  if (!isValidKeyFormat(apiKey)) {
+    return res.status(400).json({ success: false, error: 'Format API key tidak valid. Key Claude diawali "sk-ant-" dan tanpa spasi.' });
+  }
+  if (getApiKey() && !envFileHas('ANTHROPIC_API_KEY')) {
+    return res.status(409).json({ success: false, error: 'API key sedang diatur dari environment server (di luar aplikasi) sehingga tidak dapat diganti dari sini.' });
+  }
+  // Verify with Anthropic first: a key that is rejected (401/403) is never stored
+  const result = await listModels(apiKey);
+  if (!result.ok && ['INVALID_KEY', 'FORBIDDEN'].includes(result.code)) {
+    return res.status(400).json({ success: false, code: result.code, error: result.message });
+  }
+  try {
+    setEnvFileValue('ANTHROPIC_API_KEY', apiKey);
+  } catch (e) {
+    return res.status(500).json({ success: false, error: 'API key gagal disimpan ke file .env server.' });
+  }
+  writeKeyMeta({ updatedAt: new Date().toISOString(), updatedBy: req.user?.name || '', lastCheck: checkSummary(result) });
+  res.json({
+    success: true,
+    verified: result.ok,
+    // Saved but not verified (no internet, rate limit, outage): the next check will tell
+    warning: result.ok ? '' : `API key disimpan, tetapi belum bisa diverifikasi: ${result.message}`,
+    status: keyStatus()
+  });
+});
+
+router.post('/ai-key/test', async (req, res) => {
+  const result = await listModels();
+  const meta = readKeyMeta();
+  if (getApiKey()) writeKeyMeta({ ...meta, lastCheck: checkSummary(result) });
+  res.json({ success: true, ok: result.ok, message: checkSummary(result).message, status: keyStatus() });
+});
+
+router.delete('/ai-key', (req, res) => {
+  if (getApiKey() && !envFileHas('ANTHROPIC_API_KEY')) {
+    return res.status(409).json({ success: false, error: 'API key diatur dari environment server (di luar aplikasi) sehingga tidak dapat dihapus dari sini.' });
+  }
+  try {
+    setEnvFileValue('ANTHROPIC_API_KEY', null);
+  } catch (e) {
+    return res.status(500).json({ success: false, error: 'API key gagal dihapus dari file .env server.' });
+  }
+  writeKeyMeta({ updatedAt: new Date().toISOString(), updatedBy: req.user?.name || '', lastCheck: null });
+  res.json({ success: true, status: keyStatus() });
 });
 
 export default router;

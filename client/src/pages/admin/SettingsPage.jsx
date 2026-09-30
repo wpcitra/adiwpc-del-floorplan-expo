@@ -29,17 +29,19 @@ import {
   Check,
   Copy,
   RotateCcw,
-  X
+  X,
+  Bot
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { updateBoothCategoriesRegistry } from '../../utils/floorplanUtils';
 import InvoiceEditorModal from '../../components/admin/InvoiceEditorModal';
 import InvoiceA4View from '../../components/admin/InvoiceA4View';
+import ClaudeApiKeySettings from '../../components/admin/ClaudeApiKeySettings';
 
 export default function SettingsPage() {
   const [isInvoiceEditorOpen, setIsInvoiceEditorOpen] = useState(false);
   const [selectedInvoiceForA4Preview, setSelectedInvoiceForA4Preview] = useState(null);
-  const [activeTab, setActiveTab] = useState('organizer'); // 'organizer' | 'payment' | 'rules' | 'categories' | 'whatsapp' | 'system'
+  const [activeTab, setActiveTab] = useState('organizer'); // 'organizer' | 'payment' | 'rules' | 'categories' | 'whatsapp' | 'system' | 'ai'
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const [fullInvoiceConfig, setFullInvoiceConfig] = useState({});
@@ -357,6 +359,19 @@ Salam hangat,
         >
           <Database size={15} />
           <span>Database & Maintenance</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('ai')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+            activeTab === 'ai'
+              ? 'bg-slate-900 text-white shadow-sm'
+              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <Bot size={15} />
+          <span>Integrasi AI (Claude)</span>
         </button>
       </div>
 
@@ -942,6 +957,9 @@ Salam hangat,
             </div>
           </div>
         )}
+
+        {/* TAB: INTEGRASI AI (Claude API key, Super Admin only: the Settings page is superadmin-only) */}
+        {activeTab === 'ai' && <ClaudeApiKeySettings />}
 
         {/* TAB 6: DATABASE & MAINTENANCE */}
         {activeTab === 'system' && (

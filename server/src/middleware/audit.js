@@ -2,7 +2,7 @@ import db from '../db.js';
 import { clientIp } from './auth.js';
 
 const COALESCE_MINUTES = 10;
-const SENSITIVE_KEYS = /password|token|secret/i;
+const SENSITIVE_KEYS = /password|token|secret|api_?key/i;
 const BULKY_KEYS = /fabric|canvas|blueprint|metadata|objects|items|logo|signature|image|base64/i;
 
 const invoiceById = (id) => db.prepare('SELECT invoice_number, company_name, booth_code, payment_status FROM invoices WHERE id = ? OR invoice_number = ?').get(id, id);
@@ -74,6 +74,13 @@ const AUDIT_RULES = [
     describe: (req, m) => ({ target: m[1] }) },
 
   // Pusat Maintenance
+  // Claude API key: the key itself is never logged (SENSITIVE_KEYS drops `apiKey` from the details too)
+  { method: 'PUT', path: /^\/maintenance\/ai-key$/, category: 'Maintenance', action: 'Simpan API key Claude',
+    describe: () => ({ target: 'ANTHROPIC_API_KEY (server/.env)', summary: 'Key baru disimpan (nilai tidak dicatat)' }) },
+  { method: 'DELETE', path: /^\/maintenance\/ai-key$/, category: 'Maintenance', action: 'Hapus API key Claude',
+    describe: () => ({ target: 'ANTHROPIC_API_KEY (server/.env)' }) },
+  { method: 'POST', path: /^\/maintenance\/ai-key\/test$/, category: 'Maintenance', action: 'Uji koneksi Claude API',
+    describe: () => ({ target: 'api.anthropic.com /v1/models' }) },
   { method: 'POST', path: /^\/maintenance\/errors\/([^/]+)\/status$/, category: 'Maintenance', action: 'Ubah status error',
     before: (m) => db.prepare('SELECT id, status, priority, message FROM error_groups WHERE id = ?').get(m[1]),
     describe: (req, m, before) => ({

@@ -1244,6 +1244,45 @@ export const api = {
     }
   },
 
+  // Claude API key (Super Admin, write-only: only the status comes back, never the key)
+  async fetchClaudeKeyStatus() {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/ai-key?_t=${Date.now()}`, { cache: 'no-store' });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+
+  async saveClaudeKey(apiKey) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/ai-key`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey })
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+
+  async testClaudeKey() {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/ai-key/test`, { method: 'POST' });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+
+  async deleteClaudeKey() {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/ai-key`, { method: 'DELETE' });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+
   // 50. Fetch Users (Super Admin, Keuangan, Sales)
   async fetchUsers() {
     try {

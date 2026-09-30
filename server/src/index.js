@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import floorplanRoutes from './routes/floorplanRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
 import statsRoutes from './routes/statsRoutes.js';
@@ -21,7 +20,6 @@ import { readBackupStatus, startBackupSchedule } from './utils/backup.js';
 import { appVersion } from './utils/appVersion.js';
 import { installErrorCapture, errorCaptureMiddleware, expressErrorHandler } from './utils/errorTracker.js';
 
-dotenv.config();
 // Pusat Maintenance (AGENTS.md §22): record server errors (console.error(Error), 5xx responses, crashes)
 installErrorCapture();
 

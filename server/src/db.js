@@ -1,4 +1,4 @@
-import 'dotenv/config'; // .env must be loaded before the database path is resolved (imports run before index.js code)
+import './utils/envFile.js'; // server/.env must be loaded before the database path is resolved (imports run before index.js code)
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
