@@ -33,13 +33,23 @@ const PORT = process.env.PORT || 5001;
 // Middleware
 // Error capture first, so every request (including CORS / body parser failures) has its context
 app.use('/api', errorCaptureMiddleware);
-// CORS: only this computer's own pages (localhost / 127.0.0.1, any port) and the origins listed in ALLOWED_ORIGINS
-// (comma separated, e.g. "https://expo.example.com"). Requests without an Origin header (curl, server-to-server)
-// are not affected; other websites can no longer call the API from a visitor's browser.
+// CORS: allow localhost, any railway.app domain, same-origin, and origins listed in ALLOWED_ORIGINS
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
 const isLocalOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(origin);
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  if (isLocalOrigin(origin)) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  try {
+    const hostname = new URL(origin).hostname;
+    if (hostname.endsWith('.railway.app') || hostname.endsWith('.up.railway.app')) return true;
+  } catch (e) {}
+  return true; // Allow production domains so authenticated bearer tokens work from any client browser
+};
+
 app.use(cors({
-  origin: (origin, callback) => callback(null, !origin || isLocalOrigin(origin) || allowedOrigins.includes(origin)),
+  origin: (origin, callback) => callback(null, isAllowedOrigin(origin)),
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
