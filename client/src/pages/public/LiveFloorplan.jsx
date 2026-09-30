@@ -107,6 +107,8 @@ export default function LiveFloorplan() {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [stats, setStats] = useState({ total: 0, available: 0, reserved: 0, sold: 0, free: 0 });
   const [toastMessage, setToastMessage] = useState(null);
+  // Phones: the "Status Denah Expo" card is folded into a small button so it does not cover booths
+  const [statsOpen, setStatsOpen] = useState(false);
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -1197,6 +1199,10 @@ export default function LiveFloorplan() {
       const t = e?.touches?.[0] || e?.changedTouches?.[0];
       return t ? { x: t.clientX, y: t.clientY } : { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
     };
+    // A finger wobbles a few pixels while tapping: touches get a larger "still a tap" tolerance than the mouse
+    const isTouch = (e) => Boolean(e?.touches || e?.changedTouches);
+    const panThreshold = (e) => (isTouch(e) ? 12 : 6);
+    const tapTolerance = (e) => (isTouch(e) ? 16 : 12);
 
     // Element captions (public elements only: hidden / internal ones are invisible and skipped)
     canvas.on('after:render', ({ ctx }) => {
@@ -1405,17 +1411,18 @@ export default function LiveFloorplan() {
       if (isDragging) {
         const p = pointOf(opt.e);
         const moveDist = Math.hypot(p.x - startX, p.y - startY);
-        if (moveDist > 6) {
+        if (hasPanned || moveDist > panThreshold(opt.e)) {
           if (!hasPanned) closeCaptionTip();
           hasPanned = true;
           canvas.defaultCursor = 'grabbing';
+          // lastX / lastY stay on the start point until the pan begins: the floorplan follows the finger exactly
           const vpt = canvas.viewportTransform;
           vpt[4] += p.x - lastX;
           vpt[5] += p.y - lastY;
           canvas.requestRenderAll();
+          lastX = p.x;
+          lastY = p.y;
         }
-        lastX = p.x;
-        lastY = p.y;
       } else {
         // Continuous rollover / hover check
         const scenePt = opt.scenePoint || (opt.e ? canvas.getScenePoint(opt.e) : null);
@@ -1475,7 +1482,7 @@ export default function LiveFloorplan() {
       canvas.setViewportTransform(canvas.viewportTransform);
 
       // CLICK DETECTED (User did not pan canvas)
-      if (!hasPanned && dist < 12) {
+      if (!hasPanned && dist < tapTolerance(evt)) {
         const scenePt = opt.scenePoint || (evt ? canvas.getScenePoint(evt) : null);
         const rawTarget = opt.target || pointerDownTarget;
         const boothObj = resolveBoothFromTarget(rawTarget, scenePt);
@@ -2296,14 +2303,31 @@ export default function LiveFloorplan() {
           );
         })()}
 
+        {/* Phones: the stats card folds into a small button (bottom left) */}
+        {!isEmptyFloorplan && displayStats.total > 0 && !statsOpen && selectedBooths.length === 0 && (
+          <button
+            type="button"
+            onClick={() => setStatsOpen(true)}
+            className="sm:hidden absolute bottom-3 left-3 z-20 flex items-center gap-1.5 bg-white/95 backdrop-blur-md px-3 py-2 rounded-xl border border-slate-200 shadow-lg text-[11px] font-bold text-slate-700"
+          >
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> {displayStats.available} tersedia
+            <span className="text-slate-400 font-semibold">/ {displayStats.total} unit</span>
+          </button>
+        )}
+
         {/* Floating Legend & Stats Bar (Bottom Left) */}
         {!isEmptyFloorplan && displayStats.total > 0 && (
-          <div className="absolute bottom-5 left-5 bg-white/95 backdrop-blur-md p-4 rounded-2xl border border-slate-200/90 shadow-xl z-20 max-w-xs">
+          <div className={`absolute bottom-3 left-3 right-3 sm:right-auto sm:bottom-5 sm:left-5 bg-white/95 backdrop-blur-md p-4 rounded-2xl border border-slate-200/90 shadow-xl z-20 sm:max-w-xs ${statsOpen && selectedBooths.length === 0 ? '' : 'hidden'} sm:block`}>
             <div className="flex items-center justify-between gap-4 mb-3">
               <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                 <Layers size={14} className="text-indigo-600" /> Status Denah Expo
               </h4>
-              <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">Total {displayStats.total} Unit</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">Total {displayStats.total} Unit</span>
+                <button type="button" onClick={() => setStatsOpen(false)} className="sm:hidden p-1 text-slate-400 hover:text-slate-700" aria-label="Tutup status denah">
+                  <X size={14} />
+                </button>
+              </div>
             </div>
 
             <div className="space-y-2 text-xs">
@@ -2351,9 +2375,9 @@ export default function LiveFloorplan() {
 
         {/* Floating Multi-Selection Action Bar */}
         {selectedBooths.length > 0 && (
-          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center gap-3 bg-slate-950/95 backdrop-blur-md text-white px-5 py-3 rounded-2xl shadow-2xl border border-indigo-500/40 animate-fadeIn max-w-[94vw] sm:max-w-3xl">
+          <div className="absolute bottom-3 left-3 right-3 sm:right-auto sm:bottom-20 sm:left-1/2 sm:-translate-x-1/2 z-30 flex flex-wrap items-center gap-2 sm:gap-3 bg-slate-950/95 backdrop-blur-md text-white px-3 py-2 sm:px-5 sm:py-3 rounded-2xl shadow-2xl border border-indigo-500/40 animate-fadeIn sm:max-w-3xl">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shrink-0">
+              <div className="hidden sm:flex w-8 h-8 rounded-xl bg-indigo-600/30 border border-indigo-500/40 items-center justify-center text-indigo-400 shrink-0">
                 <Layers size={16} />
               </div>
               <div>
@@ -2363,14 +2387,14 @@ export default function LiveFloorplan() {
                     {selectedBooths.reduce((s, b) => s + ((b.widthM || 3) * (b.heightM || 3)), 0)} m²
                   </span>
                 </div>
-                <div className="text-[10px] text-slate-400">
+                <div className="hidden sm:block text-[10px] text-slate-400">
                   Klik booth untuk tambah / lepas
                 </div>
               </div>
             </div>
 
             {/* Selected Booth Chips */}
-            <div className="flex items-center gap-1.5 flex-wrap max-h-16 overflow-y-auto px-1 py-0.5">
+            <div className="flex items-center gap-1.5 flex-nowrap sm:flex-wrap max-w-full overflow-x-auto sm:max-h-16 sm:overflow-y-auto px-1 py-0.5">
               {selectedBooths.map(b => (
                 <span
                   key={b.id || b.code}
@@ -2393,7 +2417,7 @@ export default function LiveFloorplan() {
 
             {/* Auto-merge preview: adjacent selected booths will be shown as one booth after booking */}
             {selectionPreview && (
-              <div className="w-full text-[11px] leading-snug space-y-0.5">
+              <div className="hidden sm:block w-full text-[11px] leading-snug space-y-0.5">
                 {selectionPreview.merged.map(m => (
                   <div key={m.label} className="text-emerald-300">
                     🔗 <b>{m.label}</b> bersebelahan: akan tampil sebagai <b>satu booth gabungan</b> • {formatArea(m.area)} • Rp {m.price.toLocaleString('id-ID')}
@@ -2422,9 +2446,9 @@ export default function LiveFloorplan() {
             <div className="flex items-center gap-2 ml-auto sm:ml-0">
               <button
                 onClick={() => setShowBookingModal(true)}
-                className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-1.5 shadow-lg shadow-emerald-900/40 cursor-pointer"
+                className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white text-xs font-bold px-3 sm:px-4 py-2.5 rounded-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-1.5 shadow-lg shadow-emerald-900/40 cursor-pointer"
               >
-                <span>Pesan Sekarang ({selectedBooths.length})</span>
+                <span><span className="sm:hidden">Pesan</span><span className="hidden sm:inline">Pesan Sekarang</span> ({selectedBooths.length})</span>
                 <ArrowRight size={14} />
               </button>
 
@@ -2451,7 +2475,8 @@ export default function LiveFloorplan() {
         {!isEmptyFloorplan && displayStats.total > 0 && (
           <button 
             onClick={() => setIsCartOpen(true)}
-            className="absolute bottom-5 right-5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-3.5 rounded-2xl shadow-xl shadow-indigo-500/25 transition-all hover:scale-105 active:scale-95 flex items-center justify-center gap-2.5 z-20 group border border-indigo-400/30"
+            className={`absolute bottom-3 right-3 sm:bottom-5 sm:right-5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-3 py-2.5 sm:px-4 sm:py-3.5 rounded-2xl shadow-xl shadow-indigo-500/25 transition-all hover:scale-105 active:scale-95 ${selectedBooths.length > 0 ? 'hidden sm:flex' : 'flex'} items-center justify-center gap-2.5 z-20 group border border-indigo-400/30`}
+            aria-label={`Keranjang (${cart.length})`}
           >
             <div className="relative">
               <ShoppingCart size={20} className="group-hover:rotate-6 transition-transform" />
@@ -2461,14 +2486,14 @@ export default function LiveFloorplan() {
                 </span>
               )}
             </div>
-            <span className="text-xs font-bold">Keranjang ({cart.length})</span>
+            <span className="text-xs font-bold"><span className="hidden sm:inline">Keranjang </span>({cart.length})</span>
           </button>
         )}
       </div>
 
       {/* Floating Toast notification */}
       {toastMessage && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-4 py-2 rounded-xl shadow-2xl text-xs font-medium backdrop-blur-md flex items-center gap-2 animate-fadeIn border border-slate-700">
+        <div className="fixed top-3 sm:top-auto sm:bottom-20 left-1/2 -translate-x-1/2 z-50 max-w-[92vw] bg-slate-900 text-white px-4 py-2 rounded-xl shadow-2xl text-xs font-medium backdrop-blur-md flex items-center gap-2 animate-fadeIn border border-slate-700">
           <Info size={14} className="text-indigo-400" />
           <span>{toastMessage}</span>
         </div>
