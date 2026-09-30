@@ -63,12 +63,19 @@ export default function BookingModal({
   // Invoice number issued by the server for this registration (shown on the success screen and in WhatsApp)
   const [issuedInvoiceNumber, setIssuedInvoiceNumber] = useState('');
   const [issuedTotal, setIssuedTotal] = useState(null);
+  // The invoice the server issued for this registration (the same one as in Manajemen Invoice)
+  const [issuedInvoice, setIssuedInvoice] = useState(null);
   const [adminApplyTax, setAdminApplyTax] = useState(null); // null = follow the setting
   useEffect(() => {
     api.fetchInvoiceConfig().then(cfg => {
       if (!cfg) return;
       const rate = Number(cfg.taxRate);
       const method = cfg.defaultTaxMethod === 'inclusive' ? 'inclusive' : 'exclusive';
+      const minDp = Number(cfg.publicMinDpPercent);
+      if (Number.isFinite(minDp) && minDp >= 1 && minDp < 100) {
+        setMinDpPercent(minDp);
+        setDpPercentInput(prev => (Number(prev) >= minDp ? prev : String(minDp)));
+      }
       const banks = banksFromConfig(cfg);
       setOrgCfg({ companyName: cfg.companyName || '', whatsapp: waNumber(cfg.supportWhatsapp || cfg.supportPhone), banks });
       setTransferBank(prev => prev || banks[0]?.bankName || '');
@@ -127,6 +134,9 @@ export default function BookingModal({
 
   // Skema Pembayaran: 'full' (100%) | 'dp' (Uang Muka 50%)
   const [paymentScheme, setPaymentScheme] = useState('full');
+  // DP chosen by the registrant (% of the total), at least the minimum from Setting > Aturan Booking
+  const [minDpPercent, setMinDpPercent] = useState(20);
+  const [dpPercentInput, setDpPercentInput] = useState('20');
 
   const firstBooth = boothList[0];
   const activeProjectId = projectId || firstBooth?.floorplan_id || firstBooth?.floorplanId || firstBooth?.projectId || new URLSearchParams(window.location.search).get('templateId') || new URLSearchParams(window.location.search).get('project') || 'FP-2026-001';
@@ -229,6 +239,9 @@ export default function BookingModal({
   const ppn = taxSplit.ppn;
   const grandTotal = taxSplit.total;
   const taxIncluded = applyTax && taxCfg.method === 'inclusive';
+  const dpPercent = Math.round((parseFloat(String(dpPercentInput).replace(',', '.')) || 0) * 100) / 100;
+  const dpAmount = Math.round((grandTotal * dpPercent) / 100);
+  const dpInvalid = paymentScheme === 'dp' && !(dpPercent >= minDpPercent && dpPercent < 100);
   const invoiceNumber = `INV/EXP-${Date.now().toString().slice(-6)}`;
   const shownInvoiceNumber = issuedInvoiceNumber || invoiceNumber;
   // Total computed by the server (price - private discount + PPN), shown after the registration was saved
@@ -373,7 +386,7 @@ export default function BookingModal({
       }
 
       const isDp = paymentScheme === 'dp';
-      const paidAmt = isDp ? Math.round(grandTotal * 0.5) : grandTotal;
+      const paidAmt = isDp ? dpAmount : grandTotal;
       const remAmt = isDp ? Math.max(0, grandTotal - paidAmt) : 0;
       const finalPaymentStatus = isDp 
         ? (resolvedPaymentStatus === 'PAID' ? 'PARTIAL' : resolvedPaymentStatus) 
@@ -397,7 +410,7 @@ export default function BookingModal({
         applyTax,
         taxRate: taxCfg.rate,
         paymentType: isDp ? 'dp' : 'full',
-        dpPercent: isDp ? 50 : 0,
+        dpPercent: isDp ? dpPercent : 0,
         paidAmount: paidAmt,
         remainingAmount: remAmt,
         bookingType,
@@ -419,6 +432,7 @@ export default function BookingModal({
         return;
       }
       setIssuedInvoiceNumber(result?.order?.invoiceNumber || '');
+      setIssuedInvoice(result?.order?.invoice || null);
       setIssuedTotal(Number.isFinite(Number(result?.order?.totalAmount)) ? Number(result.order.totalAmount) : null);
       setStep('success');
     }
@@ -928,9 +942,9 @@ export default function BookingModal({
                         : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
-                    <div>Uang Muka / DP (50%)</div>
+                    <div>Uang Muka / DP</div>
                     <div className={`text-[10px] mt-0.5 font-normal ${paymentScheme === 'dp' ? 'text-blue-100' : 'text-slate-400'}`}>
-                      Sisa H-7 Acara
+                      Minimal {minDpPercent}% dari total
                     </div>
                   </button>
                 </div>
@@ -992,19 +1006,33 @@ export default function BookingModal({
                   {taxIncluded && <div className="text-[10px] italic text-slate-500 text-right">{taxCfg.note}</div>}
 
                   {paymentScheme === 'dp' && (
-                    <div className="mt-2 p-2.5 bg-blue-50/90 rounded-xl border border-blue-200 space-y-1.5 animate-fadeIn">
+                    <div className="mt-2 p-2.5 bg-blue-50/90 rounded-xl border border-blue-200 space-y-2 animate-fadeIn">
+                      <div className="font-bold text-blue-900 text-xs">Berapa DP yang akan dibayarkan?</div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {[...new Set([minDpPercent, 30, 50].filter(p => p >= minDpPercent && p < 100))].map(p => (
+                          <button key={p} type="button" onClick={() => setDpPercentInput(String(p))}
+                            className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer ${dpPercent === p ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
+                            {p}%
+                          </button>
+                        ))}
+                        <div className="flex items-center gap-1 ml-auto">
+                          <input type="text" inputMode="decimal" value={dpPercentInput} onChange={(e) => setDpPercentInput(e.target.value)}
+                            className="w-16 px-2 py-1 rounded-lg border border-slate-300 bg-white text-xs font-bold text-right focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+                          <span className="text-xs font-bold text-slate-600">%</span>
+                        </div>
+                      </div>
+                      {dpInvalid && (
+                        <div className="text-[11px] font-semibold text-rose-600">DP minimal {minDpPercent}% dan kurang dari 100%. Untuk 100% pilih "Bayar Penuh".</div>
+                      )}
                       <div className="flex justify-between font-bold text-blue-900 text-xs">
-                        <span>Uang Muka (DP 50%) Bayar Sekarang:</span>
-                        <span className="font-mono font-black text-emerald-700">
-                          Rp {Math.round(grandTotal * 0.5).toLocaleString('id-ID')}
-                        </span>
+                        <span>Uang Muka (DP {dpPercent}%) dibayar sekarang:</span>
+                        <span className="font-mono font-black text-emerald-700">Rp {dpAmount.toLocaleString('id-ID')}</span>
                       </div>
                       <div className="flex justify-between font-bold text-amber-800 text-xs border-t border-blue-200/60 pt-1">
-                        <span>Sisa Tagihan Pelunasan (H-7):</span>
-                        <span className="font-mono font-black text-amber-700">
-                          Rp {(grandTotal - Math.round(grandTotal * 0.5)).toLocaleString('id-ID')}
-                        </span>
+                        <span>Sisa ditagih lewat Invoice Pelunasan:</span>
+                        <span className="font-mono font-black text-amber-700">Rp {Math.max(0, grandTotal - dpAmount).toLocaleString('id-ID')}</span>
                       </div>
+                      <div className="text-[10px] text-slate-500">Nominal akhir dihitung sistem dari harga resmi booth; invoice DP bisa langsung diunduh setelah pemesanan.</div>
                     </div>
                   )}
                 </div>
@@ -1024,7 +1052,7 @@ export default function BookingModal({
                 {bookingType === 'booking' && (
                   <button
                     type="button"
-                    disabled={isProcessing}
+                    disabled={isProcessing || dpInvalid}
                     onClick={handleConfirmPayment}
                     className="flex-1 py-3 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-2xl font-bold text-xs shadow-lg shadow-amber-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
                   >
@@ -1041,7 +1069,7 @@ export default function BookingModal({
                 {bookingType === 'manual_transfer' && (
                   <button
                     type="button"
-                    disabled={isProcessing}
+                    disabled={isProcessing || dpInvalid}
                     onClick={handleConfirmPayment}
                     className="flex-1 py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold text-xs shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
                   >
@@ -1179,9 +1207,7 @@ export default function BookingModal({
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    window.print();
-                  }}
+                  onClick={() => setShowA4Invoice(true)}
                   className="flex-1 py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Download size={14} /> Unduh / Print
@@ -1201,7 +1227,7 @@ export default function BookingModal({
 
       {showA4Invoice && (
         <InvoiceA4View
-          invoice={{
+          invoice={issuedInvoice || {
             id: `INV-${boothCode}`,
             invoice_number: shownInvoiceNumber,
             issue_date: new Date().toISOString().split('T')[0],

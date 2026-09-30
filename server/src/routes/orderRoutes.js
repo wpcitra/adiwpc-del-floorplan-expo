@@ -6,7 +6,8 @@ import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
 import { clusterCheckoutBooths, computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
 import { sortCodes } from '../../../shared/boothGroups.js';
 import { notifyOpsOfSalesChange } from '../utils/opsLayer.js';
-import { taxOptionsFrom } from '../utils/taxSettings.js';
+import { taxOptionsFrom, readBookingRules } from '../utils/taxSettings.js';
+import { buildInvoiceRow } from './invoiceRoutes.js';
 import { computeContractTax, taxPortion } from '../../../shared/invoiceTax.js';
 
 const router = express.Router();
@@ -181,6 +182,13 @@ router.post('/checkout', (req, res) => {
       const resolvedPaymentType = req.body.paymentType || req.body.payment_type || 'full';
       const askedDpPercent = Number(req.body.downPaymentPercent || req.body.dpPercent) || (resolvedPaymentType === 'dp' ? 50 : 0);
       const resolvedDpPercent = Math.min(99, Math.max(0, askedDpPercent));
+      // A visitor chooses the DP freely between the Setting's minimum and less than 100% (100% = pay in full)
+      if (!req.user && resolvedPaymentType === 'dp') {
+        const { minDpPercent } = readBookingRules();
+        if (!(askedDpPercent >= minDpPercent && askedDpPercent < 100)) {
+          throw Object.assign(new Error(`Uang muka (DP) minimal ${minDpPercent}% dan kurang dari 100% dari total harga.`), { httpStatus: 400 });
+        }
+      }
       // A DP is only money received when it was actually paid now (status PAID -> PARTIAL). For a booking hold or a
       // manual transfer awaiting verification the DP is just the plan: nothing is paid until finance confirms it.
       if (resolvedPaymentType === 'dp' && resolvedPaymentStatus === 'PAID') {
@@ -341,6 +349,9 @@ router.post('/checkout', (req, res) => {
         fullName,
         email,
         phone,
+        // The invoice just issued, exactly as Manajemen Invoice stores it: the registrant views / downloads it
+        // right away (visitors cannot open invoices afterwards; they get this one copy)
+        invoice: buildInvoiceRow(result.invoiceNumbers[0]),
         // computed by the server (price - discount + PPN), not the value sent by the form
         totalAmount: result.contractTotal,
         taxRate: result.taxRate,

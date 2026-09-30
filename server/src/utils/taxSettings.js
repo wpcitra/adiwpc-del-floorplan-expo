@@ -48,3 +48,11 @@ export function taxOptionsFrom(body = {}, { isStaff = false, publicBooking = fal
   }
   return { ...opts, note: s.taxNote };
 }
+
+// Online registration rules (Setting > Aturan Booking): the smallest DP a visitor may choose, in % of the contract
+export function readBookingRules() {
+  let cfg = {};
+  try { cfg = JSON.parse(db.prepare('SELECT config_json FROM invoice_settings WHERE id = ?').get('default_template')?.config_json || '{}'); } catch (e) {}
+  const min = Number(cfg.publicMinDpPercent);
+  return { minDpPercent: Number.isFinite(min) && min >= 1 && min <= 99 ? Math.round(min * 100) / 100 : 20 };
+}

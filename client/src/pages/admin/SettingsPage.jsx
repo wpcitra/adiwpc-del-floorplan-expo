@@ -98,6 +98,8 @@ export default function SettingsPage() {
   // 3. System & Booking Rules
   const [taxRate, setTaxRate] = useState(11);
   const [bookingExpiryMinutes, setBookingExpiryMinutes] = useState(15);
+  // Smallest DP a visitor may choose when registering online (% of the total)
+  const [publicMinDpPercent, setPublicMinDpPercent] = useState(20);
   const [isPublicBookingActive, setIsPublicBookingActive] = useState(true);
   // Online registrations by visitors are charged PPN (staff choose per invoice)
   const [publicBookingTax, setPublicBookingTax] = useState(true);
@@ -166,6 +168,7 @@ Salam hangat,
           }
           if (config.taxNote) setTaxNote(config.taxNote);
           if (config.bookingExpiryMinutes !== undefined) setBookingExpiryMinutes(config.bookingExpiryMinutes);
+          if (config.publicMinDpPercent !== undefined) setPublicMinDpPercent(config.publicMinDpPercent);
           if (config.isPublicBookingActive !== undefined) setIsPublicBookingActive(config.isPublicBookingActive);
           if (config.isPaymentActive !== undefined) setIsPaymentActive(config.isPaymentActive);
           if (config.waTemplate) setWaTemplate(config.waTemplate);
@@ -214,6 +217,7 @@ Salam hangat,
       defaultTaxDisplay: taxDefault.method === 'inclusive' ? taxDefault.display : 'show',
       taxNote: taxNote.trim() || DEFAULT_TAX_NOTE,
       bookingExpiryMinutes,
+      publicMinDpPercent: Math.min(99, Math.max(1, Number(publicMinDpPercent) || 20)),
       isPublicBookingActive,
       isPaymentActive,
       currencySymbol,
@@ -890,6 +894,28 @@ Salam hangat,
                 <p className="text-[11px] text-slate-500">
                   Default ini juga dipakai pemesanan online yang dikenai PPN. Perubahan tarif &amp; pengaturan pajak hanya berlaku untuk invoice <b>BARU</b>;
                   invoice yang sudah diterbitkan tetap memakai tarif dan pengaturan saat diterbitkan.
+                </p>
+              </div>
+
+              {/* DP minimal pendaftaran online */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+                <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Percent size={15} className="text-blue-600" /> DP Minimal Pendaftaran Online (%)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={publicMinDpPercent}
+                    onChange={(e) => setPublicMinDpPercent(Number(e.target.value))}
+                    className="w-28 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-bold text-blue-700"
+                  />
+                  <span className="text-xs text-slate-600 font-semibold">% dari total harga</span>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Pengunjung Live Denah bisa memilih Bayar Penuh atau Uang Muka (DP) sendiri, minimal persentase ini.
+                  Invoice DP langsung bisa diunduh setelah pemesanan; sisanya ditagih lewat Invoice Pelunasan.
                 </p>
               </div>
 

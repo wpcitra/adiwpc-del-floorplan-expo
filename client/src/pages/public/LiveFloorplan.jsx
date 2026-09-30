@@ -88,6 +88,9 @@ export default function LiveFloorplan() {
     selectedBoothsRef.current = selectedBooths;
   }, [selectedBooths]);
   const [showBookingModal, setShowBookingModal] = useState(false);
+  // Booths of the open booking form, kept until the visitor closes it: after a successful booking the selection is
+  // cleared, but the form must stay open on its "Selesai" step (invoice number, download the invoice)
+  const [bookingModalBooths, setBookingModalBooths] = useState([]);
   const selectedBoothObjsRef = useRef([]); // fabric canvas objects currently highlighted
   const showBookingModalRef = useRef(false);
   useEffect(() => {
@@ -1882,6 +1885,11 @@ export default function LiveFloorplan() {
     return { success: true, order: res.order };
   };
 
+  useEffect(() => {
+    if (showBookingModal) setBookingModalBooths(prev => (prev.length ? prev : selectedBoothsRef.current.length ? selectedBoothsRef.current : selectedBooths));
+    else setBookingModalBooths([]);
+  }, [showBookingModal]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Multi-booth selection preview: which selected booths touch each other (they will be shown merged)
   const selectionPreview = (() => {
     const canvas = fabricRef.current;
@@ -2502,13 +2510,14 @@ export default function LiveFloorplan() {
       )}
 
       {/* Booth Detail, Form Registrasi, dan Payment Modal */}
-      {showBookingModal && selectedBooths.length > 0 && (
+      {showBookingModal && (bookingModalBooths.length > 0 || selectedBooths.length > 0) && (
         <BookingModal 
-          booths={selectedBooths}
+          booths={bookingModalBooths.length > 0 ? bookingModalBooths : selectedBooths}
           projectId={activeFpId || floorplanData?.id || new URLSearchParams(window.location.search).get('templateId') || new URLSearchParams(window.location.search).get('project') || 'FP-2026-001'}
           isPaymentActive={systemConfig.isPaymentActive !== false}
           onClose={() => {
             setShowBookingModal(false);
+            setBookingModalBooths([]);
             loadFloorplan(null, { force: true });
           }} 
           onSuccessBooking={handleSuccessBooking}

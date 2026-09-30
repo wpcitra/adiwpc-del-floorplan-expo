@@ -79,6 +79,8 @@ const DEFAULT_SYSTEM_CONFIG = {
   taxRate: 11,
   // Online registrations by visitors are charged PPN (staff choose "Dengan PPN" / "Tanpa PPN" per invoice)
   publicBookingTax: true,
+  // Smallest DP (% of the contract) a visitor may choose when registering online
+  publicMinDpPercent: 20,
   bookingExpiryMinutes: 15,
   isPublicBookingActive: true,
   isPaymentActive: true,
@@ -375,6 +377,12 @@ function invoiceRowMapper() {
     row.tax_view = invoiceTaxView(row);
     return row;
   };
+}
+
+/** The invoice row as every page shows it, by id or invoice number (null when not found). */
+export function buildInvoiceRow(idOrNumber) {
+  const row = db.prepare(`${INVOICE_ROW_SQL} WHERE inv.id = ? OR inv.invoice_number = ?`).get(idOrNumber, idOrNumber);
+  return row ? invoiceRowMapper()(row) : null;
 }
 
 // GET /api/invoices - List all invoices

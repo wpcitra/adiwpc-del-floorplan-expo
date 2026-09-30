@@ -129,6 +129,7 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - Match a booth to an invoice/order ONLY by: exact code (case-insensitive), merged-code tokens (`('+' || code || '+') LIKE '%+' || X || '+%'`), or a **non-empty** booth id — always scoped to the floorplan.
 - **Never** use substring matching (`LIKE '%' || code || '%'`: `A-1` hits `A-10..A-19`) or id matching on a possibly empty value (`id LIKE '%' || ''` matches every booth and once overwrote a whole project's tenants).
 - Public checkout must reject booths that are already `sold`/`reserved` (409) or not found (404); staff may re-assign.
+- Public registration: the visitor chooses Bayar Penuh or a DP of at least `publicMinDpPercent` (Setting > Aturan Booking, default 20%) and below 100%; other values get 400. The checkout response carries the issued invoice (`order.invoice`, built by `buildInvoiceRow`) so the registrant downloads the real invoice on the "Selesai" step; visitors cannot open invoices later. The Live page keeps the booking form open after a successful booking (`bookingModalBooths`) until the visitor closes it.
 - Public registration offers only `booking` (Hold 24 Jam) and `manual_transfer`; the API rejects any other `bookingType` from anonymous visitors (there is no real payment gateway). Instantly-PAID registrations (`payment_gateway` internally) are staff-only. A DP chosen at registration is a plan: `paid_amount` stays 0 until finance confirms payment.
 
 ## 13. Live Denah Shows Only the Published Floorplan (`floorplanRoutes.js`, `LiveFloorplan.jsx`)
