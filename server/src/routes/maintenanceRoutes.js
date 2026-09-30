@@ -40,13 +40,13 @@ reportRouter.post('/report', (req, res) => {
     source: 'browser',
     kind,
     errorType: str(b.errorType, 80) || (kind === 'unreachable' ? 'NetworkError' : 'Error'),
-    message: kind === 'unreachable' ? `Website tidak dapat menghubungi server: ${message}` : message,
+    message: kind === 'unreachable' ? 'Website tidak dapat menghubungi server (server mati atau jaringan terputus)' : message,
     stack: [str(b.stack, 10000), b.componentStack ? `Komponen React:${str(b.componentStack, 3000)}` : ''].filter(Boolean).join('\n'),
     area: str(b.page, 300) || '/',
     user,
     visitor: user ? null : { ip, userAgent: req.headers['user-agent'] || '' },
     userAgent: req.headers['user-agent'] || '',
-    context: { kind, occurredAt: str(b.occurredAt, 40), offlineQueued: Boolean(b.queued) },
+    context: { kind, occurredAt: str(b.occurredAt, 40), offlineQueued: Boolean(b.queued), ...(kind === 'unreachable' ? { detail: message.slice(0, 200) } : {}) },
     allowNewGroup: recentNew < NEW_BROWSER_GROUPS_PER_HOUR
   });
   res.json({ success: true, id: group?.id || null });

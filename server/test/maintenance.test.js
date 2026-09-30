@@ -61,6 +61,8 @@ test('prioritas mengikuti fitur', async () => {
   const dd = (await detail(down.body.id)).body.error;
   assert.equal(dd.priority, 'KRITIS');
   assert.equal(dd.feature, 'Website tidak bisa diakses');
+  const down2 = await report({ kind: 'unreachable', message: '/api/invoices (Failed to fetch)', page: '/admin/invoices' });
+  assert.equal(down2.body.id, down.body.id, 'semua laporan server tidak terjangkau masuk satu grup');
 });
 
 test('error yang sama dikelompokkan, jumlah pengguna dihitung dari kode samaran', async () => {

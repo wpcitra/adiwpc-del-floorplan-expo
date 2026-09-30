@@ -195,7 +195,10 @@ export function recordError({
     const cleanArea = scrubUrl(area);
     const location = topFrame(stack);
     const { priority, feature } = classify(cleanArea, { kind, message: cleanMessage });
-    const fingerprint = fingerprintOf({ source, errorType, message: cleanMessage, location, area: cleanArea });
+    // An outage is one problem, whatever page or endpoint noticed it
+    const fingerprint = kind === 'unreachable'
+      ? fingerprintOf({ source, errorType: 'unreachable', message: 'server-unreachable', location: '', area: '' })
+      : fingerprintOf({ source, errorType, message: cleanMessage, location, area: cleanArea });
     const id = `ERR-${fingerprint.slice(0, 10).toUpperCase()}`;
     const userRef = user?.id ? maskUser(user.id) : (visitor ? maskVisitor(visitor.ip, visitor.userAgent) : '');
     const environment = process.env.APP_ENV || 'production';

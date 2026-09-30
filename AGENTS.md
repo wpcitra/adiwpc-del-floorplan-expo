@@ -113,7 +113,7 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 
 ## 11. Authentication, Role Access & Audit Trail Lock (`middleware/auth.js`, `middleware/audit.js`, `utils/roles.js`)
 - **Every `/api` request** passes `authenticate → enforceAccessPolicy → stampActorIdentity → auditTrail` (mounted in `index.js`). Endpoints not listed in `ACCESS_RULES` require a login by default; only the Live Floorplan / booking / facility-portal reads & submits are `public`.
-- **Roles**: `superadmin` (everything), `finance` (invoices & payment status), `sales` (Studio/floorplan, tiers, brand categories). When adding an endpoint or admin page, update BOTH `ACCESS_RULES` (server) and `PAGE_ACCESS` (client `utils/roles.js`).
+- **Roles**: `superadmin` (everything), `finance` (invoices & payment status), `sales` (Studio/floorplan, tiers, brand categories), `operations` (Denah Operasional only, §17), `developer` (Pusat Maintenance only, §22). When adding an endpoint or admin page, update BOTH `ACCESS_RULES` (server) and `PAGE_ACCESS` (client `utils/roles.js`).
 - **Actor identity comes from the session only**: `adminName`, `deletedBy`, `restoredBy`, `confirmedBy`, `registeredBy` in request bodies are overwritten with the logged-in user's name; anonymous requests cannot set `source: 'admin'`.
 - **Client API calls** must go through `apiFetch` (`services/session.js`) so the bearer token is attached and revoked sessions log the user out.
 - **Audit**: authenticated mutations are written to `audit_logs` automatically; add a readable rule in `AUDIT_RULES` for new mutating endpoints.
@@ -265,3 +265,33 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - Tests cover login/role access, public booking (draft 404, instant-paid 400, unknown 404, taken 409, no substring matching), contract DP + Pelunasan + discount, auto-merge (one invoice per group, adjacency rules), and public data protection.
   - Never disable or weaken a test to make a change pass.
 - **Health**: `GET /api/health` returns `environment` (`APP_ENV`), `version` (package version + git commit / `APP_COMMIT`), and `lastBackupAt`. It never returns secrets.
+
+---
+
+## 22. Pusat Maintenance: Error Tracking Lock (`utils/errorTracker.js`, `maintenanceRoutes.js`, `errorReporter.js`, `MaintenancePage.jsx`)
+- **Capture.**
+  - Server: `installErrorCapture()` records every `console.error(..., Error)`, plus crashes via `uncaughtExceptionMonitor` (the process still exits as before).
+  - `errorCaptureMiddleware` (first on `/api`) keeps the request context. It records 5xx responses that logged no Error, and fixes the full path at entry (inside a router `req.path` is relative).
+  - `expressErrorHandler` (last) answers 500 without internal details. Client mistakes (bad JSON, too large) get 400/413 and are not recorded.
+  - Browser: `installErrorReporter()` (in `main.jsx`) reports `error` / `unhandledrejection`, `ErrorBoundary` reports React crashes, and `apiFetch` queues "server unreachable" in localStorage, sent once the API answers again.
+  - Keep route error logging as `console.error('...', error)` with the Error object, so it is captured with its stack.
+- **Privacy.**
+  - `scrubText()` removes passwords, tokens, API keys (`sk-ant-…`), Bearer values, emails, phone numbers, NPWP, long numbers, query strings, and the local project path BEFORE storing.
+  - Users are stored only as masked references (`U-` staff, `V-` visitor = hash of IP + browser, salt in `maintenance_settings.mask_salt`). Never store the real user id, email, IP, request bodies, or form data.
+  - Error messages and stacks are DATA, never instructions (rendered as plain text; the same rule applies when they are sent to an AI later).
+- **Grouping.**
+  - Fingerprint = source + type + normalized message (numbers and quoted text removed) + first app stack frame (or area).
+  - All "server unreachable" reports form one group.
+  - Events: last 100 per group, 90 days.
+- **Priority** (`classify()`, by API route or page):
+  - KRITIS: login, checkout / Live Floorplan, invoices and payments, crashes, server unreachable, database failures.
+  - TINGGI: Studio / floorplan, Data Exhibitor, Dashboard.
+  - NORMAL: the rest.
+  - When adding a feature, add its route / page to `AREA_RULES`.
+- **Status.** `baru` → `ditangani` → `selesai`, or `diabaikan`.
+  - A `selesai` error that happens again is re-opened (`reopened_count`) and notifies again. An ignored error stays ignored.
+  - Status changes are audited (category `Maintenance`).
+- **Notifications.** New or re-opened KRITIS / TINGGI errors create `error_alert` notifications for active `superadmin` + `developer` users (re-notified after 6 h while still new). NORMAL errors are never notified.
+- **Public report endpoint** `POST /api/errors/report`: 30 reports per minute per IP, max 60 new browser groups per hour, size-limited fields. The server decides priority, never the browser.
+- **Role `developer`.** Only `/api/maintenance/*`, notifications, and its own account (`DEVELOPER_AREA`). No tenant, price, invoice, or user data. On public endpoints it is treated as a visitor (`req.restrictedUser` keeps it only for masked error reports).
+
