@@ -119,8 +119,16 @@ export default function PublishModal({ isOpen, onClose, floorplanStats = {}, flo
           )}
 
           {error && (
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700">
-              <AlertTriangle size={15} className="shrink-0 mt-0.5" /> {error}
+            <div className="flex items-start justify-between gap-2 p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={15} className="shrink-0 mt-0.5" /> 
+                <span>{error}</span>
+              </div>
+              {error.toLowerCase().includes('login') && (
+                <a href="/login" className="font-bold underline shrink-0 hover:text-rose-900 ml-2">
+                  Login Ulang &rarr;
+                </a>
+              )}
             </div>
           )}
         </div>
