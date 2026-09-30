@@ -641,6 +641,23 @@ try {
   `);
 } catch (e) {}
 
+// PPN per invoice (shared/invoiceTax.js): method 'none' | 'exclusive' (added to the price) | 'inclusive' (price includes PPN),
+// display 'show' | 'hide', DPP and the printed note, plus the contract breakdown every DP / Pelunasan shares.
+// Older invoices keep NULL here and are split at display time from their total and stored rate (never rewritten).
+for (const col of [
+  'ALTER TABLE invoices ADD COLUMN tax_method TEXT',
+  'ALTER TABLE invoices ADD COLUMN tax_display TEXT',
+  'ALTER TABLE invoices ADD COLUMN dpp_amount REAL',
+  'ALTER TABLE invoices ADD COLUMN tax_note TEXT',
+  'ALTER TABLE invoices ADD COLUMN contract_subtotal REAL',
+  'ALTER TABLE invoices ADD COLUMN contract_discount REAL',
+  'ALTER TABLE invoices ADD COLUMN contract_dpp REAL',
+  'ALTER TABLE invoices ADD COLUMN contract_tax_method TEXT',
+  'ALTER TABLE invoices ADD COLUMN contract_tax_display TEXT'
+]) {
+  try { db.exec(col); } catch (e) {}
+}
+
 // Public link per published floorplan: /live/<public_slug> (several floorplans can be live at once)
 try {
   db.exec("ALTER TABLE floorplans ADD COLUMN public_slug TEXT");

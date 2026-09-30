@@ -65,7 +65,13 @@ export function summarizeInvoices(list = []) {
     totalPaid: sum(activeContracts, c => c.paid) + sum(activeOthers, ownPaid),
     totalRemaining: sum(activeContracts, c => c.remaining) + sum(activeOthers, inv => Math.max(0, (Number(inv.total_amount) || 0) - ownPaid(inv))),
     // Private discount belongs to the contract: counted once, never per DP / Pelunasan invoice
-    totalDiscount: sum(activeContracts, c => c.discountAmount) + sum(activeOthers, inv => inv.discount_amount)
+    totalDiscount: sum(activeContracts, c => c.discountAmount) + sum(activeOthers, inv => inv.discount_amount),
+    // PPN is not revenue: contract value and money received split into DPP (before PPN) and PPN
+    totalTax: sum(activeContracts, c => c.ppn) + sum(activeOthers, inv => inv.tax_view?.ppn),
+    paidTax: sum(activeContracts, c => c.paidTax) + sum(activeOthers, inv => {
+      const v = inv.tax_view;
+      return v?.ppn && v.total > 0 ? Math.round((v.ppn * Math.min(ownPaid(inv), v.total)) / v.total) : 0;
+    })
   };
 }
 

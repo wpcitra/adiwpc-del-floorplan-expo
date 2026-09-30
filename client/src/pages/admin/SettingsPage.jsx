@@ -39,6 +39,19 @@ import InvoiceEditorModal from '../../components/admin/InvoiceEditorModal';
 import InvoiceA4View from '../../components/admin/InvoiceA4View';
 import ClaudeApiKeySettings from '../../components/admin/ClaudeApiKeySettings';
 import SectionErrorBoundary from '../../components/common/SectionErrorBoundary';
+import TaxOptionsField from '../../components/admin/TaxOptionsField';
+import { DEFAULT_TAX_NOTE } from '../../utils/invoiceTax';
+import { looksLikeTypo } from '../../utils/nameCheck';
+
+// Account holder very similar to (but not the same as) the company name: probably a typo. Only a warning.
+function HolderNameWarning({ holder, companyName }) {
+  if (!looksLikeTypo(holder, companyName)) return null;
+  return (
+    <p className="mt-1 text-[11px] font-semibold text-amber-700">
+      ⚠ Nama pemilik rekening sangat mirip tetapi tidak sama dengan nama perusahaan "{companyName}". Cek ulang sesuai buku rekening.
+    </p>
+  );
+}
 
 export default function SettingsPage() {
   const [isInvoiceEditorOpen, setIsInvoiceEditorOpen] = useState(false);
@@ -88,6 +101,9 @@ export default function SettingsPage() {
   const [isPublicBookingActive, setIsPublicBookingActive] = useState(true);
   // Online registrations by visitors are charged PPN (staff choose per invoice)
   const [publicBookingTax, setPublicBookingTax] = useState(true);
+  // Default PPN for NEW invoices (method 'none' = Tanpa PPN) and the note printed when the breakdown is hidden
+  const [taxDefault, setTaxDefault] = useState({ method: 'none', display: 'show' });
+  const [taxNote, setTaxNote] = useState(DEFAULT_TAX_NOTE);
   const [isPaymentActive, setIsPaymentActive] = useState(true);
   const [currencySymbol, setCurrencySymbol] = useState('Rp');
 
@@ -141,6 +157,14 @@ Salam hangat,
 
           if (config.taxRate !== undefined) setTaxRate(config.taxRate);
           if (config.publicBookingTax !== undefined) setPublicBookingTax(config.publicBookingTax !== false);
+          {
+            const method = config.defaultTaxMethod === 'inclusive' ? 'inclusive' : 'exclusive';
+            setTaxDefault({
+              method: config.defaultTaxEnabled === true ? method : 'none',
+              display: method === 'inclusive' && config.defaultTaxDisplay === 'hide' ? 'hide' : 'show'
+            });
+          }
+          if (config.taxNote) setTaxNote(config.taxNote);
           if (config.bookingExpiryMinutes !== undefined) setBookingExpiryMinutes(config.bookingExpiryMinutes);
           if (config.isPublicBookingActive !== undefined) setIsPublicBookingActive(config.isPublicBookingActive);
           if (config.isPaymentActive !== undefined) setIsPaymentActive(config.isPaymentActive);
@@ -185,6 +209,10 @@ Salam hangat,
 
       taxRate,
       publicBookingTax,
+      defaultTaxEnabled: taxDefault.method !== 'none',
+      defaultTaxMethod: taxDefault.method === 'none' ? (fullInvoiceConfig?.defaultTaxMethod || 'exclusive') : taxDefault.method,
+      defaultTaxDisplay: taxDefault.method === 'inclusive' ? taxDefault.display : 'show',
+      taxNote: taxNote.trim() || DEFAULT_TAX_NOTE,
       bookingExpiryMinutes,
       isPublicBookingActive,
       isPaymentActive,
@@ -616,6 +644,19 @@ Salam hangat,
               <h2 className="text-base font-bold text-slate-900">Rekening Bank Kantor & Instruksi Pembayaran Resmi</h2>
             </div>
 
+            {/* The invoice document prints "Atas Nama" from Desain Layout Invoice (accountName), not from Bank 1 */}
+            {fullInvoiceConfig?.accountName && (
+              <div className={`p-3 rounded-xl border text-xs space-y-1 ${looksLikeTypo(fullInvoiceConfig.accountName, companyName) ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                <div>
+                  Nama pemilik rekening yang tercetak di invoice (diatur di <b>Desain Layout Invoice</b>): <b>{fullInvoiceConfig.accountName}</b>
+                  {fullInvoiceConfig.accountNumber ? <> • No. {fullInvoiceConfig.accountNumber}</> : null}
+                </div>
+                {looksLikeTypo(fullInvoiceConfig.accountName, companyName) && (
+                  <div className="font-semibold">⚠ Sangat mirip tetapi tidak sama dengan nama perusahaan "{companyName}". Cek ulang sesuai buku rekening.</div>
+                )}
+              </div>
+            )}
+
             {/* Bank 1 */}
             <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
               <div className="flex items-center justify-between">
@@ -655,6 +696,7 @@ Salam hangat,
                     placeholder="PT EXPO KARYA INDONESIA"
                     className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold"
                   />
+                  <HolderNameWarning holder={bank1AccHolder} companyName={companyName} />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Cabang Bank</label>
@@ -707,6 +749,7 @@ Salam hangat,
                     placeholder="PT EXPO KARYA INDONESIA"
                     className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold"
                   />
+                  <HolderNameWarning holder={bank2AccHolder} companyName={companyName} />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Cabang Bank</label>
@@ -824,6 +867,30 @@ Salam hangat,
                   <input type="checkbox" checked={publicBookingTax} onChange={(e) => setPublicBookingTax(e.target.checked)} className="mt-0.5 accent-indigo-600" />
                   <span><b>Kenakan PPN pada pemesanan online</b> (pengunjung di Live Denah). Jika tidak dicentang, pemesanan online ditagih tanpa PPN.</span>
                 </label>
+              </div>
+
+              {/* Default PPN untuk invoice baru */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Percent size={15} className="text-indigo-600" /> Default Pajak untuk Invoice Baru
+                </label>
+                <TaxOptionsField compact value={taxDefault} onChange={setTaxDefault} rate={taxRate} />
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Keterangan pajak yang tercetak di invoice</label>
+                  <input
+                    type="text"
+                    value={taxNote}
+                    onChange={(e) => setTaxNote(e.target.value)}
+                    placeholder={DEFAULT_TAX_NOTE}
+                    maxLength={120}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">Dicetak di bawah total untuk invoice dengan metode "Harga sudah termasuk PPN".</p>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Default ini juga dipakai pemesanan online yang dikenai PPN. Perubahan tarif &amp; pengaturan pajak hanya berlaku untuk invoice <b>BARU</b>;
+                  invoice yang sudah diterbitkan tetap memakai tarif dan pengaturan saat diterbitkan.
+                </p>
               </div>
 
               {/* Expiry Timer Booking */}

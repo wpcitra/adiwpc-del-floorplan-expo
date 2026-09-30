@@ -23,6 +23,8 @@ import { terbilang } from '../../utils/numberToWords';
 import { DEFAULT_INVOICE_CONFIG } from '../../utils/invoiceTemplateConfig';
 import { printInvoiceElement, downloadInvoicePDF } from '../../utils/invoicePrintUtils';
 import { api } from '../../services/api';
+import { invoiceTaxView } from '../../utils/invoiceTax';
+import InvoiceTotals from './InvoiceTotals';
 
 export default function InvoiceA4View({
   invoice,
@@ -111,7 +113,21 @@ export default function InvoiceA4View({
     paid_amount: Number(invoice.paid_amount ?? invoice.paidAmount) || 0,
     remaining_amount: invoice.remaining_amount ?? invoice.remainingAmount,
     contract_total: Number(invoice.contract?.total ?? invoice.contract_total ?? invoice.contractTotal) || 0,
-    related_invoice: invoice.related_invoice || invoice.relatedInvoice || null
+    related_invoice: invoice.related_invoice || invoice.relatedInvoice || null,
+    // PPN stored per invoice (older invoices have none: split from their total and stored rate)
+    related_invoice_id: invoice.related_invoice_id || invoice.relatedInvoiceId || invoice.related_invoice?.id || null,
+    tax_method: invoice.tax_method || invoice.taxMethod || null,
+    tax_display: invoice.tax_display || invoice.taxDisplay || null,
+    tax_note: invoice.tax_note || invoice.taxNote || '',
+    dpp_amount: invoice.dpp_amount ?? invoice.dppAmount ?? null,
+    contract_tax_rate: Number(invoice.contract_tax_rate ?? invoice.contractTaxRate) || 0,
+    contract_subtotal: invoice.contract_subtotal ?? null,
+    contract_discount: invoice.contract_discount ?? null,
+    contract_dpp: invoice.contract_dpp ?? null,
+    contract_tax_method: invoice.contract_tax_method || null,
+    contract_tax_display: invoice.contract_tax_display || null,
+    contract_discount_hint: Number(invoice.contract_discount_hint) || 0,
+    booth_specs: invoice.booth_specs || {}
   };
 
   const isDpInvoice = inv.invoice_kind === 'dp';
@@ -125,16 +141,29 @@ export default function InvoiceA4View({
   const isCanceled = inv.payment_status === 'CANCELED';
 
   const rawItems = inv.items || [];
-  const items = rawItems.length > 0 ? rawItems : [
-    {
-      description: `Sewa Booth Pameran ${inv.booth_code ? inv.booth_code : ''} (${inv.booth_category || 'Standard'})`,
-      unitPrice: inv.subtotal || inv.total_amount || 5000000,
-      price: inv.subtotal || inv.total_amount || 5000000,
-      qty: 1,
-      amount: inv.subtotal || inv.total_amount || 5000000,
-      total: inv.subtotal || inv.total_amount || 5000000
-    }
-  ];
+  // Booth price and PPN shown separately: lines before PPN (DPP basis) when the breakdown is shown (shared/invoiceTax.js)
+  const taxView = invoice.tax_view || invoiceTaxView(inv);
+  const items = taxView.lines.map(line => rawItems.length > 0 ? line : {
+    ...line,
+    description: `Sewa Booth Pameran ${inv.booth_code ? inv.booth_code : ''} (${inv.booth_category || 'Standard'})`
+  });
+  const kindLabel = isDpInvoice ? 'Uang Muka / DP' : isSettlementInvoice ? 'Pelunasan' : 'Sewa Booth';
+  const contractTax = taxView.contract;
+  const dpPart = taxView.dpPart;
+
+  // "Spesifikasi & Fasilitas": booth category, size and included facilities from the booth data
+  const boothCodes = String(inv.booth_code || '').split('+').map(c => c.trim()).filter(Boolean);
+  const specText = (spec) => {
+    if (!spec) return '';
+    const w = Number(spec.widthM) || 0;
+    const h = Number(spec.heightM) || 0;
+    const size = w && h ? `${w} × ${h} m (${Math.round(w * h * 100) / 100} m²)` : '';
+    return [spec.category, size].filter(Boolean).join(' • ');
+  };
+  const specsForLine = (item) => {
+    const codes = item.boothCode ? [item.boothCode] : boothCodes;
+    return codes.map(code => ({ code, spec: inv.booth_specs[code] })).filter(x => x.spec);
+  };
 
   const bankDetails = inv.bankDetails || {
     bankName: cfg.bankName || 'Bank Central Asia (BCA)',
@@ -528,9 +557,9 @@ export default function InvoiceA4View({
               </thead>
               <tbody className="divide-y divide-slate-200">
                 {items.map((item, idx) => {
-                  const itemPrice = item.price || item.unitPrice || 0;
+                  const itemPrice = item.unitPrice ?? item.price ?? 0;
                   const itemQty = item.qty || 1;
-                  const itemTotal = item.amount || item.total || (itemQty * itemPrice);
+                  const itemTotal = item.amount ?? item.total ?? (itemQty * itemPrice);
 
                   return (
                     <tr key={idx} className="hover:bg-slate-50/50">
@@ -548,11 +577,21 @@ export default function InvoiceA4View({
                       </td>
                       <td className="py-3 px-3 text-slate-600 align-top text-[11px]">
                         {cfg.showDimensionsCol && item.dimensions && <div className="font-medium text-slate-700">Ukuran: {item.dimensions}</div>}
-                        {cfg.showFacilitiesCol && item.facilities && Array.isArray(item.facilities) && (
+                        {cfg.showFacilitiesCol && item.facilities && (
                           <div className="text-[10px] text-slate-500 mt-0.5">
-                            {item.facilities.join(', ')}
+                            {Array.isArray(item.facilities) ? item.facilities.join(', ') : item.facilities}
                           </div>
                         )}
+                        {!item.dimensions && !item.facilities && specsForLine(item).map(({ code, spec }) => (
+                          <div key={code} className="mb-0.5">
+                            {cfg.showDimensionsCol !== false && (
+                              <div className="font-medium text-slate-700">{specsForLine(item).length > 1 ? `#${code}: ` : ''}{specText(spec)}</div>
+                            )}
+                            {cfg.showFacilitiesCol !== false && spec.facilities?.length > 0 && (
+                              <div className="text-[10px] text-slate-500">Termasuk: {spec.facilities.join(', ')}</div>
+                            )}
+                          </div>
+                        ))}
                         {item.notes && <div className="text-[10px] text-slate-500 italic mt-0.5">{item.notes}</div>}
                       </td>
                       <td className="py-3 px-2 text-center font-bold text-slate-700 align-top">{itemQty}</td>
@@ -592,69 +631,56 @@ export default function InvoiceA4View({
               )}
             </div>
 
-            {/* Right: Subtotal, Discount & Total Box */}
+            {/* Right: Subtotal, Discount, PPN & Total Box (booth price and PPN shown separately) */}
             <div className="w-64 sm:w-72 space-y-2 shrink-0">
-              <div className="flex justify-between text-slate-600">
-                <span>Subtotal:</span>
-                <span className="font-mono font-bold text-slate-800">
-                  Rp {(inv.subtotal || 0).toLocaleString('id-ID')}
-                </span>
-              </div>
-
-              {/* Private Admin Discount Row */}
-              {Boolean(inv.discount_amount && inv.discount_amount > 0) && (
-                <div className="flex justify-between items-center text-emerald-700 bg-emerald-50/80 px-2.5 py-1.5 rounded-lg border border-emerald-200">
-                  <div>
-                    <span className="font-bold block text-xs">
-                      Diskon Khusus {inv.discount_type === 'percentage' ? `(${inv.discount_value}%)` : ''}:
-                    </span>
-                    {inv.discount_reason && (
-                      <span className="text-[10px] text-emerald-600 italic block">{inv.discount_reason}</span>
-                    )}
-                  </div>
-                  <span className="font-mono font-bold text-xs">
-                    - Rp {(inv.discount_amount || 0).toLocaleString('id-ID')}
-                  </span>
-                </div>
-              )}
-
-              {/* Tax / PPN if any */}
-              {Boolean(inv.tax_amount && inv.tax_amount > 0) && (
-                <div className="flex justify-between text-slate-600">
-                  <span>PPN ({inv.tax_rate || 11}%):</span>
-                  <span className="font-mono font-medium text-slate-800">
-                    + Rp {(inv.tax_amount || 0).toLocaleString('id-ID')}
-                  </span>
-                </div>
-              )}
-
-              {/* Grand Total */}
-              <div 
-                className="border-t-2 pt-2 flex justify-between items-baseline"
-                style={{ borderColor: primaryColor }}
-              >
-                <span className="text-xs font-black uppercase tracking-wider" style={{ color: primaryColor }}>
-                  TOTAL TAGIHAN:
-                </span>
-                <span className="text-base font-black font-mono text-slate-950">
-                  Rp {(inv.total_amount || 0).toLocaleString('id-ID')}
-                </span>
-              </div>
+              <InvoiceTotals
+                view={taxView}
+                primaryColor={primaryColor}
+                subtotalLabel={isSplitInvoice && !taxView.asFull ? `Subtotal ${kindLabel}${taxView.showBreakdown ? ' (sebelum PPN)' : ''}:` : undefined}
+                discountLabel={`Diskon Khusus${!isSplitInvoice && inv.discount_type === 'percentage' && inv.discount_value ? ` (${inv.discount_value}%)` : ''}`}
+                discountReason={inv.discount_reason}
+              />
 
               {/* Booth contract breakdown for Invoice DP / Invoice Pelunasan */}
-              {isSplitInvoice && inv.contract_total > 0 && (
+              {isSplitInvoice && inv.contract_total > 0 && contractTax && (
                 <div className="mt-2.5 p-2.5 rounded-xl border border-slate-200 bg-slate-50/90 space-y-1.5 text-[11px]">
                   <div className="font-bold uppercase tracking-wide text-[10px] text-slate-500">Rincian Kontrak Booth {inv.booth_code}</div>
-                  <div className="flex justify-between gap-3 text-slate-700">
-                    <span>Total Kontrak (setelah diskon):</span>
-                    <span className="whitespace-nowrap font-mono font-bold">{rp(inv.contract_total)}</span>
-                  </div>
+                  {taxView.showBreakdown ? (
+                    <>
+                      <div className="flex justify-between gap-3 text-slate-700">
+                        <span>Harga Booth (sebelum PPN):</span>
+                        <span className="whitespace-nowrap font-mono">{rp(contractTax.subtotal)}</span>
+                      </div>
+                      {contractTax.discount > 0 && (
+                        <div className="flex justify-between gap-3 text-emerald-700">
+                          <span>Diskon:</span>
+                          <span className="whitespace-nowrap font-mono">- {rp(contractTax.discount)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between gap-3 text-slate-700">
+                        <span>PPN {contractTax.rate}%:</span>
+                        <span className="whitespace-nowrap font-mono">{rp(contractTax.ppn)}</span>
+                      </div>
+                      <div className="flex justify-between gap-3 text-slate-800 font-bold border-t border-slate-200 pt-1.5">
+                        <span>Total Kontrak:</span>
+                        <span className="whitespace-nowrap font-mono">{rp(contractTax.total)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex justify-between gap-3 text-slate-700">
+                      <span>Total Kontrak (setelah diskon{contractTax.method === 'inclusive' ? ', sudah termasuk PPN' : ''}):</span>
+                      <span className="whitespace-nowrap font-mono font-bold">{rp(inv.contract_total)}</span>
+                    </div>
+                  )}
                   {isDpInvoice ? (
                     <>
                       <div className="flex justify-between gap-3 text-blue-700 font-bold">
-                        <span>Uang Muka / DP ({inv.dp_percent}%) — invoice ini:</span>
+                        <span>Nilai DP ({inv.dp_percent}%) — invoice ini:</span>
                         <span className="whitespace-nowrap font-mono">{rp(inv.total_amount)}</span>
                       </div>
+                      {taxView.showBreakdown && dpPart && (
+                        <div className="text-right text-[10px] text-blue-700/80 font-mono -mt-1">DPP {rp(dpPart.dpp)} + PPN {rp(dpPart.ppn)} = {rp(dpPart.total)}</div>
+                      )}
                       <div className="flex justify-between gap-3 text-amber-800 font-bold border-t border-slate-200 pt-1.5">
                         <span>Sisa pembayaran (ditagihkan kemudian melalui Invoice Pelunasan):</span>
                         <span className="whitespace-nowrap font-mono">{rp(Math.max(0, inv.contract_total - inv.total_amount))}</span>
@@ -671,10 +697,16 @@ export default function InvoiceA4View({
                         </span>
                         <span className="whitespace-nowrap font-mono font-bold">- {rp(inv.related_invoice.total_amount)}</span>
                       </div>
+                      {taxView.showBreakdown && dpPart && (
+                        <div className="text-right text-[10px] text-slate-500 font-mono -mt-1">DP: DPP {rp(dpPart.dpp)} + PPN {rp(dpPart.ppn)}</div>
+                      )}
                       <div className="flex justify-between gap-3 text-violet-800 font-black border-t border-slate-200 pt-1.5">
                         <span className="uppercase tracking-wide">Sisa yang harus dilunasi:</span>
                         <span className="whitespace-nowrap font-mono text-sm">{rp(inv.total_amount)}</span>
                       </div>
+                      {taxView.showBreakdown && (
+                        <div className="text-right text-[10px] text-violet-800/80 font-mono -mt-1">DPP {rp(taxView.dpp)} + PPN {rp(taxView.ppn)}</div>
+                      )}
                     </>
                   ) : (
                     <div className="flex justify-between gap-3 text-violet-800 font-bold border-t border-slate-200 pt-1.5">

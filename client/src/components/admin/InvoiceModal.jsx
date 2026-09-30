@@ -25,6 +25,8 @@ import {
 } from 'lucide-react';
 import { api } from '../../services/api';
 import InvoiceA4View from './InvoiceA4View';
+import TaxOptionsField from './TaxOptionsField';
+import { computeContractTax, invoiceTaxView } from '../../utils/invoiceTax';
 
 export default function InvoiceModal({
   isOpen,
@@ -76,15 +78,22 @@ export default function InvoiceModal({
   const [discountValue, setDiscountValue] = useState(0);
   const [discountReason, setDiscountReason] = useState('Diskon Khusus Mitra');
   
-  // Tax / PPN State
-  const [applyTax, setApplyTax] = useState(false);
+  // Tax / PPN State: Tanpa / Dengan PPN, method and display (shared/invoiceTax.js)
+  const [taxOpt, setTaxOpt] = useState({ method: 'none', display: 'show' });
   const [taxRate, setTaxRate] = useState(11);
-  // PPN rate from Setting (used when an invoice without PPN is switched to "Dengan PPN")
-  const [taxRateSetting, setTaxRateSetting] = useState(11);
+  // Defaults from Setting > Aturan Booking, PPN & Pajak (used for a new invoice / when switched to "Dengan PPN")
+  const [taxCfg, setTaxCfg] = useState({ rate: 11, enabled: false, method: 'exclusive', display: 'show' });
+  const taxRateSetting = taxCfg.rate;
   useEffect(() => {
     api.fetchInvoiceConfig().then(cfg => {
       const rate = Number(cfg?.taxRate);
-      if (Number.isFinite(rate) && rate >= 0) setTaxRateSetting(rate);
+      const method = cfg?.defaultTaxMethod === 'inclusive' ? 'inclusive' : 'exclusive';
+      setTaxCfg({
+        rate: Number.isFinite(rate) && rate >= 0 ? rate : 11,
+        enabled: cfg?.defaultTaxEnabled === true,
+        method,
+        display: method === 'inclusive' && cfg?.defaultTaxDisplay === 'hide' ? 'hide' : 'show'
+      });
     });
   }, []);
 
@@ -167,7 +176,9 @@ export default function InvoiceModal({
     setDiscountType(dType);
     setDiscountValue(dVal);
     setDiscountReason(dReason);
-    setApplyTax(false);
+    // New invoice: PPN default from Setting
+    setTaxOpt({ method: taxCfg.enabled ? taxCfg.method : 'none', display: taxCfg.display });
+    setTaxRate(taxCfg.rate);
     setPaymentType('full');
     setDpPercent(50);
     setCustomPaidAmount('');
@@ -212,8 +223,10 @@ export default function InvoiceModal({
     setDiscountType(inv.discount_type || 'nominal');
     setDiscountValue(inv.discount_value || 0);
     setDiscountReason(inv.discount_reason || 'Diskon Khusus Mitra');
-    setApplyTax(Boolean(inv.tax_amount && inv.tax_amount > 0));
-    setTaxRate(inv.tax_rate || 11);
+    // Stored PPN setting; older invoices: split from their total (always "PPN ditambahkan ke harga")
+    const view = inv.tax_view || invoiceTaxView(inv);
+    setTaxOpt({ method: view.method, display: view.display });
+    setTaxRate(view.rate || taxRateSetting);
 
     const isDp = inv.payment_type === 'dp' || inv.payment_status === 'PARTIAL' || (Number(inv.paid_amount) > 0 && Number(inv.remaining_amount) > 0);
     setPaymentType(isDp ? 'dp' : 'full');
@@ -238,8 +251,10 @@ export default function InvoiceModal({
     }
 
     const afterDiscount = Math.max(0, subtotal - discountAmount);
-    const taxAmount = applyTax ? Math.round((afterDiscount * (taxRate || 11)) / 100) : 0;
-    const grandTotal = afterDiscount + taxAmount;
+    // PPN added on top of, or included in, the price (the server stores the same split)
+    const tax = computeContractTax({ subtotal, discount: discountAmount, rate: taxRate || taxRateSetting, method: taxOpt.method });
+    const taxAmount = tax.ppn;
+    const grandTotal = tax.total;
 
     // Uang Muka (DP) & Sisa Pelunasan
     let dpAmt = 0;
@@ -268,10 +283,11 @@ export default function InvoiceModal({
       afterDiscount,
       taxAmount,
       grandTotal,
+      tax,
       dpAmt,
       remAmt
     };
-  }, [items, discountType, discountValue, applyTax, taxRate, paymentType, dpPercent, customPaidAmount, paymentStatus]);
+  }, [items, discountType, discountValue, taxOpt, taxRate, taxRateSetting, paymentType, dpPercent, customPaidAmount, paymentStatus]);
 
   // Line items handlers
   const handleItemChange = (index, field, value) => {
@@ -367,7 +383,9 @@ export default function InvoiceModal({
         discountValue: parseFloat(discountValue) || 0,
         discountAmount: calculations.discountAmount,
         discountReason: discountReason.trim(),
-        taxRate: applyTax ? taxRate : 0,
+        taxRate: taxOpt.method === 'none' ? 0 : (taxRate || taxRateSetting),
+        taxMethod: taxOpt.method,
+        taxDisplay: taxOpt.display,
         taxAmount: calculations.taxAmount,
         totalAmount: calculations.grandTotal,
         paidAmount: calculations.dpAmt,
@@ -1008,22 +1026,17 @@ export default function InvoiceModal({
               </div>
             </div>
 
-            {/* Pajak: with or without PPN */}
-            <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-xs flex flex-wrap items-center gap-3">
+            {/* Pajak: Tanpa / Dengan PPN, metode perhitungan, tampilan di invoice */}
+            <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-xs space-y-2">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-700">Pajak (PPN)</span>
-              <div className="flex bg-slate-100 border border-slate-200 rounded-lg p-0.5">
-                {[[true, `Dengan PPN ${applyTax ? taxRate : taxRateSetting}%`], [false, 'Tanpa PPN']].map(([val, label]) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => { setApplyTax(val); if (val && !applyTax) setTaxRate(taxRateSetting); }}
-                    className={`px-3 py-1.5 rounded-md text-xs font-bold cursor-pointer ${applyTax === val ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-white'}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <span className="text-[11px] text-slate-500">PPN dihitung dari nilai setelah diskon. Tarif default diatur di Setting &gt; Aturan Booking, PPN &amp; Pajak.</span>
+              <TaxOptionsField
+                compact
+                value={taxOpt}
+                rate={taxOpt.method === 'none' ? taxRateSetting : (taxRate || taxRateSetting)}
+                defaultMethod={taxCfg.method}
+                onChange={(v) => { if (taxOpt.method === 'none' && v.method !== 'none') setTaxRate(taxRateSetting); setTaxOpt(v); }}
+              />
+              <span className="text-[11px] text-slate-500 block">PPN dihitung dari nilai setelah diskon. Tarif &amp; default diatur di Setting &gt; Aturan Booking, PPN &amp; Pajak.</span>
             </div>
 
             {/* Section 4: Summary, Down Payment (DP) & Sync Options */}
@@ -1206,11 +1219,21 @@ export default function InvoiceModal({
                     </div>
                   )}
 
+                  {calculations.taxAmount > 0 && calculations.discountAmount > 0 && (
+                    <div className="flex justify-between text-slate-300">
+                      <span>DPP (Dasar Pengenaan Pajak):</span>
+                      <span className="font-mono">Rp {calculations.tax.dpp.toLocaleString('id-ID')}</span>
+                    </div>
+                  )}
+
                   {calculations.taxAmount > 0 && (
                     <div className="flex justify-between text-slate-300">
-                      <span>PPN ({taxRate}%):</span>
-                      <span className="font-mono">+ Rp {calculations.taxAmount.toLocaleString('id-ID')}</span>
+                      <span>PPN ({calculations.tax.rate}%){taxOpt.method === 'inclusive' ? ' — sudah termasuk' : ''}:</span>
+                      <span className="font-mono">{taxOpt.method === 'inclusive' ? '' : '+ '}Rp {calculations.taxAmount.toLocaleString('id-ID')}</span>
                     </div>
+                  )}
+                  {taxOpt.display === 'hide' && (
+                    <div className="text-[10px] text-slate-400 italic">Di dokumen invoice rincian PPN disembunyikan (hanya total + keterangan).</div>
                   )}
 
                   <div className="border-t border-slate-700 pt-2 flex justify-between items-baseline">

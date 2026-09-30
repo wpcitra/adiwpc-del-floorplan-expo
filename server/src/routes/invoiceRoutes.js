@@ -3,8 +3,10 @@ import db from '../db.js';
 import { publicInvoiceConfig } from '../utils/publicData.js';
 import {
   CONTRACT_KINDS, kindOf, getContract, invoiceCodeTokens, summarizeContract, getContractInvoices, recalcContract, boothContractValue,
-  impliedTaxRate, invoicePaidAmount, nextInvoiceNumber, contractStatusLabel
+  invoicePaidAmount, nextInvoiceNumber, contractStatusLabel, contractTaxFor, boothsForCode, contractItems, contractSnapshotParams
 } from '../utils/contractBilling.js';
+import { contractTaxOf, dpTaxOf, taxPortion, taxRemainder, invoiceTaxView, computeContractTax } from '../../../shared/invoiceTax.js';
+import { taxOptionsFrom, readTaxSettings } from '../utils/taxSettings.js';
 import { writeAuditLog } from '../middleware/audit.js';
 import { clientIp } from '../middleware/auth.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
@@ -143,6 +145,20 @@ router.post('/config', (req, res) => {
   }
 });
 
+// Booth data for the "Spesifikasi & Fasilitas" column of the invoice document: { [code]: { category, widthM, heightM, facilities } }
+function boothSpecsFor(floorplanId, code) {
+  const specs = {};
+  if (!floorplanId || !code) return specs;
+  boothsForCode(floorplanId, code).forEach(b => {
+    let facilities = [];
+    try { facilities = JSON.parse(b.facilities_json || '[]'); } catch (e) {}
+    specs[b.code] = { category: b.category || '', widthM: b.width_m, heightM: b.height_m, facilities: Array.isArray(facilities) ? facilities : [] };
+  });
+  return specs;
+}
+
+const RELATED_INVOICE_SQL = 'SELECT id, invoice_number, payment_status, total_amount, dp_percent, dpp_amount, tax_amount, tax_method FROM invoices WHERE id = ?';
+
 // GET /api/invoices - List all invoices
 router.get('/', (req, res) => {
   try {
@@ -254,6 +270,11 @@ router.get('/', (req, res) => {
           billed: c.billed,
           unbilled: c.unbilled,
           discountAmount: c.discountAmount,
+          dpp: c.dpp,
+          ppn: c.ppn,
+          paidTax: c.paidTax,
+          taxMethod: c.taxMethod,
+          taxRate: c.taxRate,
           status: c.status,
           statusLabel: contractStatusLabel(c.status),
           boothWidthM: c.booth?.width_m ?? null,
@@ -266,7 +287,7 @@ router.get('/', (req, res) => {
     const relatedInvoice = (relatedId) => {
       if (!relatedId) return null;
       if (!relatedById.has(relatedId)) {
-        relatedById.set(relatedId, db.prepare('SELECT id, invoice_number, payment_status, total_amount, dp_percent FROM invoices WHERE id = ?').get(relatedId) || null);
+        relatedById.set(relatedId, db.prepare(RELATED_INVOICE_SQL).get(relatedId) || null);
       }
       return relatedById.get(relatedId);
     };
@@ -299,6 +320,7 @@ router.get('/', (req, res) => {
 
       const kind = kindOf(inv);
       const isSplitInvoice = kind === 'dp' || kind === 'settlement';
+      const boothDiscountHint = Number(inv.booth_discount_amount || 0);
       if (isSplitInvoice) {
         // The private discount belongs to the contract (shown in its breakdown), never to a DP / Pelunasan line
         inv.booth_discount_amount = 0;
@@ -308,7 +330,8 @@ router.get('/', (req, res) => {
       const sub = inv.subtotal || (effectiveDiscountAmount > 0 ? (inv.total_amount + effectiveDiscountAmount) : inv.total_amount) || inv.booth_price || 5000000;
       let effectiveTotal = inv.total_amount;
       // DP / Pelunasan amounts are already net of the contract's private discount: never subtract it again
-      if (!isSplitInvoice && kind !== 'facility' && (!inv.discount_amount || Number(inv.discount_amount) === 0) && effectiveDiscountAmount > 0) {
+      // (older invoices only: an invoice with a stored PPN split already carries its discount)
+      if (!isSplitInvoice && kind !== 'facility' && !inv.tax_method && (!inv.discount_amount || Number(inv.discount_amount) === 0) && effectiveDiscountAmount > 0) {
         effectiveTotal = Math.max(0, sub - effectiveDiscountAmount);
       }
 
@@ -342,7 +365,7 @@ router.get('/', (req, res) => {
       const paymentType = inv.payment_type || (pStatus === 'PARTIAL' || (paidAmt > 0 && paidAmt < effectiveTotal) ? 'dp' : 'full');
       const dpPercent = inv.dp_percent || (effectiveTotal > 0 && paidAmt > 0 ? Number(((paidAmt / effectiveTotal) * 100).toFixed(0)) : 0);
 
-      return {
+      const row = {
         ...inv,
         invoice_kind: kind,
         contract: contractFor(inv),
@@ -357,9 +380,14 @@ router.get('/', (req, res) => {
         remaining_amount: remainingAmt,
         payment_type: paymentType,
         dp_percent: dpPercent,
+        contract_discount_hint: boothDiscountHint,
+        booth_specs: boothSpecsFor(inv.floorplan_id, inv.booth_code),
         items,
         bankDetails
       };
+      // Booth price and PPN shown separately on the document, WhatsApp and reports (shared/invoiceTax.js)
+      row.tax_view = invoiceTaxView(row);
+      return row;
     });
 
     res.json({
@@ -376,16 +404,21 @@ router.get('/', (req, res) => {
 // GET /api/invoices/contract?floorplanId=&boothCode=&boothId=&taxRate= - Booth contract summary for the DP / Pelunasan wizard
 router.get('/contract', (req, res) => {
   try {
-    const { floorplanId, boothCode = '', boothId = '', taxRate = 0 } = req.query;
+    const { floorplanId, boothCode = '', boothId = '' } = req.query;
     if (!floorplanId || (!boothCode && !boothId)) {
       return res.status(400).json({ success: false, error: 'Project dan booth wajib dipilih' });
     }
-    const c = getContract(floorplanId, boothCode, boothId, { taxRate: Number(taxRate) || 0 });
+    const c = getContract(floorplanId, boothCode, boothId);
     if (!c.booth) return res.status(404).json({ success: false, error: 'Booth tidak ditemukan di project ini' });
+    // Booth prices behind the contract (all booths of a multi-booth contract): the form previews every PPN option from these
+    const contractCode = c.invoiceCount > 0 && invoiceCodeTokens(c.latestInvoice?.booth_code).length > 1 ? c.latestInvoice.booth_code : c.booth.code;
+    const gross = contractTaxFor(floorplanId, contractCode, { method: 'none' });
+    const dpTax = c.dpInvoice ? dpTaxOf(c.dpInvoice, { total: c.contractTotal, dpp: c.dpp, ppn: c.ppn }) : null;
 
     const toLite = (inv) => inv && ({
       id: inv.id, invoice_number: inv.invoice_number, invoice_kind: kindOf(inv), payment_status: inv.payment_status,
-      total_amount: inv.total_amount, paid_amount: invoicePaidAmount(inv), dp_percent: inv.dp_percent, created_at: inv.created_at
+      total_amount: inv.total_amount, paid_amount: invoicePaidAmount(inv), dp_percent: inv.dp_percent, created_at: inv.created_at,
+      dpp_amount: inv.dpp_amount, tax_amount: inv.tax_amount, tax_method: inv.tax_method
     });
     const exhibitor = c.latestInvoice || {};
     res.json({
@@ -408,7 +441,15 @@ router.get('/contract', (req, res) => {
         },
         hasInvoices: c.invoiceCount > 0,
         contractTotal: c.contractTotal,
-        taxRate: c.invoiceCount > 0 ? c.taxRate : Number(taxRate) || 0,
+        taxRate: c.invoiceCount > 0 ? c.taxRate : 0,
+        // PPN of the running contract (none yet without invoices) + the booth prices to preview other options
+        tax: c.invoiceCount > 0
+          ? { method: c.taxMethod, rate: c.taxRate, display: c.taxDisplay, note: c.taxNote, subtotal: c.subtotal, dpp: c.dpp, ppn: c.ppn, total: c.contractTotal }
+          : null,
+        contractCode,
+        base: { subtotal: gross?.subtotal || 0, discount: gross?.discount || 0 },
+        dpTax,
+        paidTax: c.paidTax,
         billed: c.billed,
         paid: c.paid,
         remaining: c.remaining,
@@ -481,25 +522,27 @@ router.get('/:id', (req, res) => {
     const c = CONTRACT_KINDS.includes(kind) && invoice.floorplan_id && invoice.booth_code
       ? getContract(invoice.floorplan_id, invoice.booth_code, invoice.booth_id)
       : null;
-    const related = invoice.related_invoice_id
-      ? db.prepare('SELECT id, invoice_number, payment_status, total_amount, dp_percent FROM invoices WHERE id = ?').get(invoice.related_invoice_id)
-      : null;
+    const related = invoice.related_invoice_id ? db.prepare(RELATED_INVOICE_SQL).get(invoice.related_invoice_id) : null;
 
-    res.json({
-      success: true,
-      invoice: {
-        ...invoice,
-        invoice_kind: kind,
-        related_invoice: related || null,
-        contract: c ? { total: c.contractTotal, paid: c.paid, remaining: c.remaining, status: c.status, statusLabel: contractStatusLabel(c.status) } : null,
-        paid_amount: paidAmt,
-        remaining_amount: remainingAmt,
-        payment_type: paymentType,
-        dp_percent: dpPercent,
-        items,
-        bankDetails
-      }
-    });
+    const row = {
+      ...invoice,
+      invoice_kind: kind,
+      related_invoice: related || null,
+      contract: c ? {
+        total: c.contractTotal, paid: c.paid, remaining: c.remaining, status: c.status, statusLabel: contractStatusLabel(c.status),
+        dpp: c.dpp, ppn: c.ppn, paidTax: c.paidTax, taxMethod: c.taxMethod, taxRate: c.taxRate
+      } : null,
+      paid_amount: paidAmt,
+      remaining_amount: remainingAmt,
+      payment_type: paymentType,
+      dp_percent: dpPercent,
+      contract_discount_hint: c?.booth ? Number(c.booth.discount_amount) || 0 : 0,
+      booth_specs: boothSpecsFor(invoice.floorplan_id, invoice.booth_code),
+      items,
+      bankDetails
+    };
+    row.tax_view = invoiceTaxView(row);
+    res.json({ success: true, invoice: row });
   } catch (error) {
     console.error("Fetch single invoice error:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -517,7 +560,7 @@ function createContractInvoice(req, res) {
     boothCode = '',
     dpMode = 'percent',
     dpValue,
-    taxRate = 0,
+    changeContractTax = false,
     issueDate = new Date().toISOString().split('T')[0],
     dueDate,
     paymentMethod = 'Bank Transfer',
@@ -532,7 +575,7 @@ function createContractInvoice(req, res) {
     return res.status(400).json({ success: false, error: 'Pilih project dan booth terlebih dahulu' });
   }
 
-  const c = getContract(floorplanId, boothCode, boothId, { taxRate: Number(taxRate) || 0 });
+  const c = getContract(floorplanId, boothCode, boothId);
   if (!c.booth) return res.status(404).json({ success: false, error: 'Booth tidak ditemukan di project ini' });
 
   const latest = c.latestInvoice || {};
@@ -545,9 +588,30 @@ function createContractInvoice(req, res) {
     return res.status(409).json({ success: false, code: 'CONTRACT_PAID', error: `Kontrak booth ${c.booth.code} sudah lunas penuh.` });
   }
 
-  // Contract value: the running contract if it already has invoices, otherwise booth price - discount (+ PPN)
-  const contractTotal = c.invoiceCount > 0 ? c.contractTotal : boothContractValue(c.booth, taxRate);
-  const contractTaxRate = c.invoiceCount > 0 ? (c.taxRate || impliedTaxRate(contractTotal, c.booth)) : (Number(taxRate) || 0);
+  // PPN of the whole contract (DP + Pelunasan share it). A new contract takes the chosen options; a running
+  // contract keeps its own unless the admin confirmed a change (unpaid invoices are then recomputed, paid ones never).
+  const chosen = taxOptionsFrom(req.body, { isStaff: true });
+  const contractCode = c.invoiceCount > 0 && invoiceCodeTokens(latest.booth_code).length > 1 ? latest.booth_code : c.booth.code;
+  const current = { method: c.taxMethod, rate: c.taxRate, display: c.taxDisplay };
+  const wantsChange = c.invoiceCount > 0 && req.body.taxMethod !== undefined
+    && (chosen.method !== current.method || (chosen.method !== 'none' && (chosen.rate !== current.rate || chosen.display !== current.display)));
+  if (wantsChange && !changeContractTax) {
+    return res.status(409).json({
+      success: false, code: 'TAX_CHANGE_CONFIRM', requireConfirmation: true,
+      error: 'Pengaturan pajak kontrak ini akan diubah. Invoice yang belum dibayar dihitung ulang; invoice yang sudah DP / Lunas tidak berubah otomatis.'
+    });
+  }
+  let contract;
+  if (c.invoiceCount === 0 || wantsChange) {
+    contract = { ...contractTaxFor(floorplanId, contractCode, chosen), display: chosen.display, note: chosen.note };
+    if (wantsChange && c.paid > contract.total) {
+      return res.status(409).json({ success: false, code: 'TAX_CHANGE_BELOW_PAID', error: 'Nilai kontrak dengan pengaturan pajak baru lebih kecil dari pembayaran yang sudah diterima.' });
+    }
+  } else {
+    // Running contract: its stored snapshot (the value the tenant was billed)
+    contract = { ...contractTaxOf(latest, c.booth.discount_amount), note: latest.tax_note || chosen.note };
+  }
+  const contractTotal = contract.total;
   if (contractTotal <= 0) {
     return res.status(400).json({ success: false, error: 'Nilai kontrak booth Rp 0 (booth gratis) sehingga tidak perlu ditagih.' });
   }
@@ -558,6 +622,7 @@ function createContractInvoice(req, res) {
   let dpPercent = 0;
   let relatedId = null;
   let description;
+  let part;
 
   if (invoiceKind === 'dp') {
     if (c.dpInvoice) {
@@ -578,6 +643,7 @@ function createContractInvoice(req, res) {
       return res.status(400).json({ success: false, error: 'Nilai DP harus lebih kecil dari total kontrak. Untuk pembayaran penuh gunakan Invoice Pelunasan.' });
     }
     kind = 'dp';
+    part = taxPortion(contract, amount);
     dpPercent = dpMode === 'nominal' ? Math.round((amount / contractTotal) * 10000) / 100 : raw;
     description = `Uang Muka (DP ${dpPercent}%) Sewa Booth #${c.booth.code} ${c.booth.category || ''}${size}`.replace(/\s+/g, ' ');
   } else if (invoiceKind === 'settlement') {
@@ -595,7 +661,8 @@ function createContractInvoice(req, res) {
         error: `Invoice DP ${dp.invoice_number} belum dibayar. Pelunasan tetap dapat dibuat, tetapi DP belum diterima.`
       });
     }
-    amount = Math.max(0, contractTotal - (dp ? Number(dp.total_amount) || 0 : 0));
+    part = dp ? taxRemainder(contract, dpTaxOf(dp, contract)) : { dpp: contract.dpp, ppn: contract.ppn, total: contract.total };
+    amount = Math.max(0, part.total);
     if (amount <= 0) {
       return res.status(409).json({ success: false, code: 'CONTRACT_PAID', error: 'Tidak ada sisa kontrak yang perlu dilunasi.' });
     }
@@ -615,7 +682,11 @@ function createContractInvoice(req, res) {
     SELECT fp.event_id, COALESCE(e.title, fp.title) AS event_title, COALESCE(e.venue, '') AS event_venue
     FROM floorplans fp LEFT JOIN events e ON e.id = fp.event_id WHERE fp.id = ?
   `).get(floorplanId) || {};
-  const items = [{ id: 'item-1', description, qty: 1, unitPrice: amount, amount }];
+  // Pelunasan without DP = the whole contract: one line per booth as priced, the discount on its own line
+  const rows = kind === 'settlement' && !relatedId ? boothsForCode(floorplanId, contractCode) : [];
+  const items = rows.length ? contractItems(rows, 'Pelunasan Sewa Booth') : [{ id: 'item-1', description, qty: 1, unitPrice: amount, amount }];
+  const grossSubtotal = rows.length ? rows.reduce((acc, b) => acc + (Number(b.price) || 0), 0) : amount;
+  const grossDiscount = rows.length ? rows.reduce((acc, b) => acc + Math.min(Number(b.price) || 0, Number(b.discount_amount) || 0), 0) : 0;
 
   db.transaction(() => {
     db.prepare(`
@@ -625,18 +696,21 @@ function createContractInvoice(req, res) {
         issue_date, due_date, items_json, subtotal, discount_type, discount_value, discount_amount, discount_reason,
         tax_rate, tax_amount, total_amount, paid_amount, remaining_amount, payment_type, dp_percent,
         payment_status, payment_method, bank_details_json, notes,
-        invoice_kind, related_invoice_id, contract_total, contract_tax_rate
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'nominal', 0, 0, '', 0, 0, ?, 0, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?)
+        invoice_kind, related_invoice_id, dpp_amount, tax_method, tax_display, tax_note,
+        contract_total, contract_tax_rate, contract_subtotal, contract_discount, contract_dpp, contract_tax_method, contract_tax_display
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'nominal', 0, ?, '', ?, ?, ?, 0, ?, ?, ?, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, invoiceNumber, floorplanId, c.booth.id, c.booth.code, fp.event_id || null, fp.event_title || null, fp.event_venue || null,
+      id, invoiceNumber, floorplanId, c.booth.id, contractCode, fp.event_id || null, fp.event_title || null, fp.event_venue || null,
       clientName, companyName, c.booth.email || latest.client_email || '', c.booth.phone || latest.client_phone || '', clientAddress || latest.client_address || '', clientNpwp || latest.client_npwp || '',
-      issueDate, calculatedDueDate, JSON.stringify(items), amount,
-      amount, amount, kind === 'dp' ? 'dp' : 'full', dpPercent,
+      issueDate, calculatedDueDate, JSON.stringify(items), grossSubtotal, grossDiscount,
+      part.ppn > 0 ? contract.rate : 0, part.ppn, amount, amount, kind === 'dp' ? 'dp' : 'full', dpPercent,
       paymentMethod, bankDetails ? JSON.stringify(bankDetails) : (latest.bank_details_json || null), notes,
-      kind, relatedId, contractTotal, contractTaxRate
+      kind, relatedId, part.dpp, contract.method, contract.method === 'inclusive' && contract.display === 'hide' ? 'hide' : 'show', contract.note || null,
+      ...Object.values(contractSnapshotParams(contract))
     );
-    // A DP turns an unpaid single invoice of this booth into its Pelunasan (contract total - DP)
-    recalcContract(floorplanId, c.booth.code, c.booth.id, { contractTotal, taxRate: contractTaxRate });
+    // A DP turns an unpaid single invoice of this booth into its Pelunasan (contract total - DP); a PPN change
+    // recomputes the unpaid balance invoice
+    recalcContract(floorplanId, c.booth.code, c.booth.id, { contract });
   })();
   syncPaymentStatusFromInvoices();
 
@@ -654,7 +728,7 @@ router.post('/', (req, res) => {
       return createContractInvoice(req, res);
     }
 
-    const {
+    let {
       floorplanId,
       boothId,
       boothCode,
@@ -694,6 +768,15 @@ router.post('/', (req, res) => {
 
     if (!companyName || !clientName) {
       return res.status(400).json({ success: false, error: 'Nama PIC dan Nama Perusahaan wajib diisi' });
+    }
+
+    // PPN (shared/invoiceTax.js): the amounts follow the chosen method, whatever total the form sent
+    const taxOpts = req.body.taxMethod !== undefined || req.body.applyTax !== undefined ? taxOptionsFrom(req.body, { isStaff: true }) : null;
+    const taxSplit = taxOpts ? { ...computeContractTax({ subtotal, discount: discountAmount, rate: taxOpts.rate, method: taxOpts.method }), display: taxOpts.display } : null;
+    if (taxSplit) {
+      totalAmount = taxSplit.total;
+      taxAmount = taxSplit.ppn;
+      taxRate = taxSplit.rate;
     }
 
     if (floorplanId && (boothCode || boothId)) {
@@ -738,14 +821,16 @@ router.post('/', (req, res) => {
           issue_date, due_date, items_json, subtotal, discount_type, discount_value, discount_amount, discount_reason,
           tax_rate, tax_amount, total_amount, paid_amount, remaining_amount, payment_type, dp_percent,
           payment_status, payment_method, bank_details_json, notes,
-          invoice_kind, contract_total, contract_tax_rate
+          invoice_kind, contract_total, contract_tax_rate,
+          dpp_amount, tax_method, tax_display, tax_note, contract_subtotal, contract_discount, contract_dpp, contract_tax_method, contract_tax_display
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?,
-          'full', ?, ?
+          'full', ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
       `).run(
         id, invoiceNumber, floorplanId || null, boothId || null, boothCode || null, eventId, eventTitle, eventVenue,
@@ -753,7 +838,10 @@ router.post('/', (req, res) => {
         issueDate, calculatedDueDate, JSON.stringify(items), subtotal, discountType, discountValue, discountAmount, discountReason,
         taxRate, taxAmount, totalAmount, resolvedPaidAmount, resolvedRemainingAmount, resolvedPaymentType, resolvedDpPercent,
         effectivePaymentStatus, paymentMethod, JSON.stringify(bankDetails), notes,
-        totalAmount, taxRate
+        totalAmount, taxRate,
+        taxSplit ? taxSplit.dpp : null, taxSplit ? taxSplit.method : null, taxSplit ? taxSplit.display : null, taxOpts ? taxOpts.note : null,
+        taxSplit ? taxSplit.subtotal : null, taxSplit ? taxSplit.discount : null, taxSplit ? taxSplit.dpp : null,
+        taxSplit ? taxSplit.method : null, taxSplit ? taxSplit.display : null
       );
 
       // Booth status / tenant / canvas follow the contract via syncPaymentStatusFromInvoices() below
@@ -825,6 +913,23 @@ router.put('/:id', (req, res) => {
     if (['dp', 'settlement'].includes(kindOf(existing))) {
       items = subtotal = discountType = discountValue = discountAmount = discountReason = undefined;
       taxRate = taxAmount = totalAmount = paidAmount = remainingAmount = paymentType = dpPercent = paymentStatus = undefined;
+    }
+
+    // PPN of an Invoice Penuh (shared/invoiceTax.js): recomputed from its subtotal and discount with the chosen method
+    const isSplitKind = ['dp', 'settlement'].includes(kindOf(existing));
+    const taxOpts = !isSplitKind && (req.body.taxMethod !== undefined || req.body.applyTax !== undefined) ? taxOptionsFrom(req.body, { isStaff: true }) : null;
+    const taxSplit = taxOpts ? {
+      ...computeContractTax({
+        subtotal: subtotal ?? existing.subtotal,
+        discount: discountAmount ?? existing.discount_amount,
+        rate: taxOpts.rate, method: taxOpts.method
+      }),
+      display: taxOpts.display
+    } : null;
+    if (taxSplit) {
+      totalAmount = taxSplit.total;
+      taxAmount = taxSplit.ppn;
+      taxRate = taxSplit.rate;
     }
 
     const currentTotal = totalAmount !== undefined ? Number(totalAmount) : Number(existing.total_amount);
@@ -901,6 +1006,11 @@ router.put('/:id', (req, res) => {
     if (kindOf(existing) === 'full' && totalAmount !== undefined) {
       db.prepare('UPDATE invoices SET contract_total = ?, contract_tax_rate = ? WHERE id = ?')
         .run(Number(totalAmount) || 0, Number(taxRate) || 0, existing.id);
+    }
+    if (taxSplit) {
+      db.prepare(`UPDATE invoices SET dpp_amount = @dpp, tax_method = @method, tax_display = @display, tax_note = COALESCE(tax_note, @note)${kindOf(existing) === 'full' ? `,
+        contract_subtotal = @subtotal, contract_discount = @discount, contract_dpp = @dpp, contract_tax_method = @method, contract_tax_display = @display` : ''} WHERE id = @id`)
+        .run({ dpp: taxSplit.dpp, method: taxSplit.method, display: taxSplit.display, note: taxOpts.note, subtotal: taxSplit.subtotal, discount: taxSplit.discount, id: existing.id });
     }
     const updatedRecord = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id);
     syncPaymentStatusFromInvoices();

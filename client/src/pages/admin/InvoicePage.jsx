@@ -183,6 +183,8 @@ export default function InvoicePage() {
   const paidRevenue = selectedSummary.totalPaid;
   const unpaidRevenue = selectedSummary.totalRemaining;
   const totalDiscounts = selectedSummary.totalDiscount;
+  const totalTax = selectedSummary.totalTax;
+  const paidTax = selectedSummary.paidTax;
 
   // Handler: Finance updates payment status (with automatic booth sync & DP input)
   const handleUpdatePaymentStatus = async (inv, newPaymentStatus) => {
@@ -375,6 +377,11 @@ export default function InvoicePage() {
           <div className="text-xl font-semibold font-mono text-slate-900">
             Rp {totalRevenue.toLocaleString('id-ID')}
           </div>
+          {totalTax > 0 && (
+            <span className="text-[11px] text-slate-500 mt-1 block">
+              Sebelum PPN Rp {(totalRevenue - totalTax).toLocaleString('id-ID')} • <b className="text-slate-700">Total PPN Rp {totalTax.toLocaleString('id-ID')}</b>
+            </span>
+          )}
           <span className="text-[11px] text-slate-400 mt-1 block">
             {projectInvoices.length} Dokumen Diterbitkan
           </span>
@@ -389,6 +396,11 @@ export default function InvoicePage() {
           <div className="text-xl font-semibold font-mono text-emerald-600">
             Rp {paidRevenue.toLocaleString('id-ID')}
           </div>
+          {paidTax > 0 && (
+            <span className="text-[11px] text-emerald-800/80 mt-1 block">
+              Pendapatan sebelum PPN Rp {(paidRevenue - paidTax).toLocaleString('id-ID')} • PPN Rp {paidTax.toLocaleString('id-ID')}
+            </span>
+          )}
           <span className="text-[11px] text-emerald-700/80 font-medium mt-1 block">
             {projectInvoices.filter(i => (i.payment_status || '').toUpperCase() === 'PAID').length} Lunas • {projectInvoices.filter(i => {
               const st = (i.payment_status || '').toUpperCase();

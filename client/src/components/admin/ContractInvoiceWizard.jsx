@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { X, Wallet, BadgeCheck, ArrowLeft, AlertTriangle, FileText, Building2, Loader2, Info } from 'lucide-react';
 import { api } from '../../services/api';
 import { getProjectDateInfo } from './ProjectYearFolderSelector';
+import TaxOptionsField from './TaxOptionsField';
+import InvoiceTotals from './InvoiceTotals';
+import { computeContractTax, taxPortion, taxRemainder, invoiceTaxView, DEFAULT_TAX_NOTE } from '../../utils/invoiceTax';
 
 const rupiah = (n) => `Rp ${Math.round(Number(n) || 0).toLocaleString('id-ID')}`;
 const DP_PERCENT_PRESETS = [30, 50];
@@ -39,13 +42,21 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
   const [contract, setContract] = useState(null);
   const [contractLoading, setContractLoading] = useState(false);
   const [contractError, setContractError] = useState('');
-  const [applyTax, setApplyTax] = useState(false);
-  // PPN rate from Setting > Aturan Booking, PPN & Pajak
-  const [taxRateSetting, setTaxRateSetting] = useState(11);
+  // PPN of the contract: Tanpa / Dengan PPN, method and display (defaults from Setting > Aturan Booking, PPN & Pajak)
+  const [taxCfg, setTaxCfg] = useState({ rate: 11, enabled: false, method: 'exclusive', display: 'show', note: DEFAULT_TAX_NOTE });
+  const [taxOpt, setTaxOpt] = useState({ method: 'none', display: 'show' });
+  const [ackTaxChange, setAckTaxChange] = useState(false);
   useEffect(() => {
     api.fetchInvoiceConfig().then(cfg => {
       const rate = Number(cfg?.taxRate);
-      if (Number.isFinite(rate) && rate >= 0) setTaxRateSetting(rate);
+      const method = cfg?.defaultTaxMethod === 'inclusive' ? 'inclusive' : 'exclusive';
+      setTaxCfg({
+        rate: Number.isFinite(rate) && rate >= 0 ? rate : 11,
+        enabled: cfg?.defaultTaxEnabled === true,
+        method,
+        display: method === 'inclusive' && cfg?.defaultTaxDisplay === 'hide' ? 'hide' : 'show',
+        note: String(cfg?.taxNote || '').trim() || DEFAULT_TAX_NOTE
+      });
     });
   }, []);
   const [dpMode, setDpMode] = useState('percent');
@@ -62,7 +73,6 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
     setProjectId(defaultProjectId || '');
     setBoothCode('');
     setContract(null);
-    setApplyTax(false);
     setDpMode('percent');
     setDpInput('30');
     setDueDate(plusDays(7));
@@ -100,32 +110,92 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
     return () => { cancelled = true; };
   }, [projectId]);
 
-  // Contract summary for the chosen booth (re-read when PPN is toggled for a contract without invoices)
+  // Contract summary for the chosen booth. Every PPN option is previewed here from the booth prices it returns.
   useEffect(() => {
     if (!projectId || !boothCode) { setContract(null); return; }
     let cancelled = false;
     setContractLoading(true);
     setContractError('');
-    api.fetchContract({ floorplanId: projectId, boothCode, taxRate: applyTax ? taxRateSetting : 0 }).then(res => {
+    api.fetchContract({ floorplanId: projectId, boothCode }).then(res => {
       if (cancelled) return;
       setContractLoading(false);
       if (res?.success) setContract(res.contract);
       else { setContract(null); setContractError(res?.error || 'Gagal memuat data kontrak booth'); }
     });
     return () => { cancelled = true; };
-  }, [projectId, boothCode, applyTax, taxRateSetting]);
+  }, [projectId, boothCode]);
+
+  // A running contract keeps its PPN setting (the Pelunasan follows the DP); a new one starts from the Setting defaults
+  useEffect(() => {
+    if (!contract) return;
+    setTaxOpt(contract.tax
+      ? { method: contract.tax.method, display: contract.tax.display }
+      : { method: taxCfg.enabled ? taxCfg.method : 'none', display: taxCfg.display });
+    setAckTaxChange(false);
+  }, [contract, taxCfg]);
 
   useEffect(() => { setAckUnpaidDp(false); setError(''); }, [boothCode, kind]);
 
   if (!isOpen) return null;
 
-  const total = contract?.contractTotal || 0;
+  // Contract value with the chosen PPN setting (the stored contract when unchanged)
+  const running = contract?.tax || null;
+  const taxRate = running && running.method !== 'none' ? running.rate : taxCfg.rate;
+  const taxChanged = Boolean(running) && (taxOpt.method !== running.method || (taxOpt.method !== 'none' && taxOpt.display !== running.display));
+  const contractTax = contract
+    ? (running && !taxChanged
+      ? { method: running.method, rate: running.rate, subtotal: running.subtotal, discount: Math.max(0, running.subtotal - running.dpp), dpp: running.dpp, ppn: running.ppn, total: running.total }
+      : computeContractTax({ subtotal: contract.base?.subtotal, discount: contract.base?.discount, rate: taxRate, method: taxOpt.method }))
+    : null;
+  const contractView = contractTax ? { ...contractTax, display: taxOpt.display } : null;
+  const total = contractTax?.total || 0;
   const dpRaw = parseFloat(String(dpInput).replace(/\./g, '').replace(',', '.')) || 0;
   const dpAmount = dpMode === 'percent' ? Math.round((total * (parseFloat(String(dpInput).replace(',', '.')) || 0)) / 100) : Math.round(dpRaw);
   const dpPercentShown = total > 0 ? Math.round((dpAmount / total) * 10000) / 100 : 0;
   const dpInvoice = contract?.dpInvoice;
   const dpPaid = dpInvoice && ['PAID', 'PARTIAL'].includes(String(dpInvoice.payment_status).toUpperCase());
   const settlementAmount = Math.max(0, total - (dpInvoice ? Number(dpInvoice.total_amount) || 0 : 0));
+  // DPP / PPN of the DP and of the Pelunasan: PPN proportional to the DP, Pelunasan = contract - DP (no Rp 1 gap)
+  const existingDpTax = dpInvoice && contractTax
+    ? (dpInvoice.tax_method && dpInvoice.dpp_amount != null && !taxChanged
+      ? { dpp: Number(dpInvoice.dpp_amount) || 0, ppn: Number(dpInvoice.tax_amount) || 0, total: Number(dpInvoice.total_amount) || 0 }
+      : taxPortion(contractTax, dpInvoice.total_amount))
+    : null;
+  const dpTax = contractTax ? taxPortion(contractTax, dpAmount) : null;
+  const settlementTax = contractTax ? taxRemainder(contractTax, existingDpTax || { dpp: 0, ppn: 0, total: 0 }) : null;
+
+  // Summary cards follow the PPN setting live. A change only rewrites the unpaid balance invoice.
+  const billedNow = contract ? (taxChanged && contract.settlementInvoice ? total : contract.billed) : 0;
+  const unbilledNow = Math.max(0, total - billedNow);
+  const withTax = contractTax && contractTax.ppn > 0;
+  const totalHint = !contractTax ? '' : !withTax
+    ? 'setelah diskon, tanpa PPN'
+    : contractTax.method === 'inclusive'
+      ? `sudah termasuk PPN ${rupiah(contractTax.ppn)}`
+      : `DPP ${rupiah(contractTax.dpp)} + PPN ${rupiah(contractTax.ppn)}`;
+
+  // "Tampilan di Invoice": the total block exactly as it will be printed on the A4 document
+  const previewView = contractTax && kind ? invoiceTaxView({
+    invoice_kind: kind,
+    total_amount: kind === 'dp' ? dpAmount : settlementAmount,
+    tax_method: taxOpt.method,
+    tax_display: taxOpt.display,
+    tax_rate: taxOpt.method === 'none' ? 0 : taxRate,
+    tax_note: running?.note || taxCfg.note,
+    dpp_amount: kind === 'dp' ? dpTax.dpp : settlementTax.dpp,
+    tax_amount: kind === 'dp' ? dpTax.ppn : settlementTax.ppn,
+    related_invoice_id: kind === 'settlement' && dpInvoice ? dpInvoice.id : null,
+    related_invoice: kind === 'settlement' ? dpInvoice : null,
+    items: kind === 'settlement' && !dpInvoice ? [{ amount: (contract.base?.subtotal || 0) }] : [{ amount: kind === 'dp' ? dpAmount : settlementAmount }],
+    contract_total: total,
+    contract_tax_rate: contractTax.rate,
+    contract_subtotal: contractTax.subtotal,
+    contract_discount: contractTax.discount,
+    contract_dpp: contractTax.dpp,
+    contract_tax_method: contractTax.method,
+    contract_tax_display: taxOpt.display,
+    contract_discount_hint: contract.base?.discount || 0
+  }) : null;
 
   // Blocking reasons for the chosen invoice type
   let blocker = null;
@@ -144,7 +214,7 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
     else if (dpAmount >= total) dpError = 'Nilai DP harus lebih kecil dari total kontrak.';
   }
   const needsDpAck = kind === 'settlement' && dpInvoice && !dpPaid;
-  const canSubmit = contract && !blocker && !dpError && !contractLoading && (!needsDpAck || ackUnpaidDp) && !isSubmitting;
+  const canSubmit = contract && !blocker && !dpError && !contractLoading && (!needsDpAck || ackUnpaidDp) && (!taxChanged || ackTaxChange) && !isSubmitting;
 
   const handleSubmit = async () => {
     setError('');
@@ -156,7 +226,10 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
       boothId: contract.booth.id,
       dpMode,
       dpValue: dpMode === 'percent' ? String(dpInput).replace(',', '.') : dpAmount,
-      taxRate: applyTax ? taxRateSetting : 0,
+      taxMethod: taxOpt.method,
+      taxDisplay: taxOpt.display,
+      taxRate,
+      changeContractTax: taxChanged && ackTaxChange,
       dueDate,
       notes,
       confirmUnpaidDp: ackUnpaidDp
@@ -261,30 +334,33 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
                   </div>
                 </div>
 
-                {!contract.hasInvoices ? (
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
-                    <span className="font-bold">Pajak (PPN):</span>
-                    <div className="flex bg-slate-100 border border-slate-200 rounded-lg p-0.5">
-                      {[[true, `Dengan PPN ${taxRateSetting}%`], [false, 'Tanpa PPN']].map(([val, label]) => (
-                        <button key={label} type="button" onClick={() => setApplyTax(val)}
-                          className={`px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer ${applyTax === val ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-white'}`}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    <span className="text-[11px] text-slate-500">Berlaku untuk seluruh kontrak (DP & Pelunasan).</span>
+                {/* Pajak bertingkat: berlaku untuk seluruh kontrak (DP & Pelunasan memakai pengaturan yang sama) */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-800">Pajak (PPN)</span>
+                    <span className="text-[11px] text-slate-500">
+                      {running ? 'Mengikuti pengaturan pajak kontrak ini (ditetapkan saat invoice pertama).' : 'Berlaku untuk seluruh kontrak (DP & Pelunasan).'}
+                    </span>
                   </div>
-                ) : (
-                  <div className="text-[11px] text-slate-500">Pajak kontrak: {contract.taxRate ? `dengan PPN ${contract.taxRate}%` : 'tanpa PPN'} (ditetapkan saat invoice pertama kontrak ini dibuat).</div>
-                )}
+                  <TaxOptionsField value={taxOpt} onChange={(v) => { setTaxOpt(v); setAckTaxChange(false); }} rate={taxRate} defaultMethod={taxCfg.method} />
+                  {taxChanged && (
+                    <label className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs cursor-pointer">
+                      <input type="checkbox" checked={ackTaxChange} onChange={(e) => setAckTaxChange(e.target.checked)} className="mt-0.5 accent-amber-600" />
+                      <span>
+                        <b>Pengaturan pajak kontrak akan diubah.</b> Invoice yang belum dibayar akan dihitung ulang dengan pengaturan baru.
+                        Invoice yang sudah DP / Lunas tidak berubah otomatis. Saya mengerti dan ingin melanjutkan.
+                      </span>
+                    </label>
+                  )}
+                </div>
 
-                {/* Contract summary */}
+                {/* Contract summary (recomputed live from the PPN setting) */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {[
-                    ['Total Kontrak', contract.contractTotal, 'text-slate-900', contract.taxRate ? `setelah diskon, termasuk PPN ${contract.taxRate}%` : 'setelah diskon'],
-                    ['Sudah Ditagih', contract.billed, 'text-indigo-700'],
-                    ['Sudah Dibayar', contract.paid, 'text-emerald-700'],
-                    ['Belum Ditagih', contract.unbilled, 'text-amber-700']
+                    ['Total Kontrak', total, 'text-slate-900', totalHint],
+                    ['Sudah Ditagih', billedNow, 'text-indigo-700'],
+                    ['Sudah Dibayar', contract.paid, 'text-emerald-700', withTax && contract.paidTax > 0 && !taxChanged ? `termasuk PPN ${rupiah(contract.paidTax)}` : ''],
+                    ['Belum Ditagih', unbilledNow, 'text-amber-700']
                   ].map(([label, value, tone, hint]) => (
                     <div key={label} className="p-2.5 rounded-xl border border-slate-200 bg-white">
                       <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{label}</div>
@@ -336,10 +412,12 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
                       <div className="p-2 rounded-lg bg-white border border-slate-200">
                         <div className="text-slate-500">Nilai DP{dpMode === 'nominal' && dpAmount > 0 ? ` (${dpPercentShown}%)` : ''}</div>
                         <div className="font-mono font-bold text-blue-700 text-sm">{rupiah(dpAmount)}</div>
+                        {withTax && dpAmount > 0 && <div className="text-[10px] text-slate-500 font-mono">DPP {rupiah(dpTax.dpp)} + PPN {rupiah(dpTax.ppn)}</div>}
                       </div>
                       <div className="p-2 rounded-lg bg-white border border-slate-200">
                         <div className="text-slate-500">Sisa via Invoice Pelunasan</div>
                         <div className="font-mono font-bold text-violet-700 text-sm">{rupiah(Math.max(0, total - dpAmount))}</div>
+                        {withTax && dpAmount > 0 && <div className="text-[10px] text-slate-500 font-mono">DPP {rupiah(contractTax.dpp - dpTax.dpp)} + PPN {rupiah(contractTax.ppn - dpTax.ppn)}</div>}
                       </div>
                     </div>
                     {dpError && <div className="text-xs font-medium text-rose-600">{dpError}</div>}
@@ -365,12 +443,28 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
                     )}
                     <div className="h-px bg-violet-200" />
                     <div className="flex justify-between text-sm"><span className="font-bold text-slate-800">Sisa yang harus dilunasi</span><span className="font-mono font-black text-violet-700">{rupiah(settlementAmount)}</span></div>
+                    {withTax && settlementTax && (
+                      <div className="text-right text-[10px] text-slate-500 font-mono">DPP {rupiah(settlementTax.dpp)} + PPN {rupiah(settlementTax.ppn)}</div>
+                    )}
                     {needsDpAck && (
                       <label className="flex items-start gap-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 cursor-pointer">
                         <input type="checkbox" checked={ackUnpaidDp} onChange={(e) => setAckUnpaidDp(e.target.checked)} className="mt-0.5 accent-amber-600" />
                         <span><b>DP belum diterima.</b> Invoice DP {dpInvoice.invoice_number} belum dibayar. Saya tetap ingin menerbitkan invoice pelunasan.</span>
                       </label>
                     )}
+                  </div>
+                )}
+
+                {/* Tampilan di Invoice: the total block as printed on the A4 document */}
+                {!blocker && previewView && (kind === 'settlement' || (dpAmount > 0 && !dpError)) && (
+                  <div className="p-3.5 rounded-xl border border-dashed border-slate-300 bg-white">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Tampilan di Invoice</div>
+                    <div className="ml-auto max-w-[300px] text-xs">
+                      <InvoiceTotals
+                        view={previewView}
+                        subtotalLabel={previewView.asFull ? undefined : `Subtotal ${kind === 'dp' ? 'Uang Muka / DP' : 'Pelunasan'}${previewView.showBreakdown ? ' (sebelum PPN)' : ''}:`}
+                      />
+                    </div>
                   </div>
                 )}
 

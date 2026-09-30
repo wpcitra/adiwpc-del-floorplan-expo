@@ -226,7 +226,7 @@ export default function ExhibitorTable() {
 
     const csvCell = (v) => `"${String(v ?? '-').replace(/"/g, '""')}"`;
     const projectOf = (id) => allProjects.find(p => p.id === id) || {};
-    const headers = ['Tahun', 'Nama Project', 'Tanggal Event', 'ID Project', 'Nomor Booth', 'Nama Brand / Tenant', 'Kategori Brand', 'Total Tagihan', 'Status Pembayaran', 'Kontak PIC', 'Email', 'Tanggal Booking'];
+    const headers = ['Tahun', 'Nama Project', 'Tanggal Event', 'ID Project', 'Nomor Booth', 'Nama Brand / Tenant', 'Kategori Brand', 'DPP (Sebelum PPN)', 'PPN', 'Tarif PPN (%)', 'Total Tagihan', 'Status Pembayaran', 'Kontak PIC', 'Email', 'Tanggal Booking'];
     const rows = list.map(e => {
       const proj = projectOf(e.floorplanId);
       return [
@@ -237,6 +237,10 @@ export default function ExhibitorTable() {
         e.booth || '-',
         e.company || '-',
         e.brandCategory || '-',
+        // PPN separated from the booth price (PPN is not revenue)
+        e.dppAmount ?? e.price ?? 0,
+        e.taxAmount || 0,
+        e.taxAmount > 0 ? (e.taxRate || 0) : 0,
         e.price || 0,
         statusLabel(e),
         e.pic || '-',
@@ -271,6 +275,15 @@ export default function ExhibitorTable() {
     const isFree = exh.status === 'free' || exh.category === 'Free' || exh.price === 0;
     const statusText = isFree ? '🎁 GRATIS (SPONSOR)' : isPaid ? '✅ LUNAS (PAID)' : '⏳ MENUNGGU PEMBAYARAN (UNPAID)';
 
+    // PPN lines follow the invoice's display setting: breakdown only when "Tampilkan rincian PPN"
+    const rpText = (n) => `Rp ${Math.round(Number(n) || 0).toLocaleString('id-ID')}`;
+    const withTax = exh.taxAmount > 0 && exh.taxMethod && exh.taxMethod !== 'none';
+    const taxLines = !withTax
+      ? `Total Tagihan: *${rpText(exh.price)}*\n`
+      : exh.taxDisplay === 'hide'
+        ? `Total Tagihan: *${rpText(exh.price)}* (${exh.taxNote || 'Harga sudah termasuk PPN'})\n`
+        : `Harga Booth (DPP): ${rpText(exh.dppAmount)}\nPPN ${exh.taxRate}%${exh.taxMethod === 'inclusive' ? ' (termasuk dalam harga)' : ''}: ${rpText(exh.taxAmount)}\nTotal Tagihan: *${rpText(exh.price)}*\n`;
+
     const messageText = 
 `📌 *INVOICE & BUKTI RESERVASI BOOTH PAMERAN*
 --------------------------------------------
@@ -279,8 +292,7 @@ Nama Brand  : *${exh.company}*
 PIC / Penanggung Jawab : ${exh.pic || exh.company} (${exh.contact})
 Nomor Booth : *#${exh.booth}*
 Kategori Brand : ${exh.brandCategory || 'Umum'}
-Total Tagihan: *Rp ${(exh.price || 0).toLocaleString('id-ID')}*
-Status Pembayaran : *${statusText}*
+${taxLines}Status Pembayaran : *${statusText}*
 
 ${isFree ? 'Booth ini merupakan booth fasilitas sponsor / gratis.' : isPaid ? 'Terima kasih atas pembayaran Anda! Booth resmi terkonfirmasi.' : 'Mohon segera lakukan konfirmasi pembayaran untuk mengamankan lokasi booth Anda.'}
 

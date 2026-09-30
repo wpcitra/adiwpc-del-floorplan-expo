@@ -30,6 +30,7 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { api } from '../../services/api';
+import { computeContractTax, DEFAULT_TAX_NOTE } from '../../utils/invoiceTax';
 import InvoiceA4View from '../admin/InvoiceA4View';
 
 const OFFICIAL_BANKS = [
@@ -66,13 +67,20 @@ export default function BookingModal({
   // Steps: 'form' | 'payment' | 'success'
   const [step, setStep] = useState('form');
   // PPN from Setting (rate, and whether online registrations are taxed). Admins choose per registration.
-  const [taxCfg, setTaxCfg] = useState({ rate: 11, publicTax: true });
+  const [taxCfg, setTaxCfg] = useState({ rate: 11, publicTax: true, method: 'exclusive', display: 'show', note: DEFAULT_TAX_NOTE });
   const [adminApplyTax, setAdminApplyTax] = useState(null); // null = follow the setting
   useEffect(() => {
     api.fetchInvoiceConfig().then(cfg => {
       if (!cfg) return;
       const rate = Number(cfg.taxRate);
-      setTaxCfg({ rate: Number.isFinite(rate) && rate >= 0 ? rate : 11, publicTax: cfg.publicBookingTax !== false });
+      const method = cfg.defaultTaxMethod === 'inclusive' ? 'inclusive' : 'exclusive';
+      setTaxCfg({
+        rate: Number.isFinite(rate) && rate >= 0 ? rate : 11,
+        publicTax: cfg.publicBookingTax !== false,
+        method,
+        display: method === 'inclusive' && cfg.defaultTaxDisplay === 'hide' ? 'hide' : 'show',
+        note: String(cfg.taxNote || '').trim() || DEFAULT_TAX_NOTE
+      });
     });
   }, []);
   const [showA4Invoice, setShowA4Invoice] = useState(false);
@@ -216,10 +224,13 @@ export default function BookingModal({
   const height = firstBooth?.heightM || firstBooth?.dimensions_meters?.height || 3;
   const area = totalArea;
   const price = boothList.reduce((acc, b) => acc + (b.price || 5000000), 0);
-  // Estimate shown in the form; the server computes the invoice itself (price - private discount + PPN)
+  // Estimate shown in the form; the server computes the invoice itself (price - private discount, PPN added on top
+  // of or included in the price according to the Setting default)
   const applyTax = isAdmin ? (adminApplyTax ?? taxCfg.publicTax) : taxCfg.publicTax;
-  const ppn = applyTax ? Math.round((price * taxCfg.rate) / 100) : 0;
-  const grandTotal = price + ppn;
+  const taxSplit = computeContractTax({ subtotal: price, rate: taxCfg.rate, method: applyTax ? taxCfg.method : 'none' });
+  const ppn = taxSplit.ppn;
+  const grandTotal = taxSplit.total;
+  const taxIncluded = applyTax && taxCfg.method === 'inclusive';
   const invoiceNumber = `INV/EXP-${Date.now().toString().slice(-6)}`;
   const vaNumber = `8809${Math.floor(100000000000 + Math.random() * 900000000000)}`;
 
@@ -954,10 +965,12 @@ export default function BookingModal({
                       </div>
                     </div>
                   )}
-                  <div className="flex justify-between text-slate-600">
-                    <span>{applyTax ? `PPN ${taxCfg.rate}%` : 'PPN'}</span>
-                    <span className="font-semibold text-slate-800 font-mono">{applyTax ? `Rp ${ppn.toLocaleString('id-ID')}` : 'Tidak dikenakan'}</span>
-                  </div>
+                  {!(taxIncluded && taxCfg.display === 'hide') && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>{applyTax ? `PPN ${taxCfg.rate}%${taxIncluded ? ' (sudah termasuk dalam harga)' : ''}` : 'PPN'}</span>
+                      <span className="font-semibold text-slate-800 font-mono">{applyTax ? `Rp ${ppn.toLocaleString('id-ID')}` : 'Tidak dikenakan'}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-slate-600">
                     <span>Biaya Administrasi</span>
                     <span className="font-semibold text-emerald-600">GRATIS</span>
@@ -970,6 +983,7 @@ export default function BookingModal({
                       Rp {grandTotal.toLocaleString('id-ID')}
                     </span>
                   </div>
+                  {taxIncluded && <div className="text-[10px] italic text-slate-500 text-right">{taxCfg.note}</div>}
 
                   {paymentScheme === 'dp' && (
                     <div className="mt-2 p-2.5 bg-blue-50/90 rounded-xl border border-blue-200 space-y-1.5 animate-fadeIn">
@@ -1197,7 +1211,12 @@ export default function BookingModal({
             event_venue: 'Jakarta Convention Center (Hall A)',
             subtotal: price,
             discount: 0,
-            tax_amount: Math.round(price * 0.11),
+            tax_rate: taxSplit.rate,
+            tax_amount: ppn,
+            tax_method: taxSplit.method,
+            tax_display: taxIncluded ? taxCfg.display : 'show',
+            tax_note: taxCfg.note,
+            dpp_amount: taxSplit.dpp,
             grand_total: grandTotal,
             payment_status: bookingType === 'booking' ? 'UNPAID' : bookingType === 'manual_transfer' ? 'PENDING' : 'PAID',
             payment_method: bookingType === 'booking' ? 'Booking Hold (24 Jam)' : bookingType === 'manual_transfer' ? `Transfer Bank Manual (${transferBank})` : `Payment Gateway (${paymentMethod.toUpperCase()})`,

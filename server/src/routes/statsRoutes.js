@@ -3,6 +3,25 @@ import db from '../db.js';
 import { getContract, invoiceCodeTokens, removeBoothFromInvoice } from '../utils/contractBilling.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
 import { getExhibitorsData } from './orderRoutes.js';
+import { invoiceTaxView, paidTaxOf } from '../../../shared/invoiceTax.js';
+
+// PPN is collected for the state, not revenue: split the invoices' billed / received money into DPP and PPN
+function invoiceTaxTotals(rows) {
+  const byId = new Map(rows.map(r => [r.id, r]));
+  let billed = 0;
+  let collected = 0;
+  rows.forEach(inv => {
+    const status = String(inv.payment_status || 'UNPAID').toUpperCase();
+    if (status === 'CANCELED') return;
+    let items = [];
+    try { items = JSON.parse(inv.items_json || '[]'); } catch (e) {}
+    const view = invoiceTaxView({ ...inv, items, related_invoice: byId.get(inv.related_invoice_id) || null });
+    billed += view.ppn;
+    const paid = status === 'PAID' ? Number(inv.total_amount) || 0 : status === 'PARTIAL' ? Number(inv.paid_amount) || 0 : 0;
+    collected += paidTaxOf(view, paid);
+  });
+  return { billed, collected };
+}
 
 const router = express.Router();
 
@@ -142,6 +161,10 @@ router.get('/', (req, res) => {
       unpaidInvoiceAmount = db.prepare("SELECT SUM(CASE WHEN payment_status IN ('UNPAID', 'PENDING') THEN total_amount WHEN payment_status = 'PARTIAL' THEN MAX(0, total_amount - paid_amount) ELSE 0 END) as total FROM invoices WHERE deleted_at IS NULL").get()?.total || 0;
     }
 
+    const taxTotals = invoiceTaxTotals(hasFilter
+      ? db.prepare(`SELECT * FROM invoices WHERE (floorplan_id IN (${inPlaceholders}) OR event_id = ?) AND deleted_at IS NULL`).all(...targetFloorplanIds, rawProjectId)
+      : db.prepare('SELECT * FROM invoices WHERE deleted_at IS NULL').all());
+
     let orderRevenue = 0;
     if (hasFilter) {
       const row = db.prepare(`SELECT SUM(total_amount) as total FROM orders WHERE floorplan_id IN (${inPlaceholders}) AND payment_status = 'PAID' AND deleted_at IS NULL`).get(...targetFloorplanIds);
@@ -232,6 +255,10 @@ router.get('/', (req, res) => {
         freePercentage,
         occupancyRate: totalBooths > 0 ? Number((((sold + reserved) / totalBooths) * 100).toFixed(1)) : 0,
         totalRevenue,
+        // Received money split: before PPN (revenue) and the PPN inside it; totalTaxBilled = PPN on all active invoices
+        revenueExclTax: paidInvoiceRevenue > 0 ? Math.max(0, totalRevenue - taxTotals.collected) : totalRevenue,
+        taxCollected: paidInvoiceRevenue > 0 ? taxTotals.collected : 0,
+        totalTaxBilled: taxTotals.billed,
         potentialRevenue,
         remainingBill,
         remainingPercentage

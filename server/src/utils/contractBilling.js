@@ -1,5 +1,6 @@
 import db from '../db.js';
 import { exhibitorIdFor } from './exhibitorIdentity.js';
+import { computeContractTax, contractTaxOf, dpTaxOf, invoiceTaxView, paidTaxOf, taxPortion, taxRemainder } from '../../../shared/invoiceTax.js';
 
 // ---------------------------------------------------------------------------
 // Booth contract billing (DP + Pelunasan)
@@ -59,28 +60,68 @@ export function getContractInvoices(floorplanId, boothCode, boothId) {
     .all({ floorplanId, boothCode: boothCode || '', boothId: boothId || '' });
 }
 
-// Contract value from the booth record: price - private discount, plus PPN
-export function boothContractValue(booth, taxRate = 0) {
-  const base = Math.max(0, (Number(booth?.price) || 0) - (Number(booth?.discount_amount) || 0));
-  return Math.round(base * (1 + (Number(taxRate) || 0) / 100));
+// Contract value from the booth record: price - private discount, plus PPN (added on top unless `method` is 'inclusive')
+export function boothContractValue(booth, taxRate = 0, method = 'exclusive') {
+  return computeContractTax({ subtotal: booth?.price, discount: booth?.discount_amount, rate: taxRate, method }).total;
 }
 
 // Booth codes covered by an invoice: "A-01+A-03+A-04" -> ['A-01', 'A-03', 'A-04'] (auto-merge contracts, AGENTS.md §18)
 export const invoiceCodeTokens = (code) => String(code || '').split('+').map(t => t.trim()).filter(Boolean);
 
+const boothByCode = (floorplanId, code) => db.prepare(`SELECT * FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL AND LOWER(TRIM(code)) = LOWER(TRIM(?))`).get(floorplanId, code || '');
+
+/** Booth rows of a contract code: the booth itself (also a manually merged booth "A-04+A-05") or each booth of "A-01+A-03". */
+export function boothsForCode(floorplanId, code) {
+  const exact = boothByCode(floorplanId, code);
+  if (exact) return [exact];
+  return invoiceCodeTokens(code).map(t => boothByCode(floorplanId, t)).filter(Boolean);
+}
+
+/** Contract breakdown (see shared/invoiceTax.js) from the booth prices and private discounts. null when no booth is found. */
+export function contractTaxFor(floorplanId, code, { rate = 0, method = 'none' } = {}) {
+  const rows = boothsForCode(floorplanId, code);
+  if (!rows.length) return null;
+  const subtotal = rows.reduce((acc, b) => acc + (Number(b.price) || 0), 0);
+  const discount = rows.reduce((acc, b) => acc + Math.min(Number(b.price) || 0, Number(b.discount_amount) || 0), 0);
+  return { ...computeContractTax({ subtotal, discount, rate, method }), grossDiscount: discount };
+}
+
 /**
  * Contract value for an invoice booth code: the booth itself (also a manually merged booth "A-04+A-05"),
  * or, for a multi-booth contract "A-01+A-03+A-04", the sum of its booths. null when no booth is found.
  */
-export function contractValueForCode(floorplanId, code, taxRate = 0) {
-  const exact = db.prepare(`SELECT * FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL AND LOWER(TRIM(code)) = LOWER(TRIM(?))`).get(floorplanId, code || '');
-  if (exact) return boothContractValue(exact, taxRate);
-  const tokens = invoiceCodeTokens(code);
-  if (tokens.length < 2) return null;
-  const rows = tokens
-    .map(t => db.prepare(`SELECT * FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL AND LOWER(TRIM(code)) = LOWER(TRIM(?))`).get(floorplanId, t))
-    .filter(Boolean);
-  return rows.length ? rows.reduce((acc, b) => acc + boothContractValue(b, taxRate), 0) : null;
+export function contractValueForCode(floorplanId, code, taxRate = 0, method = 'exclusive') {
+  return contractTaxFor(floorplanId, code, { rate: taxRate, method })?.total ?? null;
+}
+
+// Invoice line per booth, as priced on the booth (before discount; the discount is its own line)
+export function contractItems(rows, label = 'Sewa Booth') {
+  return rows.map((b, i) => ({
+    id: `item-${i + 1}`,
+    boothCode: b.code,
+    description: `${label} #${b.code}`,
+    qty: 1,
+    unitPrice: Number(b.price) || 0,
+    amount: Number(b.price) || 0
+  }));
+}
+
+// Snapshot columns every live invoice of a contract carries (UPDATE ... SET contract_* = ...)
+const CONTRACT_SNAPSHOT_SQL = `contract_total = @total, contract_tax_rate = @rate, contract_subtotal = @subtotal, contract_discount = @discount,
+  contract_dpp = @dpp, contract_tax_method = @method, contract_tax_display = @display`;
+export const contractSnapshotParams = (c) => ({
+  total: c.total, rate: c.method === 'none' ? 0 : c.rate, subtotal: c.subtotal, discount: c.discount, dpp: c.dpp,
+  method: c.method, display: c.method === 'inclusive' && c.display === 'hide' ? 'hide' : 'show'
+});
+
+// DPP / PPN of every live invoice of a contract (each DP / Pelunasan knows its DP through related_invoice)
+function contractInvoiceViews(live, contractDiscount) {
+  const byId = new Map(live.map(inv => [inv.id, inv]));
+  return live.map(inv => {
+    let items = [];
+    try { items = JSON.parse(inv.items_json || '[]'); } catch (e) {}
+    return invoiceTaxView({ ...inv, items, related_invoice: byId.get(inv.related_invoice_id) || null, contract_discount_hint: contractDiscount });
+  });
 }
 
 // Full contract summary for one booth (works from the invoice rows; booth row is optional)
@@ -99,6 +140,13 @@ export function summarizeContract(invoices, booth = null, { taxRate = 0 } = {}) 
   const billed = live.reduce((acc, inv) => acc + (Number(inv.total_amount) || 0), 0);
   const paid = live.reduce((acc, inv) => acc + invoicePaidAmount(inv), 0);
 
+  // Contract PPN split (shared/invoiceTax.js): DPP, PPN, and the PPN inside the money received
+  const tax = latestLive
+    ? contractTaxOf(latestLive, booth?.discount_amount)
+    : { ...computeContractTax({ subtotal: booth?.price, discount: booth?.discount_amount, rate: taxRate, method: taxRate > 0 ? 'exclusive' : 'none' }), display: 'show' };
+  const views = contractInvoiceViews(live, booth?.discount_amount);
+  const paidTax = live.reduce((acc, inv, i) => acc + paidTaxOf(views[i], invoicePaidAmount(inv)), 0);
+
   let status = null;
   if (live.length) {
     if (contractTotal > 0 ? paid >= contractTotal - EPSILON : live.every(inv => statusOf(inv) === 'PAID')) status = 'PAID';
@@ -113,6 +161,13 @@ export function summarizeContract(invoices, booth = null, { taxRate = 0 } = {}) 
   return {
     contractTotal,
     taxRate: Number(latestLive?.contract_tax_rate ?? taxRate) || 0,
+    taxMethod: tax.method,
+    taxDisplay: tax.display || 'show',
+    taxNote: latestLive?.tax_note || '',
+    subtotal: tax.subtotal,
+    dpp: tax.dpp,
+    ppn: tax.ppn,
+    paidTax,
     discountAmount: Number(booth?.discount_amount ?? latestLive?.discount_amount) || 0,
     billed,
     paid,
@@ -140,10 +195,11 @@ export const contractStatusLabel = (status) => ({
   PAID: 'Lunas', PARTIAL: 'Uang Muka / DP', UNPAID: 'Belum Lunas', PENDING: 'Menunggu Verifikasi', CANCELED: 'Batal'
 }[status] || 'Belum Ditagih');
 
-// Rewrites the settlement (or single "full") invoice when the contract value or the DP changes.
-// Paid invoices are never touched. `contractTotal` is passed explicitly when a DP/Pelunasan is issued
-// (the value the admin confirmed); otherwise, while the contract is not fully paid, it follows the
-// booth's current price and private discount. Returns the updated contract summary.
+// Rewrites the settlement (or single "full") invoice when the contract value, its PPN or the DP changes.
+// Paid invoices are never touched. `options.contract` (a breakdown from contractTaxFor / computeContractTax) is
+// passed when a DP / Pelunasan is issued or the contract's PPN setting is changed; otherwise, while the contract
+// is not fully paid, it follows the booth's current price and private discount with the contract's PPN method.
+// Returns the updated contract summary.
 export function recalcContract(floorplanId, boothCode, boothId, options = {}) {
   const booth = findBooth(floorplanId, boothCode, boothId);
   const invoices = getContractInvoices(floorplanId, booth?.code || boothCode, booth?.id || boothId);
@@ -151,48 +207,64 @@ export function recalcContract(floorplanId, boothCode, boothId, options = {}) {
   if (!live.length) return summarizeContract(invoices, booth);
 
   const latest = live[live.length - 1];
-  const snapshot = Number(latest.contract_total ?? latest.total_amount) || 0;
-  const taxRate = Number(options.taxRate ?? latest.contract_tax_rate ?? 0) || 0;
+  const current = { ...contractTaxOf(latest, booth?.discount_amount), note: latest.tax_note || null };
   const hasUnpaid = live.some(inv => statusOf(inv) !== 'PAID');
-  const contractTotal = options.contractTotal !== undefined
-    ? Math.round(Number(options.contractTotal))
-    : (hasUnpaid
-      ? (invoiceCodeTokens(latest.booth_code).length > 1
-        ? (contractValueForCode(floorplanId, latest.booth_code, taxRate) ?? snapshot)
-        : (booth ? boothContractValue(booth, taxRate) : snapshot))
-      : snapshot);
+  let contract = options.contract || null;
+  if (!contract && hasUnpaid) {
+    const fromBooths = contractTaxFor(floorplanId, invoiceCodeTokens(latest.booth_code).length > 1 ? latest.booth_code : (booth?.code || latest.booth_code), current);
+    if (fromBooths) contract = { ...fromBooths, display: current.display, note: current.note };
+  }
+  if (!contract) contract = current;
+  contract = { ...contract, display: contract.method === 'inclusive' && contract.display === 'hide' ? 'hide' : 'show' };
 
   const dp = live.find(inv => kindOf(inv) === 'dp') || null;
-  const dpTotal = dp ? Number(dp.total_amount) || 0 : 0;
+  const dpPart = dp ? dpTaxOf(dp, contract) : { dpp: 0, ppn: 0, total: 0 };
 
-  const setContractTotal = db.prepare('UPDATE invoices SET contract_total = ?, contract_tax_rate = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
-  live.forEach(inv => setContractTotal.run(contractTotal, taxRate, inv.id));
+  const setSnapshot = db.prepare(`UPDATE invoices SET ${CONTRACT_SNAPSHOT_SQL}, updated_at = CURRENT_TIMESTAMP WHERE id = @id`);
+  live.forEach(inv => setSnapshot.run({ ...contractSnapshotParams(contract), id: inv.id }));
 
   // The open balance invoice: settlement if any, otherwise the single full invoice
   const balance = live.find(inv => kindOf(inv) === 'settlement') || live.find(inv => kindOf(inv) === 'full');
   if (balance && ['UNPAID', 'PENDING'].includes(statusOf(balance))) {
     const isSettlement = kindOf(balance) === 'settlement' || Boolean(dp);
-    const amount = Math.max(0, contractTotal - dpTotal);
+    const part = dp ? taxRemainder(contract, dpPart) : { dpp: contract.dpp, ppn: contract.ppn, total: contract.total };
+    const amount = Math.max(0, part.total);
+    // Pelunasan after a DP: one line. Pelunasan without DP (= the whole contract): one line per booth, discount on its own
+    const rows = !dp && isSettlement ? boothsForCode(floorplanId, balance.booth_code) : [];
     const items = isSettlement
-      ? [{ id: 'item-1', description: `Pelunasan Sewa Booth #${balance.booth_code}${dp ? ` (setelah DP ${dp.invoice_number})` : ''}`, qty: 1, unitPrice: amount, amount }]
+      ? (rows.length
+        ? contractItems(rows, 'Pelunasan Sewa Booth')
+        : [{ id: 'item-1', description: `Pelunasan Sewa Booth #${balance.booth_code}${dp ? ` (setelah DP ${dp.invoice_number})` : ''}`, qty: 1, unitPrice: amount, amount }])
       : null;
+    const rowsPrice = rows.reduce((acc, b) => acc + (Number(b.price) || 0), 0);
+    const rowsDiscount = rows.reduce((acc, b) => acc + Math.min(Number(b.price) || 0, Number(b.discount_amount) || 0), 0);
+    // A single invoice keeps its own lines; its discount follows the booths when the contract was recomputed from them
+    const fullDiscount = !isSettlement && contract.grossDiscount !== undefined ? contract.grossDiscount : null;
     db.prepare(`
       UPDATE invoices
-      SET invoice_kind = ?, related_invoice_id = ?, total_amount = ?, remaining_amount = ?, paid_amount = 0,
-          contract_total = ?, ${items ? 'items_json = ?,' : ''}
-          ${isSettlement ? "subtotal = ?, discount_value = 0, discount_amount = 0, discount_reason = '', tax_rate = 0, tax_amount = 0," : ''}
+      SET invoice_kind = @kind, related_invoice_id = @relatedId, total_amount = @amount, remaining_amount = @amount, paid_amount = 0,
+          ${items ? 'items_json = @items,' : ''}
+          ${isSettlement ? "subtotal = @subtotal, discount_value = 0, discount_amount = @discount, discount_reason = '', discount_type = 'nominal'," : ''}
+          ${fullDiscount !== null ? 'discount_amount = @discount,' : ''}
+          tax_rate = @rate, tax_amount = @ppn, dpp_amount = @dpp, tax_method = @method, tax_display = @display,
+          tax_note = COALESCE(tax_note, @note),
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(
-      isSettlement ? 'settlement' : 'full',
-      dp ? dp.id : null,
-      isSettlement ? amount : contractTotal,
-      isSettlement ? amount : contractTotal,
-      contractTotal,
-      ...(items ? [JSON.stringify(items)] : []),
-      ...(isSettlement ? [amount] : []),
-      balance.id
-    );
+      WHERE id = @id
+    `).run({
+      kind: isSettlement ? 'settlement' : 'full',
+      relatedId: dp ? dp.id : null,
+      amount,
+      ...(items ? { items: JSON.stringify(items) } : {}),
+      ...(isSettlement ? { subtotal: rows.length ? rowsPrice : amount, discount: rows.length ? rowsDiscount : 0 } : {}),
+      ...(fullDiscount !== null ? { discount: fullDiscount } : {}),
+      rate: part.ppn > 0 ? contract.rate : 0,
+      ppn: part.ppn,
+      dpp: part.dpp,
+      method: contract.method,
+      display: contract.display,
+      note: contract.note || null,
+      id: balance.id
+    });
   }
 
   return summarizeContract(getContractInvoices(floorplanId, booth?.code || boothCode, booth?.id || boothId), booth);

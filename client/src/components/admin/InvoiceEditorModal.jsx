@@ -35,6 +35,7 @@ import {
 import { printInvoiceElement, downloadInvoicePDF } from '../../utils/invoicePrintUtils';
 import { api } from '../../services/api';
 import InvoiceA4View from './InvoiceA4View';
+import { looksLikeTypo } from '../../utils/nameCheck';
 
 // Realistic sample invoice data for the live preview
 const SAMPLE_INVOICE_DATA = {
@@ -56,6 +57,7 @@ const SAMPLE_INVOICE_DATA = {
   subtotal: 45000000,
   discount_amount: 5000000,
   discount_note: 'Diskon Khusus Early Bird Partnership (Admin Special)',
+  tax_rate: 11,
   tax_amount: 4400000,
   total_amount: 44400000,
   admin_notes: 'Layout stand island bebas partisi dengan fasilitas listrik 3500W & free 2 slot parkir VIP.',
@@ -67,14 +69,6 @@ const SAMPLE_INVOICE_DATA = {
       qty: 1,
       unitPrice: 45000000,
       total: 45000000
-    },
-    {
-      description: 'Diskon Spesial Early Bird (Voucher Mitra)',
-      dimensions: '-',
-      facilities: 'Potongan Khusus Admin',
-      qty: 1,
-      unitPrice: -5000000,
-      total: -5000000
     }
   ]
 };
@@ -756,6 +750,9 @@ export default function InvoiceEditorModal({
                         onChange={(e) => handleChange('accountName', e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-xs font-semibold"
                       />
+                      {looksLikeTypo(config.accountName, config.companyName) && (
+                      <p className="mt-1 text-[11px] font-semibold text-amber-400">⚠ Sangat mirip tetapi tidak sama dengan nama perusahaan "{config.companyName}". Cek ulang sesuai buku rekening.</p>
+                    )}
                     </div>
 
                     <div>
@@ -1021,6 +1018,9 @@ export default function InvoiceEditorModal({
                       onChange={(e) => handleChange('accountName', e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-xs font-semibold"
                     />
+                    {looksLikeTypo(config.accountName, config.companyName) && (
+                      <p className="mt-1 text-[11px] font-semibold text-amber-400">⚠ Sangat mirip tetapi tidak sama dengan nama perusahaan "{config.companyName}". Cek ulang sesuai buku rekening.</p>
+                    )}
                   </div>
                 </div>
 

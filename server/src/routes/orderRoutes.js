@@ -6,7 +6,8 @@ import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
 import { clusterCheckoutBooths, computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
 import { sortCodes } from '../../../shared/boothGroups.js';
 import { notifyOpsOfSalesChange } from '../utils/opsLayer.js';
-import { readTaxSettings, cleanTaxRate } from '../utils/taxSettings.js';
+import { taxOptionsFrom } from '../utils/taxSettings.js';
+import { computeContractTax, taxPortion } from '../../../shared/invoiceTax.js';
 
 const router = express.Router();
 
@@ -188,9 +189,7 @@ router.post('/checkout', (req, res) => {
       // 7. ONE invoice for the whole registration: every booth ordered together, adjacent or not (AGENTS.md §14).
       //    Amounts are computed here, never taken from the form: booth price - private discount, + PPN when chosen.
       //    Staff choose "Dengan PPN" / "Tanpa PPN" (applyTax, taxRate); visitors follow the setting.
-      const taxSettings = readTaxSettings();
-      const applyTax = req.user && req.body.applyTax !== undefined ? Boolean(req.body.applyTax) : taxSettings.publicBookingTax;
-      const taxRate = applyTax ? (req.user ? cleanTaxRate(req.body.taxRate, taxSettings.taxRate) : taxSettings.taxRate) : 0;
+      const tax = taxOptionsFrom(req.body, { isStaff: Boolean(req.user), publicBooking: true });
       const codes = sortCodes(targetBooths.map(b => b.code));
       const priced = codes.map(code => targetBooths.find(b => b.code === code)).map(b => {
         const price = Number(b.price) || 0;
@@ -198,9 +197,11 @@ router.post('/checkout', (req, res) => {
       });
       const subtotal = priced.reduce((acc, p) => acc + p.price, 0);
       const discount = priced.reduce((acc, p) => acc + p.discount, 0);
-      const afterDiscount = Math.max(0, subtotal - discount);
-      const taxAmount = Math.round((afterDiscount * taxRate) / 100);
-      const contractTotal = afterDiscount + taxAmount;
+      // PPN added on top of, or included in, the booth prices (shared/invoiceTax.js)
+      const contract = { ...computeContractTax({ subtotal, discount, rate: tax.rate, method: tax.method }), display: tax.display };
+      const taxRate = contract.rate;
+      const taxAmount = contract.ppn;
+      const contractTotal = contract.total;
       const codeLabel = codes.join('+');
       const items = priced.map((p, i) => ({
         id: `item-${i + 1}`,
@@ -217,6 +218,7 @@ router.post('/checkout', (req, res) => {
           : (contractTotal * (resolvedDpPercent || 50)) / 100))
         : 0;
       const invoiceTotal = isDpInvoice ? dpAmount : contractTotal;
+      const invoiceTax = isDpInvoice ? taxPortion(contract, dpAmount) : { dpp: contract.dpp, ppn: contract.ppn };
       const invoicePaid = invoiceStatus === 'PAID' ? invoiceTotal : 0;
       const invoiceItems = isDpInvoice
         ? [{ id: 'item-1', description: `Uang Muka (DP ${resolvedDpPercent}%) Sewa Booth #${codeLabel} - ${resolvedPaymentMethod}`, qty: 1, unitPrice: dpAmount, amount: dpAmount }]
@@ -229,8 +231,9 @@ router.post('/checkout', (req, res) => {
           tax_rate, tax_amount, total_amount,
           paid_amount, remaining_amount, payment_type, dp_percent,
           payment_status, payment_method, notes,
-          invoice_kind, contract_total, contract_tax_rate
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          invoice_kind, contract_total, contract_tax_rate,
+          dpp_amount, tax_method, tax_display, tax_note, contract_subtotal, contract_discount, contract_dpp, contract_tax_method, contract_tax_display
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         `INV-REC-${stamp}`,
         invoiceNumber,
@@ -249,8 +252,8 @@ router.post('/checkout', (req, res) => {
         isDpInvoice ? 0 : (priced.length === 1 ? Number(priced[0].b.discount_value) || 0 : discount),
         isDpInvoice ? 0 : discount,
         isDpInvoice ? '' : priced.map(p => p.b.discount_reason).filter(Boolean).join('; '),
-        isDpInvoice ? 0 : taxRate,
-        isDpInvoice ? 0 : taxAmount,
+        invoiceTax.ppn > 0 ? taxRate : 0,
+        invoiceTax.ppn,
         invoiceTotal,
         invoicePaid,
         invoiceTotal - invoicePaid,
@@ -261,7 +264,16 @@ router.post('/checkout', (req, res) => {
         resolvedNotes,
         isDpInvoice ? 'dp' : 'full',
         contractTotal,
-        taxRate
+        taxRate,
+        invoiceTax.dpp,
+        contract.method,
+        contract.display,
+        tax.note,
+        contract.subtotal,
+        contract.discount,
+        contract.dpp,
+        contract.method,
+        contract.display
       );
       const invoiceNumbers = [invoiceNumber];
       const warnings = [];
@@ -278,7 +290,7 @@ router.post('/checkout', (req, res) => {
         const orderId = `ORD-${stamp}${priced.length > 1 ? `-${i + 1}` : ''}`;
         orderIds.push(orderId);
         insertOrder.run(orderId, floorplanId, p.b.id, p.b.code, brandName, fullName || brandName, email, phone,
-          Math.round((p.price - p.discount) * (1 + taxRate / 100)),
+          subtotal - discount > 0 ? Math.round((contractTotal * (p.price - p.discount)) / (subtotal - discount)) : 0,
           resolvedPaymentMethod, resolvedPaymentStatus, invoiceNumber, brandCategory || '', registrationSource, adminName, exhibitorId);
       });
 
@@ -1019,7 +1031,7 @@ export function getExhibitorsData(targetId) {
   const exhibitors = Array.from(uniqueMap.values()).map(item => {
     if (!item.floorplanId || !item.booth) return item;
     const c = getContract(item.floorplanId, item.booth);
-    let boothValue = c.booth ? boothContractValue(c.booth, c.taxRate) : null;
+    let boothValue = c.booth ? boothContractValue(c.booth, c.taxRate, c.taxMethod) : null;
     let effectivePrice = c.contractTotal || (boothValue ?? item.price ?? 0);
     let paid = c.paid || 0;
     let remaining = c.remaining != null ? c.remaining : Math.max(0, effectivePrice - paid);
@@ -1030,7 +1042,7 @@ export function getExhibitorsData(targetId) {
     let contractShare = null;
     let contractValue = boothValue;
     if (c.status && contractTokens.length > 1 && contractCode.trim().toLowerCase() !== String(item.booth).trim().toLowerCase()) {
-      const groupValue = contractValueForCode(item.floorplanId, contractCode, c.taxRate);
+      const groupValue = contractValueForCode(item.floorplanId, contractCode, c.taxRate, c.taxMethod);
       const ratio = groupValue && boothValue !== null ? boothValue / groupValue : 1 / contractTokens.length;
       contractShare = { code: contractCode, codes: contractTokens, ratio, contractTotal: c.contractTotal, paid: c.paid || 0 };
       contractValue = groupValue;
@@ -1039,8 +1051,16 @@ export function getExhibitorsData(targetId) {
       remaining = Math.max(0, effectivePrice - paid);
     }
 
+    // DPP / PPN of this row (its share of a multi-booth contract): PPN is not revenue (Data Exhibitor, CSV)
+    const dppAmount = c.status ? Math.round((c.dpp || 0) * (contractShare ? contractShare.ratio : 1)) : effectivePrice;
+    const taxInfo = {
+      dppAmount, taxAmount: Math.max(0, effectivePrice - dppAmount), taxRate: c.status ? c.taxRate : 0,
+      taxMethod: c.status ? c.taxMethod : 'none', taxDisplay: c.status ? c.taxDisplay : 'show', taxNote: c.status ? c.taxNote : ''
+    };
+
     const baseItem = !c.status ? {
       ...item,
+      ...taxInfo,
       price: effectivePrice,
       boothValue,
       contractMismatch: false,
@@ -1048,6 +1068,7 @@ export function getExhibitorsData(targetId) {
       remainingAmount: remaining
     } : {
       ...item,
+      ...taxInfo,
       boothValue,
       contractMismatch: contractValue !== null && contractValue > 0 && Math.abs(contractValue - c.contractTotal) > 1,
       contractShare,

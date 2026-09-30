@@ -432,6 +432,9 @@ export default function SalesCharts() {
           freePercentage: s.freePercentage ?? 0,
           occupancyRate: s.occupancyRate || 0,
           totalRevenue: s.totalRevenue || 0,
+          revenueExclTax: s.revenueExclTax ?? s.totalRevenue ?? 0,
+          taxCollected: s.taxCollected || 0,
+          totalTaxBilled: s.totalTaxBilled || 0,
           potentialRevenue: s.potentialRevenue || 0,
           remainingBill: s.remainingBill ?? 0,
           remainingPercentage: s.remainingPercentage ?? 0
@@ -798,9 +801,16 @@ export default function SalesCharts() {
         {/* Card 1: Total Pendapatan Real (Linear Dark Card) */}
         <div className="bg-slate-950 text-white p-5 rounded-xl border border-slate-800 shadow-xs flex items-center justify-between relative overflow-hidden">
           <div>
-            <div className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-1">Total Pendapatan Real (Lunas)</div>
-            <h3 className="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-1 font-sans">{fmtRupiah(es.totalRevenue)}</h3>
+            <div className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-1">Total Pendapatan Real (Lunas){es.taxCollected > 0 ? ' · Sebelum PPN' : ''}</div>
+            {/* PPN is collected for the state, not revenue: the headline is the amount before PPN */}
+            <h3 className="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-1 font-sans">{fmtRupiah(es.taxCollected > 0 ? es.revenueExclTax : es.totalRevenue)}</h3>
             <p className="text-xs text-slate-400 flex items-center gap-1.5"><span className="text-emerald-400 font-medium">{es.paidCount || 0} booth</span><span>sudah lunas terbayar</span></p>
+            {es.taxCollected > 0 && (
+              <p className="text-[11px] text-slate-400 mt-1">Diterima {fmtRupiah(es.totalRevenue)}, termasuk PPN {fmtRupiah(es.taxCollected)}</p>
+            )}
+            {es.totalTaxBilled > 0 && (
+              <p className="text-[11px] text-slate-400">Total PPN (semua invoice aktif): <span className="text-slate-200 font-medium">{fmtRupiah(es.totalTaxBilled)}</span></p>
+            )}
           </div>
           <div className="w-10 h-10 bg-slate-800 text-slate-200 rounded-lg flex items-center justify-center shrink-0 border border-slate-700"><DollarSign size={20} /></div>
         </div>
