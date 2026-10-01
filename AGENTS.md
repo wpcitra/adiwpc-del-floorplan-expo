@@ -479,12 +479,12 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 
 ---
 
-## 29. Email Exhibitor Opsional Lock (`shared/emailRule.js`, `utils/taxSettings.js` `readEmailRequired`)
-- **One rule, server and forms**: `checkEmail(value, { required })`. Only spaces = empty. An empty email is allowed unless `exhibitorEmailRequired` is true (Setting > Aturan Booking, "Email Exhibitor: Opsional / Wajib", default Opsional; one setting for the whole application, not per event). A filled email must match `EMAIL_RE`, otherwise "Format email tidak valid" (400 `EMAIL_INVALID`).
-- **Where it applies**: `POST /orders/checkout` (online registration, admin registration, Booking Manual Sales), `PUT /orders/update-tenant`, `BookingModal` ("Email Bisnis (opsional)" / "Email Bisnis *"), `SalesBoothActions` booking form, and the tenant completeness check of the Property Inspector (`isTenantComplete`). Nama PIC, Brand, Kategori and No. WhatsApp stay required.
-- **Storage**: no email = `NULL` in `orders.email`, `booths.email`, `invoices.client_email` (never `''` for new data). The canvas `boothData.email` and API DTOs keep `''` (the client works with strings).
+## 29. Registrasi Tanpa Email Lock (`shared/emailRule.js`)
+- **The registration forms have no email field**: `BookingModal` (online registration and admin registration / edit), the Booking Manual form of `SalesBoothActions`. Nama PIC, Brand, Kategori and No. WhatsApp are required; WhatsApp is the contact. There is no "email wajib" setting (a stored `exhibitorEmailRequired` is ignored). Do not add the field back without being asked.
+- **Email is never required and never blocks**: `POST /orders/checkout` and `PUT /orders/update-tenant` use `cleanEmail()`: a valid address already on file is kept, anything else becomes `NULL`. The Property Inspector's `isTenantComplete` does not look at the email. The duplicate warning of the form checks the phone number only.
+- **Data already on file is not thrown away**: editing a tenant sends the existing email unchanged (`update-tenant` without `email` keeps the stored one); picking a registered tenant carries its email, and typing another brand name for a new booking drops it (it belongs to the picked tenant). User accounts (login) still use an email: that is unrelated.
+- **Storage**: no email = `NULL` in `orders.email`, `booths.email`, `invoices.client_email`. The canvas `boothData.email` and API DTOs keep `''` (the client works with strings).
   - `orders.email` was created `NOT NULL`: `db.js` rebuilds the table once (copy of the database first with `VACUUM INTO backups/pre-migration_email-opsional_*.db`, same definition without the NOT NULL, all rows, indexes and triggers). If that ever fails the app keeps working and stores `''` (`ordersEmailNullable()`).
-- **Identity without email**: `exhibitorIdFor(null, company)` falls back to the company name (§18), so auto-merge still groups the booths of one brand.
-- **Display**: an empty email is not printed on the invoice (`showClientEmail && inv.client_email`) nor in the Property Inspector tenant block. Data Exhibitor shows "-". The application sends no email at all; WhatsApp is the contact channel.
+- **Identity without email**: `exhibitorIdFor(null, company)` falls back to the company name (§18), so auto-merge groups the booths of one brand by its name.
+- **Display**: an empty email is not printed on the invoice (`showClientEmail && inv.client_email`) nor in the Property Inspector tenant block; Data Exhibitor shows "-". Older registrations keep showing their email. The application sends no email at all.
 - Tests: `server/test/email-opsional.test.js`.
-

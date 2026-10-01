@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import BoothDiscountFields, { boothDiscountAmount } from './BoothDiscountFields';
-import { checkEmail } from '../../utils/emailRule';
 import { 
   Tag, 
   DollarSign, 
@@ -57,7 +56,7 @@ import BoothCornerControl from './BoothCornerControl';
 import { isCaptionable } from '../../utils/elementCaptions';
 import { isLibraryElement, isShapeElement } from '../../utils/elementLibrary';
 import { BOOTH_CATEGORIES, BOOTH_SHAPES, STATUS_CONFIG } from '../../utils/floorplanUtils';
-import { api, getCachedInvoiceConfig } from '../../services/api';
+import { api } from '../../services/api';
 import { NAME_DIRECTIONS, NAME_DIRECTION_LABELS, nameDirectionOf } from '../../utils/boothNameFit';
 
 export default function PropertyPanel({ 
@@ -989,13 +988,6 @@ function BoothInspector({
   // Tenant biodata state
   const picName = booth.picName || '';
   const email = booth.email || '';
-  // Email is optional unless Setting > Aturan Booking says "Wajib" (AGENTS.md §29)
-  const [emailRequired, setEmailRequired] = useState(() => getCachedInvoiceConfig()?.exhibitorEmailRequired === true);
-  useEffect(() => {
-    let alive = true;
-    if (!getCachedInvoiceConfig()) api.fetchInvoiceConfig().then(cfg => { if (alive) setEmailRequired(cfg?.exhibitorEmailRequired === true); });
-    return () => { alive = false; };
-  }, []);
   const phone = booth.phone || '';
   const registrationSource = booth.registrationSource || 'online';
   const registeredBy = booth.registeredBy || '';
@@ -1004,7 +996,6 @@ function BoothInspector({
   const isTenantComplete = Boolean(
     hasOwner && 
     picName.trim() && 
-    !checkEmail(email, { required: emailRequired }).error && 
     phone.trim() && 
     (brandCategory || booth.brandCategory)
   );
@@ -1108,7 +1099,6 @@ function BoothInspector({
         if (!ownerName?.trim()) missing.push('Nama Brand / Perusahaan');
         if (!picName?.trim()) missing.push('Nama Lengkap (PIC)');
         if (!brandCategory?.trim() && !booth.brandCategory?.trim()) missing.push('Kategori Brand');
-        if (checkEmail(email, { required: emailRequired }).error) missing.push('Email Bisnis');
         if (!phone?.trim() || phone.trim().length < 9) missing.push('Nomor WhatsApp (min 9 digit)');
 
         setStatusValidationError({

@@ -30,7 +30,6 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { api } from '../../services/api';
-import { checkEmail } from '../../utils/emailRule';
 import { computeContractTax, DEFAULT_TAX_NOTE } from '../../utils/invoiceTax';
 import InvoiceA4View from '../admin/InvoiceA4View';
 
@@ -67,14 +66,11 @@ export default function BookingModal({
   // The invoice the server issued for this registration (the same one as in Manajemen Invoice)
   const [issuedInvoice, setIssuedInvoice] = useState(null);
   const [adminApplyTax, setAdminApplyTax] = useState(null); // null = follow the setting
-  // Email is optional unless Setting > Aturan Booking says "Wajib" (shared/emailRule.js, AGENTS.md §29)
-  const [emailRequired, setEmailRequired] = useState(false);
   useEffect(() => {
     api.fetchInvoiceConfig().then(cfg => {
       if (!cfg) return;
       const rate = Number(cfg.taxRate);
       const method = cfg.defaultTaxMethod === 'inclusive' ? 'inclusive' : 'exclusive';
-      setEmailRequired(cfg.exhibitorEmailRequired === true);
       const minDp = Number(cfg.publicMinDpPercent);
       if (Number.isFinite(minDp) && minDp >= 1 && minDp < 100) {
         setMinDpPercent(minDp);
@@ -103,6 +99,8 @@ export default function BookingModal({
   const [brandName, setBrandName] = useState(initialData?.brandName || initialData?.company || initialData?.ownerName || booth?.ownerName || '');
   const [brandCategory, setBrandCategory] = useState(initialData?.brandCategory || booth?.brandCategory || '');
   const [brandCategories, setBrandCategories] = useState([]);
+  // No email field in the form (AGENTS.md §29). An email already on file (editing a tenant, or a registered client
+  // picked from the duplicate warning) is carried along unchanged.
   const [email, setEmail] = useState(initialData?.email || '');
   const [phone, setPhone] = useState(initialData?.phone || initialData?.contact || '');
   const [formErrors, setFormErrors] = useState({});
@@ -145,13 +143,13 @@ export default function BookingModal({
   const firstBooth = boothList[0];
   const activeProjectId = projectId || firstBooth?.floorplan_id || firstBooth?.floorplanId || firstBooth?.projectId || new URLSearchParams(window.location.search).get('templateId') || new URLSearchParams(window.location.search).get('project') || 'FP-2026-001';
 
-  // Live duplicate check on email or phone
+  // Live duplicate check on the phone number
   useEffect(() => {
     let cancel = false;
     const checkDuplicate = async () => {
-      if ((email && email.includes('@') && email.length > 5) || (phone && phone.length >= 9)) {
+      if (phone && phone.length >= 9) {
         try {
-          const res = await api.checkExistingExhibitor({ email, phone });
+          const res = await api.checkExistingExhibitor({ phone });
           // Visitors only get "already registered" (no name / contact of the other exhibitor)
           if (!cancel && res && res.exists && !res.client) {
             setDuplicateWarning({ generic: true });
@@ -159,7 +157,7 @@ export default function BookingModal({
           }
           if (!cancel && res && res.exists && res.client) {
             // Only warn if different from current initialData
-            if (!initialData || (initialData.email !== res.client.email && initialData.phone !== res.client.phone)) {
+            if (!initialData || initialData.phone !== res.client.phone) {
               setDuplicateWarning(res.client);
               return;
             }
@@ -174,7 +172,7 @@ export default function BookingModal({
       cancel = true;
       clearTimeout(timer);
     };
-  }, [email, phone, initialData]);
+  }, [phone, initialData]);
 
   useEffect(() => {
     async function loadData() {
@@ -264,8 +262,6 @@ export default function BookingModal({
     if (!fullName.trim()) errors.fullName = 'Nama lengkap wajib diisi';
     if (!brandName.trim()) errors.brandName = 'Nama brand / perusahaan wajib diisi';
     if (!brandCategory.trim()) errors.brandCategory = 'Kategori brand wajib dipilih';
-    const emailCheck = checkEmail(email, { required: emailRequired });
-    if (emailCheck.error) errors.email = emailCheck.error;
     if (!phone.trim() || phone.length < 9) errors.phone = 'Nomor HP / WhatsApp wajib diisi (minimal 9 digit)';
 
     setFormErrors(errors);
@@ -531,7 +527,7 @@ export default function BookingModal({
                 <div className="bg-amber-50/90 border border-amber-300 rounded-2xl p-3.5 flex items-start gap-3 text-xs text-amber-950 animate-fadeIn">
                   <AlertCircle size={18} className="text-amber-600 shrink-0 mt-0.5" />
                   <div className="flex-1">
-                    <span className="font-bold">Email / No. HP ini sudah pernah terdaftar.</span>
+                    <span className="font-bold">No. HP / WhatsApp ini sudah pernah terdaftar.</span>
                     <p className="text-amber-800 text-[11px] mt-0.5">Jika ini data Anda, lanjutkan pendaftaran dengan data yang sama agar tercatat sebagai exhibitor yang sama.</p>
                   </div>
                 </div>
@@ -540,7 +536,7 @@ export default function BookingModal({
                 <div className="bg-amber-50/90 border border-amber-300 rounded-2xl p-3.5 flex items-start gap-3 text-xs text-amber-950 animate-fadeIn">
                   <AlertCircle size={18} className="text-amber-600 shrink-0 mt-0.5" />
                   <div className="flex-1">
-                    <span className="font-bold">Kontak / Email Ini Sudah Terdaftar di Sistem!</span>
+                    <span className="font-bold">No. HP / WhatsApp Ini Sudah Terdaftar di Sistem!</span>
                     <p className="text-amber-800 text-[11px] mt-0.5">
                       Client <b>{duplicateWarning.company || duplicateWarning.brandName}</b> (PIC: {duplicateWarning.pic || duplicateWarning.fullName}) telah terdaftar sebelumnya. Gunakan data ini untuk menghindari data ganda.
                     </p>
@@ -622,7 +618,7 @@ export default function BookingModal({
                   type="text"
                   placeholder="Contoh: PT Kopi Nusantara / Artisan Coffee"
                   value={brandName}
-                  onChange={(e) => setBrandName(e.target.value)}
+                  onChange={(e) => { setBrandName(e.target.value); if (mode !== 'edit') setEmail(''); }}
                   className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 transition-all ${
                     formErrors.brandName 
                       ? 'border-rose-300 focus:ring-rose-200 bg-rose-50/30' 
@@ -656,26 +652,8 @@ export default function BookingModal({
                 {formErrors.brandCategory && <p className="text-rose-500 text-[11px] mt-1">{formErrors.brandCategory}</p>}
               </div>
 
-              {/* Email & Phone Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                    <Mail size={13} className="text-indigo-600" /> {emailRequired ? 'Email Bisnis *' : 'Email Bisnis (opsional)'}
-                  </label>
-                  <input
-                    type="email"
-                    placeholder="nama@perusahaan.id"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 transition-all ${
-                      formErrors.email 
-                        ? 'border-rose-300 focus:ring-rose-200 bg-rose-50/30' 
-                        : 'border-slate-200 focus:border-indigo-600 focus:ring-indigo-100'
-                    }`}
-                  />
-                  {formErrors.email && <p className="text-rose-500 text-[11px] mt-1">{formErrors.email}</p>}
-                </div>
-
+              {/* Phone (the registration form has no email field: WhatsApp is the contact, AGENTS.md §29) */}
+              <div className="grid grid-cols-1 gap-3.5">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
                     <Phone size={13} className="text-indigo-600" /> Nomor HP / WhatsApp *

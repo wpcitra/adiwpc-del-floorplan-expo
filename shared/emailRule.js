@@ -1,14 +1,10 @@
-// Exhibitor email rule, shared by the server and the forms (AGENTS.md §29).
-// The email is OPTIONAL unless Setting > Aturan Booking says "Wajib" (`exhibitorEmailRequired`). Only spaces = empty.
-// When filled it must be a valid address. An empty email is stored as NULL, never as ''.
+// Exhibitor email (AGENTS.md §29): the registration forms no longer ask for an email; WhatsApp is the contact.
+// An email may still arrive from data already on file (an existing tenant, older registrations): a valid one is
+// kept, anything else is stored as NULL. It is never required and never blocks a registration.
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-export const EMAIL_INVALID_MESSAGE = 'Format email tidak valid';
-export const EMAIL_REQUIRED_MESSAGE = 'Email wajib diisi';
 
-/** { email: string | null, error: string | null } for a value typed in a form. */
-export function checkEmail(value, { required = false } = {}) {
+/** The email to store: the trimmed address when valid, otherwise null. */
+export function cleanEmail(value) {
   const email = String(value ?? '').trim();
-  if (!email) return { email: null, error: required ? EMAIL_REQUIRED_MESSAGE : null };
-  if (!EMAIL_RE.test(email)) return { email, error: EMAIL_INVALID_MESSAGE };
-  return { email, error: null };
+  return EMAIL_RE.test(email) ? email : null;
 }

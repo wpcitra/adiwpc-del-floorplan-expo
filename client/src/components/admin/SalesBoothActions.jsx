@@ -3,7 +3,6 @@ import { X, FileText, CalendarPlus, Percent, RefreshCw, AlertCircle, Search, Use
 import { api } from '../../services/api';
 import BoothDiscountFields, { boothDiscountAmount } from './BoothDiscountFields';
 import InvoiceA4View from './InvoiceA4View';
-import { checkEmail } from '../../utils/emailRule';
 
 // Booth pop up of the read-only Studio (role Sales, AGENTS.md §27): header with the booth's data and three actions,
 // "Buat Invoice", "Booking Manual", "Beri Diskon". Which buttons are active is decided by the server
@@ -71,14 +70,13 @@ function BookingForm({ floorplanId, summary, onSaved, onError }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [emailRequired, setEmailRequired] = useState(false);
-  const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }));
+  // Typing another brand name for a new booking drops the email carried from a picked tenant (it belongs to that tenant)
+  const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value, ...(key === 'brandName' && !editing ? { email: '' } : {}) }));
 
   useEffect(() => {
     let alive = true;
     api.fetchBrandCategories(true, floorplanId).then(cats => { if (alive && Array.isArray(cats)) setCategories(cats.filter(c => c.isActive !== false)); });
     if (!editing) api.fetchRegisteredClients().then(list => { if (alive) setClients(list || []); });
-    api.fetchInvoiceConfig().then(cfg => { if (alive) setEmailRequired(cfg?.exhibitorEmailRequired === true); });
     return () => { alive = false; };
   }, [floorplanId, editing]);
 
@@ -98,8 +96,6 @@ function BookingForm({ floorplanId, summary, onSaved, onError }) {
     setError('');
     const data = Object.fromEntries(Object.entries(form).map(([k, v]) => [k, String(v || '').trim()]));
     if (!data.brandName || !data.fullName || !data.phone) { setError('Nama tenant / brand, nama PIC, dan no. WhatsApp wajib diisi.'); return; }
-    const emailCheck = checkEmail(data.email, { required: emailRequired });
-    if (emailCheck.error) { setError(`${emailCheck.error}.`); return; }
     setSaving(true);
     const payload = { floorplanId, boothId: b.id, boothCode: b.code, ...data };
     const res = editing
@@ -128,7 +124,7 @@ function BookingForm({ floorplanId, summary, onSaved, onError }) {
         <div className="space-y-2">
           <div className="relative">
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input autoFocus type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari nama brand, PIC, email, atau no. WhatsApp" className={`${inputCls} pl-8`} aria-label="Cari tenant terdaftar" />
+            <input autoFocus type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari nama brand, PIC, atau no. WhatsApp" className={`${inputCls} pl-8`} aria-label="Cari tenant terdaftar" />
           </div>
           <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-64 overflow-y-auto">
             {matches.length === 0 && <div className="p-3 text-[11px] text-slate-500">Tidak ada tenant yang cocok. Pilih "Tenant Baru" untuk mengisi data baru.</div>}
@@ -150,14 +146,11 @@ function BookingForm({ floorplanId, summary, onSaved, onError }) {
             <label className={labelCls} htmlFor="sb-pic">Nama PIC *</label>
             <input id="sb-pic" type="text" value={form.fullName} onChange={set('fullName')} className={inputCls} placeholder="Nama penanggung jawab" />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* no email field (AGENTS.md §29); an email already on file stays in `form.email` and is sent unchanged */}
+          <div className="grid grid-cols-1 gap-3">
             <div>
               <label className={labelCls} htmlFor="sb-phone">No. WhatsApp *</label>
               <input id="sb-phone" type="tel" value={form.phone} onChange={set('phone')} className={inputCls} placeholder="08xxxxxxxxxx" />
-            </div>
-            <div>
-              <label className={labelCls} htmlFor="sb-email">{emailRequired ? 'Email *' : 'Email (opsional)'}</label>
-              <input id="sb-email" type="email" value={form.email} onChange={set('email')} className={inputCls} placeholder="nama@perusahaan.com" />
             </div>
           </div>
           <div>

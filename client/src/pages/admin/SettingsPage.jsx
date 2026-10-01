@@ -103,8 +103,6 @@ export default function SettingsPage() {
   // Largest private discount the Sales role may give per booth (Studio pop up "Beri Diskon")
   const [salesMaxDiscountPercent, setSalesMaxDiscountPercent] = useState(10);
   const [salesMaxDiscountAmount, setSalesMaxDiscountAmount] = useState(0);
-  // Exhibitor email in registration / booking forms: optional (default) or required
-  const [exhibitorEmailRequired, setExhibitorEmailRequired] = useState(false);
   const [isPublicBookingActive, setIsPublicBookingActive] = useState(true);
   // Online registrations by visitors are charged PPN (staff choose per invoice)
   const [publicBookingTax, setPublicBookingTax] = useState(true);
@@ -176,7 +174,6 @@ Salam hangat,
           if (config.publicMinDpPercent !== undefined) setPublicMinDpPercent(config.publicMinDpPercent);
           if (config.salesMaxDiscountPercent !== undefined) setSalesMaxDiscountPercent(config.salesMaxDiscountPercent);
           if (config.salesMaxDiscountAmount !== undefined) setSalesMaxDiscountAmount(config.salesMaxDiscountAmount);
-          setExhibitorEmailRequired(config.exhibitorEmailRequired === true);
           if (config.isPublicBookingActive !== undefined) setIsPublicBookingActive(config.isPublicBookingActive);
           if (config.isPaymentActive !== undefined) setIsPaymentActive(config.isPaymentActive);
           if (config.waTemplate) setWaTemplate(config.waTemplate);
@@ -228,7 +225,6 @@ Salam hangat,
       publicMinDpPercent: Math.min(99, Math.max(1, Number(publicMinDpPercent) || 20)),
       salesMaxDiscountPercent: Math.min(100, Math.max(0, Number(salesMaxDiscountPercent) || 0)),
       salesMaxDiscountAmount: Math.max(0, Math.round(Number(salesMaxDiscountAmount) || 0)),
-      exhibitorEmailRequired,
       isPublicBookingActive,
       isPaymentActive,
       currencySymbol,
@@ -929,26 +925,6 @@ Salam hangat,
                   Invoice DP langsung bisa diunduh setelah pemesanan; sisanya ditagih lewat Invoice Pelunasan.
                 </p>
               </div>
-
-              {/* Email exhibitor: wajib / opsional */}
-              <fieldset className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-                <legend className="sr-only">Email exhibitor</legend>
-                <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <Mail size={15} className="text-indigo-600" /> Email Exhibitor
-                </div>
-                <div className="grid grid-cols-2 gap-1 bg-slate-200/80 p-0.5 rounded-xl max-w-xs">
-                  {[[false, 'Opsional'], [true, 'Wajib']].map(([value, label]) => (
-                    <button key={label} type="button" aria-pressed={exhibitorEmailRequired === value} onClick={() => setExhibitorEmailRequired(value)}
-                      className={`py-1.5 text-xs font-bold rounded-lg cursor-pointer ${exhibitorEmailRequired === value ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  Berlaku untuk form Pemesanan Booth (pendaftaran online), pendaftaran oleh admin, dan Booking Manual Sales.
-                  Opsional: email boleh dikosongkan; bila diisi tetap harus berformat benar. WhatsApp menjadi kontak utama.
-                </p>
-              </fieldset>
 
               {/* Batas diskon Sales */}
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">

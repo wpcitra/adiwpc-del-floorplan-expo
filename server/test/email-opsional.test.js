@@ -1,4 +1,4 @@
-// Email exhibitor opsional (AGENTS.md §29): kosong = NULL, diisi = harus valid, bisa diwajibkan dari Setting
+// Registrasi tanpa email (AGENTS.md §29): form tidak lagi meminta email; kosong = NULL, email lama yang valid dipertahankan
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
@@ -35,16 +35,13 @@ test('tanpa email: pendaftaran online berhasil, tersimpan NULL di pesanan, booth
   assert.ok(!r.body.order.invoice.client_email, 'invoice tanpa baris email');
 });
 
-test('email valid tersimpan (tanpa spasi); email salah format ditolak', async () => {
+test('email yang sudah ada (tenant terdaftar) tetap tersimpan; email tidak valid tidak menghalangi dan disimpan NULL', async () => {
   const ok = await book('E-03', { email: '  rina@contoh.co.id ' });
   assert.equal(ok.status, 200, ok.text);
   assert.equal(rawDb(db => db.prepare('SELECT email FROM orders WHERE floorplan_id = ? AND booth_code = ?').get(FP, 'E-03').email), 'rina@contoh.co.id');
-  for (const bad of ['rina', 'rina@', 'rina@contoh', 'rina @contoh.id', '@contoh.id']) {
-    const r = await book('E-04', { email: bad });
-    assert.equal(r.status, 400, `"${bad}" harus ditolak`);
-    assert.equal(r.body.error, 'Format email tidak valid');
-  }
-  assert.equal((await s.api('GET', `/floorplan/${FP}`, undefined, { as: 'superadmin' })).body.floorplan.booths.find(b => b.code === 'E-04').status, 'available');
+  const bad = await book('E-05', { email: 'rina@salah' });
+  assert.equal(bad.status, 200, 'email lama yang salah format tidak boleh menggagalkan pendaftaran');
+  assert.equal(rawDb(db => db.prepare('SELECT email FROM orders WHERE floorplan_id = ? AND booth_code = ?').get(FP, 'E-05').email), null);
 });
 
 test('Data Exhibitor, pencarian klien dan simpan Studio tetap jalan tanpa email', async () => {
@@ -65,11 +62,13 @@ test('Data Exhibitor, pencarian klien dan simpan Studio tetap jalan tanpa email'
   assert.equal(rawDb(db => db.prepare('SELECT email FROM booths WHERE floorplan_id = ? AND code = ?').get(FP, 'E-01').email), null);
 });
 
-test('Ubah Booking dan Booking Manual Sales: email boleh kosong, salah format ditolak', async () => {
-  const upd = (email) => s.api('PUT', '/orders/update-tenant', { floorplanId: FP, boothCode: 'E-03', brandName: 'Brand E-03', fullName: 'Rina', phone: '081234567890', brandCategory: 'F&B', email }, { as: 'sales' });
-  assert.equal((await upd('salah@format')).status, 400);
-  assert.equal((await upd('')).status, 200);
-  assert.equal(rawDb(db => db.prepare('SELECT email FROM orders WHERE floorplan_id = ? AND booth_code = ?').get(FP, 'E-03').email), null);
+test('Ubah Booking tanpa kolom email mempertahankan email yang ada; Booking Manual Sales tanpa email', async () => {
+  const upd = (extra) => s.api('PUT', '/orders/update-tenant', { floorplanId: FP, boothCode: 'E-03', brandName: 'Brand E-03 Baru', fullName: 'Rina', phone: '081234567890', brandCategory: 'F&B', ...extra }, { as: 'sales' });
+  assert.equal((await upd({})).status, 200);
+  const kept = () => rawDb(db => [db.prepare('SELECT email FROM orders WHERE floorplan_id = ? AND booth_code = ?').get(FP, 'E-03').email, db.prepare('SELECT email FROM booths WHERE floorplan_id = ? AND code = ?').get(FP, 'E-03').email]);
+  assert.deepEqual(kept(), ['rina@contoh.co.id', 'rina@contoh.co.id'], 'email lama tidak terhapus');
+  assert.equal((await upd({ email: '' })).status, 200);
+  assert.deepEqual(kept(), [null, null]);
   const manual = await book('E-04', { deferInvoice: true, source: 'admin' }, 'sales');
   assert.equal(manual.status, 200, manual.text);
   const inv = await s.api('POST', '/booth-actions/invoice', { floorplanId: FP, boothCode: 'E-04' }, { as: 'sales' });
@@ -77,14 +76,8 @@ test('Ubah Booking dan Booking Manual Sales: email boleh kosong, salah format di
   assert.equal(rawDb(db => db.prepare('SELECT client_email FROM invoices WHERE id = ?').get(inv.body.invoice.id).client_email), null);
 });
 
-test('Setting "Email exhibitor: Wajib": tanpa email ditolak, dengan email diterima; kembali Opsional', async () => {
-  assert.equal((await s.api('GET', '/invoices/config')).body.config.exhibitorEmailRequired, false, 'default Opsional, terbaca form publik');
+test('tidak ada pengaturan "wajib email": nilai lama di konfigurasi diabaikan', async () => {
   assert.equal((await s.api('POST', '/invoices/config', { config: { exhibitorEmailRequired: true } }, { as: 'superadmin' })).status, 200);
-  const none = await book('E-05');
-  assert.equal(none.status, 400);
-  assert.equal(none.body.error, 'Email wajib diisi');
-  assert.equal((await book('E-05', { email: 'ada@contoh.id' })).status, 200);
-  assert.equal((await s.api('POST', '/invoices/config', { config: { exhibitorEmailRequired: false } }, { as: 'superadmin' })).status, 200);
   assert.equal((await book('E-06')).status, 200);
 });
 

@@ -6,8 +6,8 @@ import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
 import { clusterCheckoutBooths, computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
 import { sortCodes } from '../../../shared/boothGroups.js';
 import { notifyOpsOfSalesChange } from '../utils/opsLayer.js';
-import { taxOptionsFrom, readBookingRules, readEmailRequired } from '../utils/taxSettings.js';
-import { checkEmail } from '../../../shared/emailRule.js';
+import { taxOptionsFrom, readBookingRules } from '../utils/taxSettings.js';
+import { cleanEmail } from '../../../shared/emailRule.js';
 import { buildInvoiceRow } from './invoiceRoutes.js';
 import { computeContractTax, taxPortion } from '../../../shared/invoiceTax.js';
 
@@ -40,10 +40,8 @@ router.post('/checkout', (req, res) => {
     if (!hasBooths || !brandName || !phone) {
       return res.status(400).json({ success: false, error: 'Data formulir tidak lengkap' });
     }
-    // Email: optional unless the Setting says "Wajib"; when sent it must be valid. Empty is stored as NULL.
-    const emailCheck = checkEmail(req.body.email, { required: readEmailRequired() });
-    if (emailCheck.error) return res.status(400).json({ success: false, code: 'EMAIL_INVALID', error: emailCheck.error });
-    const email = emailCheck.email;
+    // The forms no longer ask for an email (AGENTS.md §29): one already on file is kept when valid, otherwise NULL
+    const email = cleanEmail(req.body.email);
 
     // Public registration offers only "Booking Dulu" and "Transfer Bank Manual": neither records a payment.
     // There is no real payment gateway, so an instantly-PAID booking is reserved for logged-in staff
@@ -756,11 +754,11 @@ router.put('/update-tenant', (req, res) => {
     if (!brandName || !fullName || !phone) {
       return res.status(400).json({ success: false, error: 'Data biodata tenant wajib diisi lengkap' });
     }
-    const emailCheck = checkEmail(req.body.email, { required: readEmailRequired() });
-    if (emailCheck.error) return res.status(400).json({ success: false, code: 'EMAIL_INVALID', error: emailCheck.error });
-    const email = emailCheck.email;
-
     const fpId = floorplanId || 'FP-2026-001';
+    // No email field in the forms (AGENTS.md §29): a request without `email` keeps the one on file
+    const email = req.body.email === undefined
+      ? cleanEmail(db.prepare('SELECT email FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL AND (id = ? OR LOWER(TRIM(code)) = LOWER(TRIM(?)))').get(fpId, boothId || '', boothCode || '')?.email)
+      : cleanEmail(req.body.email);
 
     const updateTransaction = db.transaction(() => {
       // 1. Update booths
