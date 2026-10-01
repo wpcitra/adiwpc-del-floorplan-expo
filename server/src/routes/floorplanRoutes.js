@@ -6,6 +6,7 @@ import { notifyIfBoothsChanged } from '../utils/opsLayer.js';
 import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
 import { computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
 import { publicFloorplanPayload } from '../utils/publicData.js';
+import { externalizeImages } from '../utils/uploads.js';
 
 const router = express.Router();
 
@@ -1233,7 +1234,8 @@ router.post('/save', (req, res) => {
     const eventId = req.body.eventId || 'EVT-2026-001';
     const title = req.body.title || 'Denah Utama Hall A';
     const status = req.body.status || 'published';
-    const blueprint = req.body.blueprint || null;
+    // Images never go into the database as base64 (AGENTS.md §28): they become files, the data keeps their URL
+    const blueprint = externalizeImages(req.body.blueprint || null);
 
     let fabricJson = req.body.fabricJson || req.body.canvas_fabric_json || req.body.fabric_json || null;
     if (typeof fabricJson === 'string') {
@@ -1245,6 +1247,9 @@ router.post('/save', (req, res) => {
     }
     let booths = req.body.booths || metadata?.booths || [];
     let venueElements = req.body.venueElements || req.body.venue_elements || metadata?.venue_elements || metadata?.venueElements || [];
+
+    fabricJson = externalizeImages(fabricJson);
+    metadata = externalizeImages(metadata);
 
     // Booth layout before this save: the operations team is notified when booths change (Denah Operasional)
     const previousCanvasJson = db.prepare('SELECT canvas_fabric_json FROM floorplans WHERE id = ?').get(id)?.canvas_fabric_json || null;

@@ -62,6 +62,9 @@ function linkOrInstall(sub) {
 async function refreshDb() {
   log('🕶️  Menyalin database production ke staging (data pribadi disamarkan)...');
   execSync(`node ops/mask-db.mjs "${PROD_DB}" "${path.join(DATA, 'floorplan.db')}"`, { cwd: ROOT, stdio: 'inherit' });
+  // Images are files next to the database (AGENTS.md §28): staging gets its own copy (blueprints, logo)
+  const prodUploads = path.join(path.dirname(PROD_DB), 'uploads');
+  if (fs.existsSync(prodUploads)) fs.cpSync(prodUploads, path.join(DATA, 'uploads'), { recursive: true });
 }
 
 async function up(ref = 'main') {

@@ -3,9 +3,12 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import { installErrorReporter } from './services/errorReporter'
+import { cleanupLegacyStorage } from './utils/storageCleanup'
 
 // Uncaught browser errors are reported to the Pusat Maintenance (AGENTS.md §22)
 installErrorReporter()
+// Free the browser storage from the large copies older versions kept there (AGENTS.md §28)
+cleanupLegacyStorage()
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

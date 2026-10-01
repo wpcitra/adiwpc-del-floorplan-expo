@@ -11,6 +11,7 @@ import { writeAuditLog } from '../middleware/audit.js';
 import { clientIp } from '../middleware/auth.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
 import { saveBoothDiscount } from '../utils/boothDiscount.js';
+import { externalizeImages, CONFIG_INLINE_KEYS } from '../utils/uploads.js';
 
 const router = express.Router();
 
@@ -153,6 +154,9 @@ router.post('/config', (req, res) => {
       // neither changed: an older difference stays as it is (the admin decides which name is right, see Setting)
     }
 
+    // The logo becomes a file (the signature stays inside the configuration: it is never public)
+    const stored = externalizeImages(merged, { skipKeys: CONFIG_INLINE_KEYS });
+    Object.assign(merged, stored);
     db.prepare(`
       INSERT INTO invoice_settings (id, config_json, updated_at)
       VALUES (?, ?, CURRENT_TIMESTAMP)

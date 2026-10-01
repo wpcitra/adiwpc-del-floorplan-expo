@@ -19,6 +19,9 @@ import notificationRoutes from './routes/notificationRoutes.js';
 import maintenanceRoutes, { reportRouter as errorReportRoutes } from './routes/maintenanceRoutes.js';
 import agentRoutes from './routes/agentRoutes.js';
 import boothActionRoutes from './routes/boothActionRoutes.js';
+import uploadRoutes from './routes/uploadRoutes.js';
+import { migrateEmbeddedImages } from './utils/uploads.js';
+import { createBackup } from './utils/backup.js';
 import { authenticate, enforceAccessPolicy, stampActorIdentity } from './middleware/auth.js';
 import { auditTrail } from './middleware/audit.js';
 import { readBackupStatus, startBackupSchedule } from './utils/backup.js';
@@ -90,6 +93,7 @@ app.use('/api/exhibitors', orderRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/booth-actions', boothActionRoutes);
+app.use('/api/uploads', uploadRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/brand-categories', brandCategoryRoutes);
 app.use('/api/payment-methods', paymentMethodRoutes);
@@ -125,5 +129,12 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`📊 Database connected: server/data/floorplan.db`);
   // Production starts clean: an empty database is NOT filled with demo data (demo: `node server/src/seed.js`, local only).
   // Demo data auto-seeded earlier on Railway is removed once, only while nobody has entered real data yet.
-  removeDemoDataIfUntouched().catch(error => console.error('Hapus data contoh gagal:', error));
+  removeDemoDataIfUntouched().catch(error => console.error('Hapus data contoh gagal:', error))
+    // Images stored as base64 in the database (blueprint, logo) move to files once, after a verified backup
+    .then(() => migrateEmbeddedImages({ backup: () => (process.env.BACKUP_DISABLED === '1' ? { ok: true } : createBackup('pre-migration', 'Sebelum memindahkan gambar base64 ke file')) }))
+    .then(result => {
+      if (result?.rows) console.log(`🖼️  ${result.rows} data gambar base64 dipindahkan ke file (database ${Math.round(result.savedBytes / 1024)} KB lebih kecil).`);
+      else if (result?.skipped) console.warn(`Pemindahan gambar base64 ditunda: ${result.skipped}`);
+    })
+    .catch(error => console.error('Pemindahan gambar base64 gagal:', error));
 });

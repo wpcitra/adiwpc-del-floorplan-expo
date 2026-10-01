@@ -10,7 +10,7 @@ import {
   Info
 } from 'lucide-react';
 import { DEFAULT_INVOICE_CONFIG } from '../../utils/invoiceTemplateConfig';
-import { api } from '../../services/api';
+import { api, getCachedInvoiceConfig } from '../../services/api';
 
 export default function FacilityFormA4View({
   tenant = {},
@@ -25,11 +25,8 @@ export default function FacilityFormA4View({
 
   const [activeConfig, setActiveConfig] = useState(() => {
     if (companyConfig) return companyConfig;
-    try {
-      const cached = localStorage.getItem('invoice_template_config');
-      if (cached) return { ...DEFAULT_INVOICE_CONFIG, ...JSON.parse(cached) };
-    } catch (e) {}
-    return DEFAULT_INVOICE_CONFIG;
+    const cached = getCachedInvoiceConfig();
+    return cached ? { ...DEFAULT_INVOICE_CONFIG, ...cached } : DEFAULT_INVOICE_CONFIG;
   });
 
   useEffect(() => {

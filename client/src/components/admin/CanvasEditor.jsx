@@ -26,7 +26,12 @@ import {
 import CanvasRuler from './CanvasRuler';
 import { COPY_PROPS, prepareCopy } from '../../utils/copyRules';
 
+import { safeSet, safeGetJson, safeRemove } from '../../utils/safeStorage';
 const CLIPBOARD_KEY = 'floorplan_canvas_clipboard';
+// A copy too large for localStorage stays in this tab's memory
+let memoryClipboard = null;
+// Undo / redo keeps the last 20 states (in memory only, never in browser storage)
+const MAX_HISTORY_STEPS = 20;
 // Booth hover glow (editor-only state) and the shadow a booth has at rest
 const BOOTH_HOVER_SHADOW = { color: 'rgba(59, 130, 246, 0.45)', blur: 16, offsetX: 0, offsetY: 3 };
 const BOOTH_REST_SHADOW = { color: 'rgba(0,0,0,0.06)', blur: 6, offsetX: 0, offsetY: 2 };
@@ -306,7 +311,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
     const newStack = historyStackRef.current.slice(0, historyIndexRef.current + 1);
     newStack.push(json);
-    if (newStack.length > 30) newStack.shift();
+    while (newStack.length > MAX_HISTORY_STEPS) newStack.shift();
     
     historyStackRef.current = newStack;
     historyIndexRef.current = newStack.length - 1;
@@ -1973,15 +1978,17 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           const members = canvas.getActiveObjects().filter(o => !o.isBackgroundBlueprint && !o.isSalesLayer);
           if (members.length) {
             e.preventDefault();
-            try {
-              localStorage.setItem(CLIPBOARD_KEY, JSON.stringify({ v: 1, objects: members.map(o => serializeForCopy(canvas, o)), pastes: 0 }));
-            } catch (err) {
-              onWarningRef.current?.('⚠️ Salinan terlalu besar untuk disimpan di clipboard browser.');
+            // an embedded image can make a copy huge: it is then kept for this tab only, never forced into localStorage
+            const clip = { v: 1, objects: members.map(o => serializeForCopy(canvas, o)), pastes: 0 };
+            memoryClipboard = clip;
+            if (!safeSet(CLIPBOARD_KEY, clip, { maxSize: 1024 * 1024 })) {
+              safeRemove(CLIPBOARD_KEY);
+              onWarningRef.current?.('ℹ️ Salinan cukup besar: hanya bisa ditempel di tab ini (tidak ke denah / tab lain).');
             }
           }
         } else {
           let clip = null;
-          try { clip = JSON.parse(localStorage.getItem(CLIPBOARD_KEY) || 'null'); } catch (err) { clip = null; }
+          clip = safeGetJson(CLIPBOARD_KEY, null) || memoryClipboard;
           if (clip?.objects?.length) {
             e.preventDefault();
             const xs = clip.objects.map(o => Number(o.left) || 0);
@@ -1996,7 +2003,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
             } else {
               clip.pastes = (clip.pastes || 0) + 1;
               dx = dy = clip.pastes * gridScaleRef.current;
-              try { localStorage.setItem(CLIPBOARD_KEY, JSON.stringify(clip)); } catch (err) { /* keep pasting at the same offset */ }
+              if (!safeSet(CLIPBOARD_KEY, clip, { maxSize: 1024 * 1024 })) memoryClipboard = clip;
             }
             const before = clip.objects.length;
             addCopiesRef.current?.(clip.objects, { dx, dy }).then(objs => {

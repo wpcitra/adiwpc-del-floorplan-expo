@@ -456,3 +456,24 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Audit.** Discount and invoice write their own entries (category `Booth`, `req.skipAudit`) with the values before and after in the summary and `details_json`. Booking and tenant edits log "status (tenant) → status · brand" through `AUDIT_RULES` (`boothBefore`).
 - **No reload.** Every action returns the fresh summary; `applyServerBooth` repaints that booth (`updateBoothAppearance`). The read-only Studio never saves the canvas: the server writes the same change into `canvas_fabric_json`.
 - Tests: `server/test/sales-aksi.test.js`.
+
+---
+
+## 28. Browser Storage & Image Storage Lock (`utils/safeStorage.js`, `utils/localDraft.js`, `utils/storageCleanup.js`, `server/src/utils/uploads.js`)
+- **The server is the only source of floorplan data.** Nothing large is mirrored in the browser. `api.saveFloorplan` once copied the whole canvas (with base64 images) into localStorage BEFORE calling the server, without try/catch: a full quota (~5 MB; Safari counts 2 bytes per character) threw "The quota has been exceeded." and the save never reached the server. Never write floorplan / canvas / invoice-layout data to localStorage again.
+- **localStorage = small preferences only**: the session, open folders, view modes, toggles, recent colours, shape defaults, the canvas clipboard (max 1 MB, otherwise kept in the tab's memory), the queued "server unreachable" report.
+  - New writes go through `safeSet()` (never throws; refuses values above `MAX_LOCAL_VALUE`). A failed storage write must never cancel the action that triggered it.
+  - User-facing errors go through `friendlyError()`: a quota error reads "Penyimpanan browser penuh. Data tetap tersimpan di server."
+  - `cleanupLegacyStorage()` (in `main.jsx`) removes the old keys (`LEGACY_KEYS`: `floorplan_draft_*`, `published_floorplan_*`, `invoice_template_config`, `registered_exhibitors`) every time the app opens. The old local draft copy is moved to IndexedDB (id `legacy`, 14 days) and is never pushed to the server automatically: an old browser copy must not overwrite newer server data.
+- **Unsaved drafts live in IndexedDB** (`localDraft.js`, database `floorplan_local`, at most 5 drafts, 14 days). `api.saveFloorplan` keeps the payload there only when the server could not be reached; a successful save drops it. `offerDraftRestore()` asks once when that floorplan is opened again; restoring only loads the canvas, the next save sends it.
+- **Undo / redo**: the last `MAX_HISTORY_STEPS` (20) states, in memory only.
+- **Images are files, the database keeps URLs.**
+  - `POST /api/uploads { dataUrl }` (Super Admin, Operations, Finance) stores PNG / JPG / WEBP / GIF / SVG up to 15 MB in `DATA_DIR/uploads/<sha256>.<ext>` (on Railway: the Volume) and returns `/api/uploads/<name>`. `GET /api/uploads/<name>` is public (the Live Floorplan shows the blueprint), immutable-cached, `nosniff` + a sandbox CSP (an SVG opened directly cannot run scripts). The name must match `UPLOAD_NAME_RE`.
+  - URLs are stored relative (`/api/uploads/...`), so a domain change never breaks them. `externalizeImages()` runs on every `POST /floorplan/save` (canvas, blueprint, metadata) and `POST /invoices/config`: embedded base64 images become files and absolute upload URLs lose their domain, whatever the browser sent.
+  - The invoice signature (`CONFIG_INLINE_KEYS`) stays inside the configuration: it is never public (§20).
+  - `migrateEmbeddedImages()` runs at every start, after a verified `pre-migration` backup, and rewrites rows that still hold base64 (floorplans, preset layouts, operational elements, invoice configuration). After the first run nothing is left to move.
+  - Client: `BlueprintModal` and the invoice logo upload through `api.uploadImage()`; if the upload fails the image is still used and the server stores it at the next save.
+  - Development: Vite proxies `/api/uploads` to the API (`client/vite.config.js`). Staging copies `server/data/uploads` next to its database.
+  - The database backup (`createBackup`) contains the URLs, not the image files: `DATA_DIR/uploads` must be kept with the Volume.
+- Tests: `server/test/uploads.test.js`.
+

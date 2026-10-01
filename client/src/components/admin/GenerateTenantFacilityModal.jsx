@@ -20,7 +20,7 @@ import {
 import FacilityFormA4View from './FacilityFormA4View';
 import { downloadInvoicePDF, printInvoiceElement } from '../../utils/invoicePrintUtils';
 import { DEFAULT_INVOICE_CONFIG } from '../../utils/invoiceTemplateConfig';
-import { api } from '../../services/api';
+import { api, getCachedInvoiceConfig } from '../../services/api';
 
 export default function GenerateTenantFacilityModal({
   isOpen,
@@ -47,11 +47,8 @@ export default function GenerateTenantFacilityModal({
   const [formMode, setFormMode] = useState('blank'); // 'blank' | 'filled'
   const [itemQuantities, setItemQuantities] = useState({});
   const [companyConfig, setCompanyConfig] = useState(() => {
-    try {
-      const cached = localStorage.getItem('invoice_template_config');
-      if (cached) return { ...DEFAULT_INVOICE_CONFIG, ...JSON.parse(cached) };
-    } catch (e) {}
-    return DEFAULT_INVOICE_CONFIG;
+    const cached = getCachedInvoiceConfig();
+    return cached ? { ...DEFAULT_INVOICE_CONFIG, ...cached } : DEFAULT_INVOICE_CONFIG;
   });
 
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);

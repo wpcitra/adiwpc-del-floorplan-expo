@@ -81,6 +81,11 @@ const ACCESS_RULES = [
     denyMessage: 'Role Operasional tidak dapat mendaftarkan tenant / brand.' },
   { methods: ['GET'], path: /^\/(orders|exhibitors)\/check-client$/, access: 'public' },
 
+  // Uploaded images: served to everyone (the Live Floorplan shows the blueprint); stored by roles that edit a floorplan
+  // (Super Admin, Operations) or the invoice layout (Finance)
+  { methods: ['GET'], path: /^\/uploads\/[^/]+$/, access: 'public' },
+  { methods: ['POST'], path: /^\/uploads$/, access: [...OPERATIONS, ...FINANCE] },
+
   // Booth actions of the Sales pop up in the Studio (summary, "Beri Diskon" with the Sales limit, "Buat Invoice")
   { methods: ['GET', ...WRITE], path: /^\/booth-actions(\/.*)?$/, access: [...SALES, ...FINANCE] },
 
@@ -122,7 +127,7 @@ const ACCESS_RULES = [
 // Operations: Denah Operasional, plus the Studio (floorplan, tiers, brand categories) as an editor. Never tenant
 // registration, orders, invoices or users.
 const OPERATIONS_AREA = [
-  /^\/ops(\/.*)?$/, /^\/floorplan(\/.*)?$/, /^\/(categories|brand-categories)(\/.*)?$/,
+  /^\/ops(\/.*)?$/, /^\/floorplan(\/.*)?$/, /^\/(categories|brand-categories)(\/.*)?$/, /^\/uploads(\/.*)?$/,
   /^\/notifications(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/
 ];
 // Developer: only the Pusat Maintenance (never tenant, price, invoice or user data)

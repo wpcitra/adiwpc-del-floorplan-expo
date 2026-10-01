@@ -185,8 +185,10 @@ export default function InvoiceEditorModal({
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (uploadEvent) => {
-        handleChange('logoUrl', uploadEvent.target.result);
+      reader.onload = async (uploadEvent) => {
+        // The logo is stored as a file on the server; the layout keeps its URL only (AGENTS.md §28)
+        const res = await api.uploadImage(uploadEvent.target.result);
+        handleChange('logoUrl', res?.url || uploadEvent.target.result);
       };
       reader.readAsDataURL(file);
     }

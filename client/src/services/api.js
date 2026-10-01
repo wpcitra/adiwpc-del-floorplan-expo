@@ -1,4 +1,10 @@
 import { apiFetch } from './session';
+import { keepDraft, dropDraft } from '../utils/localDraft';
+
+// Nothing large is mirrored in localStorage (AGENTS.md §28): the server is the only source of floorplan data.
+// The invoice layout is cached in memory for this page only.
+let invoiceConfigCache = null;
+export const getCachedInvoiceConfig = () => invoiceConfigCache;
 
 // API address per environment (client/.env: VITE_API_URL); in production defaults to '/api'
 const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:5001/api');
@@ -12,27 +18,10 @@ export const api = {
         // No custom Pragma/Cache-Control headers: the API's CORS config rejects them (cache: 'no-store' + _t already bust caches)
         cache: 'no-store'
       });
-      if (res.status === 404) {
-        try {
-          localStorage.removeItem('published_floorplan_fabric');
-          localStorage.removeItem('published_floorplan_data');
-          localStorage.removeItem('floorplan_draft_fabric');
-          localStorage.removeItem('floorplan_draft_data');
-        } catch (storageErr) {}
-        return null;
-      }
+      if (res.status === 404) return null;
       if (res.ok) {
         const json = await res.json();
         if (json.success && json.floorplan) {
-          // Mirror active floorplan to local storage cache
-          try {
-            if (json.floorplan.canvas_fabric_json) {
-              localStorage.setItem('published_floorplan_fabric', JSON.stringify(json.floorplan.canvas_fabric_json));
-            }
-            if (json.floorplan.metadata) {
-              localStorage.setItem('published_floorplan_data', JSON.stringify(json.floorplan.metadata));
-            }
-          } catch (storageErr) {}
           return {
             ...json.floorplan,
             event: json.event,
@@ -41,17 +30,9 @@ export const api = {
         }
       }
     } catch (e) {
-      console.warn("Backend server offline, using local storage fallback", e);
-      const savedFabric = localStorage.getItem('published_floorplan_fabric') || localStorage.getItem('floorplan_draft_fabric');
-      const savedData = localStorage.getItem('published_floorplan_data') || localStorage.getItem('floorplan_draft_data');
-      if (savedFabric || savedData) {
-        return {
-          canvas_fabric_json: savedFabric ? JSON.parse(savedFabric) : null,
-          metadata: savedData ? JSON.parse(savedData) : null
-        };
-      }
+      console.warn("Failed to fetch the active floorplan:", e);
     }
-    
+
     return null;
   },
 
@@ -162,23 +143,7 @@ export const api = {
         method: 'POST'
       });
       if (res.ok) {
-        const json = await res.json();
-        // Immediately refresh active floorplan in localStorage cache
-        try {
-          const activeRes = await apiFetch(`${API_BASE_URL}/floorplan/active?_t=${Date.now()}`, { cache: 'no-store' });
-          if (activeRes.ok) {
-            const activeData = await activeRes.json();
-            if (activeData.success && activeData.floorplan) {
-              if (activeData.floorplan.canvas_fabric_json) {
-                localStorage.setItem('published_floorplan_fabric', JSON.stringify(activeData.floorplan.canvas_fabric_json));
-              }
-              if (activeData.floorplan.metadata) {
-                localStorage.setItem('published_floorplan_data', JSON.stringify(activeData.floorplan.metadata));
-              }
-            }
-          }
-        } catch (syncErr) {}
-        return json;
+        return await res.json();
       }
       // e.g. 403 for a role that may not publish: pass the server's reason on
       return await res.json().catch(() => ({ success: false, error: `Gagal mempublikasikan (HTTP ${res.status})` }));
@@ -220,20 +185,6 @@ export const api = {
 
   // 7. Save Draft or Publish Floorplan to SQLite database
   async saveFloorplan(data) {
-    // Mirror to localStorage for quick fallback
-    if (data.fabricJson) {
-      localStorage.setItem('floorplan_draft_fabric', JSON.stringify(data.fabricJson));
-      if (data.status === 'published') {
-        localStorage.setItem('published_floorplan_fabric', JSON.stringify(data.fabricJson));
-      }
-    }
-    if (data.metadata) {
-      localStorage.setItem('floorplan_draft_data', JSON.stringify(data.metadata));
-      if (data.status === 'published') {
-        localStorage.setItem('published_floorplan_data', JSON.stringify(data.metadata));
-      }
-    }
-
     try {
       const res = await apiFetch(`${API_BASE_URL}/floorplan/save`, {
         method: 'POST',
@@ -241,12 +192,17 @@ export const api = {
         body: JSON.stringify(data)
       });
       const json = await res.json().catch(() => ({}));
-      if (res.ok) return json;
+      if (res.ok) {
+        dropDraft(data.id); // the server has it: an older unsaved draft of this floorplan is obsolete
+        return json;
+      }
       // Session expired, no permission or server error: the change is NOT in the database
       return { success: false, status: res.status, error: json.error || `Server menolak penyimpanan (HTTP ${res.status})` };
     } catch (e) {
-      console.warn("Server save failed, draft kept in localStorage only:", e);
-      return { success: false, localOnly: true, error: 'Tidak dapat terhubung ke server' };
+      // Server unreachable: keep this canvas in IndexedDB (never localStorage) so it can be restored later
+      const kept = await keepDraft(data.id, data, 'Server tidak dapat dihubungi');
+      console.warn("Server save failed:", e);
+      return { success: false, localOnly: kept, error: kept ? 'Tidak dapat terhubung ke server. Draft disimpan sementara di browser ini.' : 'Tidak dapat terhubung ke server' };
     }
   },
 
@@ -345,43 +301,8 @@ export const api = {
       console.warn("Failed to fetch exhibitors from server", e);
     }
 
-    const registered = localStorage.getItem('registered_exhibitors');
-    let list = registered ? JSON.parse(registered) : [];
-
-    // Parse local fabric objects to extract all booths with tenant brand names
-    try {
-      const savedFabricStr = localStorage.getItem('published_floorplan_fabric') || localStorage.getItem('floorplan_draft_fabric');
-      if (savedFabricStr) {
-        const fabric = JSON.parse(savedFabricStr);
-        if (fabric.objects) {
-          const existingCodes = new Set(list.map(e => e.booth));
-          fabric.objects.forEach(obj => {
-            const booth = obj.boothData;
-            if (booth && (booth.status === 'SOLD' || booth.status === 'RESERVED' || booth.status === 'sold' || booth.status === 'reserved')) {
-              if (booth.ownerName && !existingCodes.has(booth.code)) {
-                list.push({
-                  id: `local-${booth.id || booth.code}`,
-                  company: booth.ownerName, // Brand / Tenant Name
-                  pic: booth.ownerName,
-                  email: '-',
-                  contact: '-',
-                  booth: booth.code,
-                  category: booth.category || 'Standard',
-                  price: booth.price || 5000000,
-                  status: booth.status.toLowerCase() === 'sold' ? 'sold' : 'reserved',
-                  date: new Date().toLocaleDateString('id-ID')
-                });
-              }
-            }
-          });
-        }
-      }
-    } catch (err) {
-      console.warn("Local exhibitor fallback parse error:", err);
-    }
-
     return {
-      exhibitors: list,
+      exhibitors: [],
       projectsList: [],
       selectedProjectId: 'all'
     };
@@ -579,7 +500,7 @@ export const api = {
       if (res.ok) {
         const json = await res.json();
         if (json.success && json.config) {
-          localStorage.setItem('invoice_template_config', JSON.stringify(json.config));
+          invoiceConfigCache = json.config;
           return json.config;
         }
       }
@@ -587,30 +508,42 @@ export const api = {
       console.warn("Failed to fetch invoice config from server:", e);
     }
 
-    const localSaved = localStorage.getItem('invoice_template_config');
-    return localSaved ? JSON.parse(localSaved) : null;
+    return invoiceConfigCache;
   },
 
   // 19. Save Invoice Layout Template Configuration
   async saveInvoiceConfig(config) {
-    localStorage.setItem('invoice_template_config', JSON.stringify(config));
     try {
       const res = await apiFetch(`${API_BASE_URL}/invoices/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ config })
       });
+      const json = await res.json().catch(() => ({}));
       if (res.ok) {
-        const json = await res.json();
-        if (json.config) {
-          localStorage.setItem('invoice_template_config', JSON.stringify(json.config));
-        }
+        if (json.config) invoiceConfigCache = json.config;
         return json;
       }
+      return { success: false, error: json.error || `Server menolak penyimpanan (HTTP ${res.status})` };
     } catch (e) {
-      console.warn("Saved config locally (server sync error):", e);
+      console.warn("Invoice config save failed:", e);
+      return { success: false, error: 'Tidak dapat terhubung ke server. Pengaturan belum tersimpan.' };
     }
-    return { success: true, localOnly: true, config };
+  },
+
+  // 19b. Store an image (blueprint, logo) as a file on the server; the caller keeps the returned URL, not the base64
+  async uploadImage(dataUrl) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/uploads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl })
+      });
+      const json = await res.json().catch(() => ({}));
+      return res.ok && json.url ? json : { success: false, error: json.error || `Gambar gagal diunggah (HTTP ${res.status})` };
+    } catch (e) {
+      return { success: false, error: 'Tidak dapat terhubung ke server. Gambar belum diunggah.' };
+    }
   },
 
   // 20. Fetch All Booth Categories

@@ -14,6 +14,8 @@ import InvoiceModal from '../../components/admin/InvoiceModal';
 import InvoiceEditorModal from '../../components/admin/InvoiceEditorModal';
 import BookingModal from '../../components/public/BookingModal';
 import SalesBoothActions from '../../components/admin/SalesBoothActions';
+import { readDraft, dropDraft } from '../../utils/localDraft';
+import { friendlyError } from '../../utils/safeStorage';
 import CanvasBottomBar from '../../components/admin/CanvasBottomBar';
 import ShapePalette from '../../components/admin/ShapePalette';
 import CategoryTierModal from '../../components/admin/CategoryTierModal';
@@ -511,6 +513,7 @@ export default function AdminDashboard() {
               editorRef.current?.clearAll();
             }
             showToast(`📂 Membuka project denah: "${fp.title}"`);
+            offerDraftRestore(fp);
             // Mark initial load complete after processing
             isInitialLoadedRef.current = true;
             setSaveStatus('saved');
@@ -609,6 +612,7 @@ export default function AdminDashboard() {
           editorRef.current?.clearAll();
         }
         showToast(`📂 Denah "${fp.title}" berhasil dimuat ke editor!`);
+        offerDraftRestore(fp);
         setTimeout(() => {
           isInitialLoadedRef.current = true;
           setSaveStatus('saved');
@@ -841,6 +845,24 @@ export default function AdminDashboard() {
   };
 
   // Called once a floorplan has finished loading into the editor: that state is what the server has
+  // A save that could not reach the server left its canvas in this browser (IndexedDB, utils/localDraft.js): offer it
+  // once when that floorplan is opened again. Restoring only loads it into the editor; the next save sends it.
+  const offerDraftRestore = (fp) => {
+    if (readOnlyStudio || !fp?.id) return;
+    setTimeout(async () => {
+      const draft = await readDraft(fp.id);
+      if (!draft?.payload?.fabricJson?.objects) return;
+      const when = new Date(draft.savedAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+      const restore = window.confirm(`Ada draft denah "${fp.title}" yang belum tersimpan ke server (${when}, tersimpan di browser ini).\n\nPulihkan draft tersebut ke editor? Pilih Batal untuk membuangnya dan memakai data server.`);
+      await dropDraft(fp.id);
+      if (!restore || !editorRef.current) return;
+      await editorRef.current.loadHistoryState(draft.payload.fabricJson, fp.booths || []);
+      if (draft.payload.blueprint !== undefined) setBlueprintData(draft.payload.blueprint || null);
+      setSaveStatus('unsaved');
+      showToast('Draft dipulihkan. Klik Simpan untuk mengirimnya ke server.');
+    }, 1500);
+  };
+
   const markLoadedAsSaved = (loadPromise) => {
     lastSavedSnapshotRef.current = null;
     Promise.resolve(loadPromise).then(() => {
@@ -920,8 +942,9 @@ export default function AdminDashboard() {
       console.error("Save error:", err);
       setSaveStatus('unsaved');
       // Also surface failed auto-saves: otherwise edits silently stay only in this browser
-      showToast(`⚠️ ${silent ? 'Auto-save gagal' : 'Gagal menyimpan denah ke server'}: ${err.message}`);
-      return { success: false, error: err.message };
+      const message = friendlyError(err, 'Gagal menyimpan ke server');
+      showToast(`⚠️ ${silent ? 'Auto-save gagal' : 'Gagal menyimpan denah ke server'}: ${message}`);
+      return { success: false, error: message };
     }
   };
 

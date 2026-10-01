@@ -16,6 +16,9 @@ import {
   Layers,
   RefreshCw
 } from 'lucide-react';
+import { api } from '../../services/api';
+
+const MAX_BLUEPRINT_BYTES = 15 * 1024 * 1024;
 
 // Sample SVG architectural floorplan blueprint (JCC Convention Hall)
 export const SAMPLE_JCC_BLUEPRINT = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
@@ -94,6 +97,8 @@ export default function BlueprintModal({ isOpen, onClose, onApplyBlueprint, curr
 
   // Delete confirmation modal state
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
 
   // Synchronize state only when the modal opens. currentBlueprint is a fresh object on every
   // parent render, so depending on it would reset in-progress edits (e.g. the lock toggle).
@@ -175,9 +180,21 @@ export default function BlueprintModal({ isOpen, onClose, onApplyBlueprint, curr
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.size > MAX_BLUEPRINT_BYTES) {
+      setUploadError(`Ukuran gambar ${(file.size / 1024 / 1024).toFixed(1)} MB melebihi batas ${MAX_BLUEPRINT_BYTES / 1024 / 1024} MB.`);
+      e.target.value = '';
+      return;
+    }
     const reader = new FileReader();
-    reader.onload = (event) => {
-      setImageUrl(event.target.result);
+    reader.onload = async (event) => {
+      // The image is stored as a file on the server; the floorplan keeps its URL only (AGENTS.md §28). If the upload
+      // fails the image is still shown, and the server turns it into a file when the floorplan is saved.
+      setUploadError('');
+      setIsUploading(true);
+      const res = await api.uploadImage(event.target.result);
+      setIsUploading(false);
+      if (!res?.url) setUploadError(`${res?.error || 'Gambar gagal diunggah.'} Gambar tetap dipakai dan akan diunggah saat denah disimpan.`);
+      setImageUrl(res?.url || event.target.result);
       setSourceType('upload');
       setFileName(file.name);
       setFileSize(file.size);
@@ -347,8 +364,8 @@ export default function BlueprintModal({ isOpen, onClose, onApplyBlueprint, curr
                 <span className="text-xs font-bold text-slate-800 text-center">
                   {hasActiveBlueprint ? 'Ganti Gambar' : 'Unggah Gambar (PNG, JPG, SVG)'}
                 </span>
-                <span className="text-[11px] text-slate-500 mt-1 text-center">
-                  Maks. 15MB • PNG, JPG, WebP, SVG
+                <span className={`text-[11px] mt-1 text-center ${uploadError ? 'text-rose-600 font-semibold' : 'text-slate-500'}`} role={uploadError ? 'alert' : undefined}>
+                  {isUploading ? 'Mengunggah gambar ke server...' : (uploadError || 'Maks. 15MB • PNG, JPG, WebP, SVG')}
                 </span>
                 <input 
                   type="file" 
