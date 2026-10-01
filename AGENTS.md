@@ -206,6 +206,7 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - A merge group is display-only, computed from the canvas geometry (`computeMergeGroups`, one shared module for server and client).
   - Booth rows, positions, sizes, and prices stay as they are.
   - The client paints members through a runtime `render()` patch (`refreshMergeRendering`); nothing is saved in the canvas JSON.
+  - Member corners are always scene coordinates (`coordsOf` maps a booth inside a multi-selection back through the selection's matrix: its `calcACoords()` is relative to the ActiveSelection). The group matrix is undone on the context only when the booth is painted by its group (`group._transformDone`); with `preserveObjectStacking` (Studio) the canvas paints it directly. Otherwise selecting every booth of a merged group made the shape vanish (only the selection box stayed).
 - **Adjacency.**
   - Two booths merge only when they share a side: collinear, opposite-direction edges; gap ≤ `MERGE_GAP_M` (0.1 m); shared length ≥ `MIN_SHARED_M`. Touching at a corner does not count.
   - Walls, pillars, aisles, and other `MERGE_OBSTACLE_TYPES` lying on the shared side block the merge.

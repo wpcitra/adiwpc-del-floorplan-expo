@@ -14,11 +14,21 @@ export const PARTIAL_STYLE = { fill: '#e0f2fe', stroke: '#0284c7', text: '#07598
 export { mergeCodeLabel, MERGE_STATUS_LABELS, sortCodes };
 
 const codeKey = (code) => String(code || '').trim().toLowerCase();
-// Fresh corners (getCoords() can be stale while an object is being dragged)
+// Fresh corners in SCENE coordinates (getCoords() can be stale while an object is being dragged). A booth inside a
+// multi-selection (ActiveSelection) reports corners relative to that selection: they are mapped back through the
+// selection's matrix, otherwise the merged shape is computed and painted far away from the booths.
+const groupMatrixOf = (obj) => (obj.group && typeof obj.group.calcTransformMatrix === 'function' ? obj.group.calcTransformMatrix() : null);
 const coordsOf = (obj) => {
   const c = typeof obj.calcACoords === 'function' ? obj.calcACoords() : null;
   const pts = c ? [c.tl, c.tr, c.br, c.bl] : obj.getCoords();
-  return pts.map(p => ({ x: p.x, y: p.y }));
+  const m = c ? groupMatrixOf(obj) : null;
+  return pts.map(p => (m ? { x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] } : { x: p.x, y: p.y }));
+};
+// Inverse of a 2D matrix [a, b, c, d, e, f]
+const invertMatrix = (m) => {
+  const det = m[0] * m[3] - m[1] * m[2];
+  if (!det) return null;
+  return [m[3] / det, -m[1] / det, -m[2] / det, m[0] / det, (m[2] * m[5] - m[3] * m[4]) / det, (m[1] * m[4] - m[0] * m[5]) / det];
 };
 const areaM2Of = (bd = {}) => (Number(bd.widthM) || 0) * (Number(bd.heightM) || 0);
 export const formatArea = (m2) => `${(Math.round(m2 * 100) / 100).toLocaleString('id-ID')} m²`;
@@ -326,6 +336,12 @@ function renderMergedMember(obj, ctx) {
   const polys = group.members.map(coordsOf);
   const loops = outlineLoops(outlineSegments(polys, { tol: 3 }), { tol: 3 });
   ctx.save();
+  // The shape below is drawn in scene coordinates. Only when the booth is being painted BY its selection group
+  // (`_transformDone`: the context already carries the group's matrix) that matrix is undone first. With
+  // preserveObjectStacking (the Studio) the canvas paints the booth itself and the context has the viewport only.
+  const selectionMatrix = obj.group?._transformDone ? groupMatrixOf(obj) : null;
+  const inverse = selectionMatrix ? invertMatrix(selectionMatrix) : null;
+  if (inverse) ctx.transform(...inverse);
   ctx.globalAlpha *= obj.opacity ?? 1;
   ctx.fillStyle = style.fill;
   ctx.strokeStyle = style.stroke;
