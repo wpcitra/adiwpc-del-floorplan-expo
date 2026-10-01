@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { getSession } from '../../services/session';
+import { canAccessPage } from '../../utils/roles';
 import { 
   Box, 
   Layers, 
@@ -94,7 +96,11 @@ export default function ToolSidebar({
   mode = 'sales'
 }) {
   const isOps = mode === 'ops';
-  const visibleTabs = isOps ? SIDEBAR_TABS.filter(t => OPS_SIDEBAR_TABS.includes(t.id)) : SIDEBAR_TABS;
+  // The invoice catalogue is only for roles that may open Manajemen Invoice (not Operasional)
+  const canSeeInvoices = !isOps && canAccessPage(getSession()?.user?.role, 'invoices');
+  const visibleTabs = isOps
+    ? SIDEBAR_TABS.filter(t => OPS_SIDEBAR_TABS.includes(t.id))
+    : SIDEBAR_TABS.filter(t => t.id !== 'invoices' || canSeeInvoices);
   // Tabs: 'booths' | 'invoices' | 'structures' | 'doors' | 'stage' | 'utilities' | 'amenities' | 'shapes' | 'layers'
   const [activeTab, setActiveTab] = useState(isOps ? 'lib_utilitas' : 'booths');
   const [searchQuery, setSearchQuery] = useState('');
@@ -184,14 +190,14 @@ export default function ToolSidebar({
   }, []);
 
   React.useEffect(() => {
-    if (!isOps) loadSidebarInvoices();
-  }, [loadSidebarInvoices, isOps]);
+    if (canSeeInvoices) loadSidebarInvoices();
+  }, [loadSidebarInvoices, canSeeInvoices]);
 
   React.useEffect(() => {
-    if (activeTab === 'invoices' && !isOps) {
+    if (activeTab === 'invoices' && canSeeInvoices) {
       loadSidebarInvoices();
     }
-  }, [activeTab, loadSidebarInvoices]);
+  }, [activeTab, loadSidebarInvoices, canSeeInvoices]);
 
   const filteredObjects = objectsList.filter((item) => {
     if (!searchQuery) return true;

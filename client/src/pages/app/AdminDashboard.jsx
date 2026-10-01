@@ -22,7 +22,7 @@ import { exportToPRDJson, DEFAULT_GRID_SCALE, updateBoothCategoriesRegistry, upd
 import { generatePresetFloorplanData } from '../../utils/presetLayouts';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
-import { canEditFloorplan } from '../../utils/roles';
+import { canEditFloorplan, canRegisterTenant } from '../../utils/roles';
 import { resolveAnchors } from '../../utils/opsLayer';
 import { refreshMergeRendering } from '../../utils/boothMerge';
 
@@ -88,6 +88,9 @@ export default function AdminDashboard() {
   // empty booth opens the registration form. Only the Super Admin edits the floorplan.
   const readOnlyStudio = !canEditFloorplan(user?.role);
   const isPreviewMode = previewToggled || readOnlyStudio;
+  // Operations edits the floorplan but never registers / changes a tenant (tenant, status and discount are read-only)
+  const tenantLocked = !canRegisterTenant(user?.role);
+  const TENANT_LOCKED_MSG = 'Role Operasional tidak dapat mendaftarkan atau mengubah tenant / brand.';
 
   // History (Undo / Redo) state
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
@@ -171,6 +174,7 @@ export default function AdminDashboard() {
 
   // Admin open booking with options (register or edit)
   const handleOpenBooking = (boothData, options = {}) => {
+    if (tenantLocked) { showToast(TENANT_LOCKED_MSG); return; }
     setActiveBookingBooth(boothData);
     setBookingModalConfig({
       isOpen: true,
@@ -223,6 +227,7 @@ export default function AdminDashboard() {
 
   // Admin detached tenant from booth
   const handleDetachTenant = async (boothData) => {
+    if (tenantLocked) { showToast(TENANT_LOCKED_MSG); return; }
     const targetCode = boothData.code || boothData.booth_number;
     const targetId = boothData.id;
     try {
@@ -1131,7 +1136,7 @@ export default function AdminDashboard() {
           setShowOpsLayer(v => !v);
           showToast(!showOpsLayer ? '🦺 Lapisan Operasional ditampilkan (hanya-baca)' : 'Lapisan Operasional disembunyikan');
         }}
-        onOpenOpsMode={user?.role === 'superadmin' ? () => navigate(`/admin/ops${currentFloorplanId ? `?templateId=${encodeURIComponent(currentFloorplanId)}` : ''}`) : undefined}
+        onOpenOpsMode={['superadmin', 'operations'].includes(user?.role) ? () => navigate(`/admin/ops${currentFloorplanId ? `?templateId=${encodeURIComponent(currentFloorplanId)}` : ''}`) : undefined}
       />
 
       {/* Main Workspace */}
@@ -1206,6 +1211,7 @@ export default function AdminDashboard() {
             isPreviewMode={isPreviewMode}
             onHistoryChange={setHistoryState}
             onOpenBookingForBooth={(boothData) => {
+              if (tenantLocked) { showToast(TENANT_LOCKED_MSG); return; }
               // Read-only Studio (Sales): only an empty booth can be registered; a booked one is never re-assigned here
               if (readOnlyStudio && (String(boothData?.ownerName || '').trim() || ['reserved', 'sold'].includes(String(boothData?.status || '').toLowerCase()))) {
                 showToast(`Booth ${boothData?.code || ''} sudah terisi${boothData?.ownerName ? ` oleh ${boothData.ownerName}` : ''}. Invoice-nya ada di menu Exhibitor.`);
@@ -1313,6 +1319,7 @@ export default function AdminDashboard() {
             boothCornerPct={boothCornerPct}
             currentFloorplanId={currentFloorplanId}
             propertyTick={propertyTick}
+            tenantLocked={tenantLocked}
             onUpdateProperty={handleUpdateProperty}
             onBatchUpdate={handleBatchUpdate}
             onApplyShapeStyle={(style) => editorRef.current?.applyShapeStyle(style)}

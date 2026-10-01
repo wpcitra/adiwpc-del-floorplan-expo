@@ -77,6 +77,8 @@ export default function PropertyPanel({
   onOpenBookingForBooth,
   onDetachTenant,
   onOpenCategoryModal,
+  // Operations: the tenant, the booth status and the private discount are read-only
+  tenantLocked = false,
   canvasSummary = {},
   canvasObjects = [],
   showCaptions = true,
@@ -722,6 +724,7 @@ export default function PropertyPanel({
       onDetachTenant={onDetachTenant}
       onOpenCategoryModal={onOpenCategoryModal}
       propertyTick={propertyTick}
+      tenantLocked={tenantLocked}
       mergeSection={mergeGroup ? <MergeGroupSection group={mergeGroup} autoMergeEnabled={autoMergeEnabled} onToggle={onToggleMergeDisplay} /> : null}
       cornerSection={(
         <div>
@@ -965,6 +968,7 @@ function BoothInspector({
   onDetachTenant,
   onOpenCategoryModal,
   propertyTick = 0,
+  tenantLocked = false,
   mergeSection = null,
   cornerSection = null
 }) {
@@ -1093,6 +1097,7 @@ function BoothInspector({
   const [saveDiscountStatus, setSaveDiscountStatus] = useState(null); // 'success' | 'error' | null
 
   const handleStatusChange = (newStatus) => {
+    if (tenantLocked) return; // the booth status follows the tenant / payment: not changed by Operations
     setStatusValidationError(null);
     if (newStatus === 'reserved' || newStatus === 'sold') {
       if (!isTenantComplete) {
@@ -1196,6 +1201,7 @@ function BoothInspector({
   };
 
   const handleSaveDiscount = async () => {
+    if (tenantLocked) return; // the private discount is set by Finance / Super Admin
     setDiscountValidationError(null);
     if (!isTenantComplete) {
       setDiscountValidationError('Save Diskon terintegrasi hanya dapat dilakukan jika booth memiliki tenant dengan biodata lengkap.');
@@ -1351,8 +1357,16 @@ function BoothInspector({
             )}
           </div>
 
-          {/* Subcase 1: Tenant with complete biodata */}
-          {isTenantComplete ? (
+          {/* Operations: tenant shown read-only, registration is done by Sales */}
+          {tenantLocked ? (
+            <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-1.5 shadow-2xs text-xs">
+              <div className="font-extrabold text-slate-900 text-sm truncate" title={ownerName}>{hasOwner ? ownerName : 'Belum ada tenant'}</div>
+              {(brandCategory || booth.brandCategory) && hasOwner && <div className="text-[11px] text-slate-600">{brandCategory || booth.brandCategory}</div>}
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Pendaftaran dan perubahan tenant / brand dilakukan oleh tim Sales. Role Operasional hanya dapat melihatnya.
+              </p>
+            </div>
+          ) : isTenantComplete ? (
             <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2.5 shadow-2xs">
               <div>
                 <div className="font-extrabold text-slate-900 text-sm flex items-center justify-between">
@@ -1727,7 +1741,7 @@ function BoothInspector({
               <button
                 type="button"
                 onClick={handleSaveDiscount}
-                disabled={isSavingDiscount}
+                disabled={isSavingDiscount || tenantLocked}
                 className={`w-full py-2.5 px-3 rounded-xl text-xs font-bold shadow-md flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer ${
                   saveDiscountStatus === 'success'
                     ? 'bg-emerald-600 text-white shadow-emerald-600/30 ring-2 ring-emerald-400'
@@ -1827,6 +1841,8 @@ function BoothInspector({
                   key={key}
                   type="button"
                   onClick={() => handleStatusChange(key)}
+                  disabled={tenantLocked}
+                  title={tenantLocked ? 'Status booth mengikuti tenant & pembayaran (diubah oleh Sales / Keuangan)' : undefined}
                   className={`px-2.5 py-2 rounded-lg border text-xs font-semibold flex items-center justify-between transition-all cursor-pointer ${
                     isSelected ? 'ring-2 ring-blue-500 shadow-sm' : 'opacity-70 hover:opacity-100'
                   }`}

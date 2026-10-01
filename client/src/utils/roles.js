@@ -9,9 +9,10 @@ export const ROLE_LABELS = {
 };
 
 // Sales: only the Studio (view the floorplan and register tenants, no editing) and Data Exhibitor (open / send invoices)
+// Operations: only the Studio (full editing, but no tenant registration) and Denah Operasional
 export const PAGE_ACCESS = {
   analytics: ['superadmin', 'finance'],
-  floorplan: ['superadmin', 'sales'],
+  floorplan: ['superadmin', 'sales', 'operations'],
   ops: ['superadmin', 'operations'],
   exhibitors: ['superadmin', 'finance', 'sales'],
   invoices: ['superadmin', 'finance'],
@@ -22,8 +23,10 @@ export const PAGE_ACCESS = {
   maintenance: ['superadmin', 'developer']
 };
 
-// Who may edit a floorplan in the Studio (draw, move, price, save, publish). Everyone else with the page sees it read-only.
-export const canEditFloorplan = (role) => role === 'superadmin';
+// Who may edit a floorplan in the Studio (draw, move, price, save, publish). Sales sees it read-only.
+export const canEditFloorplan = (role) => role === 'superadmin' || role === 'operations';
+// Who may register / change the tenant of a booth (and its status). Operations edits the floorplan but never does this.
+export const canRegisterTenant = (role) => role === 'superadmin' || role === 'sales';
 
 export const canAccessPage = (role, page) => Boolean(role && PAGE_ACCESS[page]?.includes(role));
 

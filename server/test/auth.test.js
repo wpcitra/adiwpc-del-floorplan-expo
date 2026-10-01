@@ -73,6 +73,50 @@ test('Sales: hanya melihat denah & mendaftarkan tenant; tidak bisa mengedit dena
   assert.equal((await s.api('GET', `/invoices/${encodeURIComponent(reg.body.order.invoiceNumber)}`, undefined, { as: 'sales' })).status, 200);
 });
 
+test('Operasional: mengedit denah di Studio, tetapi tidak bisa mendaftarkan / mengubah tenant', async () => {
+  const FP = 'FP-TEST-SALES'; // from the Sales test above: S-01 registered ("Brand Sales"), S-02 empty
+  const booth = (code, left, data = {}) => ({
+    type: 'Group', left, top: 0, width: 60, height: 60, isBooth: true, id: `booth_${code}`,
+    boothData: { id: `booth_${code}`, code, category: 'Standard', price: 5000000, status: 'available', widthM: 3, heightM: 3, ...data },
+    objects: [{ type: 'Rect', left: -30, top: -30, width: 60, height: 60 }, { type: 'Text', left: 0, top: 0, text: code, fontSize: 10 }]
+  });
+  // opens the Studio data of a floorplan as staff (also drafts), not as a visitor
+  const view = await s.api('GET', `/floorplan/${FP}`, undefined, { as: 'operations' });
+  assert.equal(view.status, 200);
+  assert.equal(view.body.floorplan.booths.find(b => b.code === 'S-01').pic_name, 'Sari', 'data staf, bukan tampilan publik');
+
+  // edits and saves the layout: a moved / re-priced booth and a new booth; tenant fields in the payload are ignored
+  const save = await s.api('POST', '/floorplan/save', {
+    id: FP, eventId: `EVT-${FP}`, title: 'Tes Sales', status: 'published',
+    fabricJson: { version: '7.0.0', objects: [
+      booth('S-01', 0, { status: 'available', ownerName: '' }),
+      booth('S-02', 420, { price: 6000000, status: 'sold', ownerName: 'Titipan Ops', picName: 'X', email: 'x@c.test', phone: '0811111111' }),
+      booth('S-03', 600, { status: 'reserved', ownerName: 'Baru Ops' })
+    ] }
+  }, { as: 'operations' });
+  assert.equal(save.status, 200, save.text);
+  const booths = (await s.api('GET', `/floorplan/${FP}`, undefined, { as: 'superadmin' })).body.floorplan.booths;
+  const by = (code) => booths.find(b => b.code === code);
+  assert.equal(by('S-01').owner_name, 'Brand Sales', 'tenant yang ada tidak hilang');
+  assert.equal(by('S-01').status, 'reserved');
+  assert.equal(by('S-02').price, 6000000, 'harga boleh diubah');
+  assert.equal(by('S-02').status, 'available', 'tidak bisa mengisi tenant lewat denah');
+  assert.equal(by('S-02').owner_name, '');
+  assert.equal(by('S-03').status, 'available', 'booth baru mulai Available');
+  assert.equal(by('S-03').owner_name, '');
+
+  // registration is refused, also as a "visitor"
+  const reg = await s.api('POST', '/orders/checkout', {
+    floorplanId: FP, boothCodes: ['S-02'], fullName: 'Ops', brandName: 'Brand Ops', email: 'ops@contoh.test', phone: '081234567890', bookingType: 'booking'
+  }, { as: 'operations' });
+  assert.equal(reg.status, 403);
+  assert.match(reg.body.error, /tidak dapat mendaftarkan tenant/);
+  // outside the Studio and Denah Operasional: nothing
+  assert.equal((await s.api('GET', '/exhibitors?projectId=all', undefined, { as: 'operations' })).status, 403);
+  assert.equal((await s.api('POST', '/invoices/sync-booth-discount', { floorplanId: FP, boothCode: 'S-02', discountValue: 1000 }, { as: 'operations' })).status, 403);
+  assert.equal((await s.api('GET', `/ops/${FP}`, undefined, { as: 'operations' })).status, 200);
+});
+
 test('hak akses per role', async () => {
   assert.equal((await s.api('GET', '/users', undefined, { as: 'sales' })).status, 403, 'sales tidak boleh kelola user');
   assert.equal((await s.api('GET', '/users', undefined, { as: 'finance' })).status, 403, 'finance tidak boleh kelola user');

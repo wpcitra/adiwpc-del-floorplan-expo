@@ -120,11 +120,15 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 
 ## 11. Authentication, Role Access & Audit Trail Lock (`middleware/auth.js`, `middleware/audit.js`, `utils/roles.js`)
 - **Every `/api` request** passes `authenticate → enforceAccessPolicy → stampActorIdentity → auditTrail` (mounted in `index.js`). Endpoints not listed in `ACCESS_RULES` require a login by default; only the Live Floorplan / booking / facility-portal reads & submits are `public`.
-- **Roles**: `superadmin` (everything, the only role that edits a floorplan), `finance` (invoices, payment status, private booth discount), `sales` (see below), `operations` (Denah Operasional only, §17), `developer` (Pusat Maintenance only, §22).
+- **Roles**: `superadmin` (everything), `finance` (invoices, payment status, private booth discount), `sales` (see below), `operations` (Studio + Denah Operasional, see below and §17), `developer` (Pusat Maintenance only, §22). Only `superadmin` and `operations` edit a floorplan (`canEditFloorplan`); only `superadmin` and `sales` register a tenant (`canRegisterTenant`).
 - **Sales is limited to two menus** (`PAGE_ACCESS`: `floorplan`, `exhibitors`):
   - Studio is read-only (`canEditFloorplan(role)` → `readOnlyStudio` in `AdminDashboard.jsx`): the locked preview canvas, no tool sidebar / Property Inspector, no Simpan / Publish / Buat Baru / Tier / Preset / Blueprint, autosave off (`handleSaveDraft` returns). A click on an EMPTY booth opens the registration form (`POST /orders/checkout`, staff); a booked booth only shows a notice.
   - Data Exhibitor: open, print, download and "Kirim WhatsApp" (`InvoiceA4View` `allowSend`) the invoices; no editing or issuing.
-  - Server: every write under `/floorplan`, `/categories`, `/brand-categories`, `/invoices` (incl. `sync-booth-discount`) and `/ops/:id/copy-from` is refused for Sales (403). When adding an endpoint or admin page, update BOTH `ACCESS_RULES` (server) and `PAGE_ACCESS` (client `utils/roles.js`).
+  - Server: every write under `/floorplan`, `/categories`, `/brand-categories`, `/invoices` (incl. `sync-booth-discount`) and `/ops/:id/copy-from` is refused for Sales (403).
+- **Operasional sees two menus** (`PAGE_ACCESS`: `floorplan`, `ops`) and uses every Studio feature (draw, move, price, tiers, presets, blueprint, save, publish) **except registering a client / brand**:
+  - Client (`tenantLocked = !canRegisterTenant(role)` in `AdminDashboard.jsx` → `PropertyPanel`): no "Daftarkan" / "Lengkapi Biodata" / "Lepas Tenant", the tenant block is read-only, booth status and private discount are disabled. The sidebar hides "Katalog Invoice" (`canAccessPage(role, 'invoices')`).
+  - Server: `POST /orders/checkout` is refused (403, `denyRoles` in `ACCESS_RULES`). `POST /floorplan/save` by this role keeps every existing booth's status, tenant, biodata, exhibitor id and private discount from the booths table, whatever the canvas sends; a new booth is saved as Available without a tenant. Invoices, orders, exhibitors, stats, settings and users stay closed (403).
+  - `OPERATIONS_AREA` now includes `/floorplan` and `/categories` / `/brand-categories`; on those paths the role is staff (it sees draft floorplans, prices and tenant biodata in the Studio). On other public endpoints it is still treated as a visitor. When adding an endpoint or admin page, update BOTH `ACCESS_RULES` (server) and `PAGE_ACCESS` (client `utils/roles.js`).
 - **Actor identity comes from the session only**: `adminName`, `deletedBy`, `restoredBy`, `confirmedBy`, `registeredBy` in request bodies are overwritten with the logged-in user's name; anonymous requests cannot set `source: 'admin'`.
 - **Client API calls** must go through `apiFetch` (`services/session.js`) so the bearer token is attached and revoked sessions log the user out.
 - **Audit**: authenticated mutations are written to `audit_logs` automatically; add a readable rule in `AUDIT_RULES` for new mutating endpoints.
@@ -189,9 +193,9 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - Sales objects are loaded with `isSalesLayer`, locked, and dimmed at runtime. `onStateLoaded` re-applies this after every load and after undo/redo.
   - Serialize operational objects with `canvas._toObject(obj, 'toObject', OPS_SERIALIZE_PROPS)`. Objects inside an active multi-selection would otherwise be saved with relative coordinates.
 - **Role `operations`.**
-  - It can reach only `/api/ops/*`, `/api/notifications/*`, and its own account (`OPERATIONS_AREA` in `auth.js`).
-  - On public endpoints it is treated as an anonymous visitor.
-  - `sanitizeSalesCanvas` strips prices, discounts, and billing data from boothData.
+  - It can reach `/api/ops/*`, `/api/notifications/*`, its own account, and the Studio area (`/api/floorplan/*`, categories; `OPERATIONS_AREA` in `auth.js`, rules in §11).
+  - On public endpoints outside that area it is treated as an anonymous visitor.
+  - In Denah Operasional `sanitizeSalesCanvas` still strips prices, discounts, and billing data from boothData.
   - Sales can only read the layer: the "Lapisan Ops" overlay in the sales Studio uses `isOpsOverlay` + `excludeFromExport`, and `exportToPRDJson` skips those objects.
 - **Anchors.**
   - `venueData.anchor = { boothId, boothCode, dx, dy, dAngle }`, with the offset expressed in the booth's own frame.

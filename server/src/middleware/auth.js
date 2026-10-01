@@ -72,12 +72,13 @@ const ACCESS_RULES = [
   { methods: ['GET'], path: /^\/floorplan\/(events|active|[^/]+)$/, access: 'public' },
   { methods: ['POST'], path: /^\/floorplan\/permanent-delete$/, access: [] },
   { methods: ['DELETE'], path: /^\/floorplan\/presets\/[^/]+$/, access: [] },
-  // Editing a floorplan (save, publish, presets, merge display...) is the Super Admin's job. Sales only views the
-  // Studio and registers tenants (POST /orders/checkout below).
-  { methods: WRITE, path: /^\/floorplan(\/.*)?$/, access: [] },
+  // Editing a floorplan (save, publish, presets, merge display...): Super Admin and Operations. Sales only views the
+  // Studio and registers tenants (POST /orders/checkout below); Operations edits but never registers a tenant.
+  { methods: WRITE, path: /^\/floorplan(\/.*)?$/, access: OPERATIONS },
 
   // Public booking checkout (staff bookings are recognised via the session) & returning-client lookup
-  { methods: ['POST'], path: /^\/(orders|exhibitors)\/checkout$/, access: 'public' },
+  { methods: ['POST'], path: /^\/(orders|exhibitors)\/checkout$/, access: 'public', denyRoles: OPERATIONS,
+    denyMessage: 'Role Operasional tidak dapat mendaftarkan tenant / brand.' },
   { methods: ['GET'], path: /^\/(orders|exhibitors)\/check-client$/, access: 'public' },
 
   // Invoices: finance owns billing, including the private booth discount (sales reads invoices only)
@@ -87,7 +88,7 @@ const ACCESS_RULES = [
 
   // Master data read by the public booking form; edited by the Super Admin only (Studio tiers & brand categories)
   { methods: ['GET'], path: /^\/(categories|brand-categories|payment-methods)$/, access: 'public' },
-  { methods: WRITE, path: /^\/(categories|brand-categories)(\/.*)?$/, access: [] },
+  { methods: WRITE, path: /^\/(categories|brand-categories)(\/.*)?$/, access: OPERATIONS },
   { methods: WRITE, path: /^\/payment-methods(\/.*)?$/, access: [] },
 
   // Facility portal
@@ -115,12 +116,17 @@ const ACCESS_RULES = [
   { methods: ['GET', ...WRITE], path: /^\/(users|audit-logs)(\/.*)?$/, access: [] }
 ];
 
-const OPERATIONS_AREA = [/^\/ops(\/.*)?$/, /^\/notifications(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/];
+// Operations: Denah Operasional, plus the Studio (floorplan, tiers, brand categories) as an editor. Never tenant
+// registration, orders, invoices or users.
+const OPERATIONS_AREA = [
+  /^\/ops(\/.*)?$/, /^\/floorplan(\/.*)?$/, /^\/(categories|brand-categories)(\/.*)?$/,
+  /^\/notifications(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/
+];
 // Developer: only the Pusat Maintenance (never tenant, price, invoice or user data)
 const DEVELOPER_AREA = [/^\/maintenance(\/.*)?$/, /^\/notifications(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/];
 // Roles limited to their own area; on public endpoints they are treated as anonymous visitors
 const RESTRICTED_AREAS = {
-  operations: { area: OPERATIONS_AREA, error: 'Role Operasional hanya dapat mengakses Denah Operasional' },
+  operations: { area: OPERATIONS_AREA, error: 'Role Operasional hanya dapat mengakses Studio dan Denah Operasional' },
   developer: { area: DEVELOPER_AREA, error: 'Role Developer hanya dapat mengakses Pusat Maintenance' }
 };
 
@@ -135,10 +141,14 @@ export function enforceAccessPolicy(req, res, next) {
   const access = rule ? rule.access : 'staff';
 
   const restricted = RESTRICTED_AREAS[req.user?.role];
+  if (rule?.denyRoles?.includes(req.user?.role)) {
+    return res.status(403).json({ success: false, error: rule.denyMessage || 'Role Anda tidak memiliki akses untuk tindakan ini', code: 'FORBIDDEN' });
+  }
   if (access === 'public') {
-    // Operations / developer accounts see public endpoints exactly like a visitor (published data only, no staff
-    // extras). `restrictedUser` keeps who they are for masked error reports only.
-    if (restricted) {
+    // Operations / developer accounts see public endpoints outside their own area exactly like a visitor (published
+    // data only, no staff extras). `restrictedUser` keeps who they are for masked error reports only.
+    // Inside their area (e.g. the floorplan for Operations) they stay staff: the Studio needs drafts and full data.
+    if (restricted && !restricted.area.some(re => re.test(path))) {
       req.restrictedUser = req.user;
       req.user = undefined;
     }
