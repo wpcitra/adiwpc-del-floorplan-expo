@@ -77,7 +77,7 @@ test('error yang sama dikelompokkan, jumlah pengguna dihitung dari kode samaran'
 });
 
 test('error server tercatat otomatis dengan stack tanpa path lokal', async () => {
-  const r = await s.api('POST', '/floorplan/save', { id: 'FP-RUSAK', fabricJson: { objects: [null] } }, { as: 'sales' });
+  const r = await s.api('POST', '/floorplan/save', { id: 'FP-RUSAK', fabricJson: { objects: [null] } }, { as: 'superadmin' });
   assert.equal(r.status, 500);
   const list = await groups('status=semua&source=server');
   const g = list.find(x => x.area === '/api/floorplan/save');

@@ -72,20 +72,22 @@ const ACCESS_RULES = [
   { methods: ['GET'], path: /^\/floorplan\/(events|active|[^/]+)$/, access: 'public' },
   { methods: ['POST'], path: /^\/floorplan\/permanent-delete$/, access: [] },
   { methods: ['DELETE'], path: /^\/floorplan\/presets\/[^/]+$/, access: [] },
-  { methods: WRITE, path: /^\/floorplan(\/.*)?$/, access: SALES },
+  // Editing a floorplan (save, publish, presets, merge display...) is the Super Admin's job. Sales only views the
+  // Studio and registers tenants (POST /orders/checkout below).
+  { methods: WRITE, path: /^\/floorplan(\/.*)?$/, access: [] },
 
   // Public booking checkout (staff bookings are recognised via the session) & returning-client lookup
   { methods: ['POST'], path: /^\/(orders|exhibitors)\/checkout$/, access: 'public' },
   { methods: ['GET'], path: /^\/(orders|exhibitors)\/check-client$/, access: 'public' },
 
-  // Invoices: finance owns billing; booth discounts are also set by sales from the Studio
+  // Invoices: finance owns billing, including the private booth discount (sales reads invoices only)
   { methods: ['GET'], path: /^\/invoices\/config$/, access: 'public' },
-  { methods: ['POST'], path: /^\/invoices\/sync-booth-discount$/, access: [...SALES, ...FINANCE] },
+  { methods: ['POST'], path: /^\/invoices\/sync-booth-discount$/, access: FINANCE },
   { methods: WRITE, path: /^\/invoices(\/.*)?$/, access: FINANCE },
 
-  // Master data read by the public booking form; edits by sales (Studio tiers & brand categories)
+  // Master data read by the public booking form; edited by the Super Admin only (Studio tiers & brand categories)
   { methods: ['GET'], path: /^\/(categories|brand-categories|payment-methods)$/, access: 'public' },
-  { methods: WRITE, path: /^\/(categories|brand-categories)(\/.*)?$/, access: SALES },
+  { methods: WRITE, path: /^\/(categories|brand-categories)(\/.*)?$/, access: [] },
   { methods: WRITE, path: /^\/payment-methods(\/.*)?$/, access: [] },
 
   // Facility portal
@@ -96,7 +98,7 @@ const ACCESS_RULES = [
   // Denah Operasional: the operations team edits its own layer; sales only views it (overlay in the sales Studio)
   { methods: ['GET'], path: /^\/ops\/[^/]+\/public$/, access: 'public' },
   { methods: ['GET'], path: /^\/ops(\/.*)?$/, access: [...OPERATIONS, ...SALES] },
-  { methods: ['POST'], path: /^\/ops\/[^/]+\/copy-from$/, access: [...SALES, ...OPERATIONS] },
+  { methods: ['POST'], path: /^\/ops\/[^/]+\/copy-from$/, access: OPERATIONS },
   { methods: WRITE, path: /^\/ops(\/.*)?$/, access: OPERATIONS },
 
   // Pusat Maintenance: browser error reports are public (scrubbed + rate limited), the center itself is Developer / Super Admin

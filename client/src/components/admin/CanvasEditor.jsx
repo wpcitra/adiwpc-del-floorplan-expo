@@ -45,6 +45,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   blueprintData = null,
   onBlueprintLoaded,
   isPreviewMode = false,
+  // Read-only Studio (Sales): same locked canvas as the preview, with its own notice
+  readOnlyNotice = false,
   onHistoryChange,
   onOpenBookingForBooth,
   onOpenInvoiceForBooth,
@@ -2329,10 +2331,17 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
       {/* Tenant Preview Mode Overlay */}
       {isPreviewMode && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-emerald-600 text-white px-4 py-1.5 rounded-full shadow-lg text-xs font-semibold flex items-center gap-2 animate-bounce z-20">
-          <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-          Mode Simulasi Pengunjung / Exhibitor (Live Floorplan Preview)
-        </div>
+        readOnlyNotice ? (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-4 py-1.5 rounded-full shadow-lg text-xs font-semibold flex items-center gap-2 z-20">
+            <span className="w-2 h-2 rounded-full bg-amber-400" />
+            Mode Sales: denah hanya bisa dilihat. Klik booth kosong untuk mendaftarkan tenant.
+          </div>
+        ) : (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-emerald-600 text-white px-4 py-1.5 rounded-full shadow-lg text-xs font-semibold flex items-center gap-2 animate-bounce z-20">
+            <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+            Mode Simulasi Pengunjung / Exhibitor (Live Floorplan Preview)
+          </div>
+        )
       )}
 
       {/* Floating Hover Card on Booth Mouse Over (Preview Mode Only) */}

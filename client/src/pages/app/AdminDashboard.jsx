@@ -22,6 +22,7 @@ import { exportToPRDJson, DEFAULT_GRID_SCALE, updateBoothCategoriesRegistry, upd
 import { generatePresetFloorplanData } from '../../utils/presetLayouts';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { canEditFloorplan } from '../../utils/roles';
 import { resolveAnchors } from '../../utils/opsLayer';
 import { refreshMergeRendering } from '../../utils/boothMerge';
 
@@ -82,7 +83,11 @@ export default function AdminDashboard() {
   // Viewport & Pan state
   const [zoomLevel, setZoomLevel] = useState(1);
   const [isPanMode, setIsPanMode] = useState(false);
-  const [isPreviewMode, setIsPreviewMode] = useState(false);
+  const [previewToggled, setIsPreviewMode] = useState(false);
+  // Sales: the Studio is read-only (the "preview" canvas: nothing can be moved, drawn or saved); a click on an
+  // empty booth opens the registration form. Only the Super Admin edits the floorplan.
+  const readOnlyStudio = !canEditFloorplan(user?.role);
+  const isPreviewMode = previewToggled || readOnlyStudio;
 
   // History (Undo / Redo) state
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
@@ -814,6 +819,8 @@ export default function AdminDashboard() {
   };
 
   const handleSaveDraft = async (isPublish = false, options = {}) => {
+    // Read-only Studio (Sales): nothing is ever saved from here (registrations are saved by the checkout itself)
+    if (readOnlyStudio) return;
     const { silent = false } = options;
     let publishResult = null;
     const publishFlag = isPublish === true;
@@ -1117,6 +1124,7 @@ export default function AdminDashboard() {
         onNewFloorplan={() => setIsNewTemplateOpen(true)}
         onSaveAsPreset={handleSaveCanvasAsPreset}
         isPreviewMode={isPreviewMode}
+        readOnly={readOnlyStudio}
         onTogglePreviewMode={() => setIsPreviewMode(!isPreviewMode)}
         opsLayerVisible={showOpsLayer}
         onToggleOpsLayer={() => {
@@ -1197,7 +1205,15 @@ export default function AdminDashboard() {
             onBlueprintLoaded={setBlueprintData}
             isPreviewMode={isPreviewMode}
             onHistoryChange={setHistoryState}
-            onOpenBookingForBooth={(boothData) => setActiveBookingBooth(boothData)}
+            onOpenBookingForBooth={(boothData) => {
+              // Read-only Studio (Sales): only an empty booth can be registered; a booked one is never re-assigned here
+              if (readOnlyStudio && (String(boothData?.ownerName || '').trim() || ['reserved', 'sold'].includes(String(boothData?.status || '').toLowerCase()))) {
+                showToast(`Booth ${boothData?.code || ''} sudah terisi${boothData?.ownerName ? ` oleh ${boothData.ownerName}` : ''}. Invoice-nya ada di menu Exhibitor.`);
+                return;
+              }
+              setActiveBookingBooth(boothData);
+            }}
+            readOnlyNotice={readOnlyStudio}
             onStateLoaded={(canvas) => {
               // corners are applied inside the load, so the "saved" snapshot already contains them
               applyBoothCorners(canvas, boothCornerRef.current);

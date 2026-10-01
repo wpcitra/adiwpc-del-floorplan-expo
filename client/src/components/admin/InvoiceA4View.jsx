@@ -32,7 +32,9 @@ export default function InvoiceA4View({
   onClose,
   onEdit,
   onOpenEditor,
-  isLivePreview = false
+  isLivePreview = false,
+  // Staff views (Manajemen Invoice, Data Exhibitor): "Kirim WhatsApp" to the tenant's number
+  allowSend = false
 }) {
   const printRef = useRef(null);
   const [activeConfig, setActiveConfig] = useState(propConfig || DEFAULT_INVOICE_CONFIG);
@@ -226,6 +228,40 @@ export default function InvoiceA4View({
 
   const tableHeaderStyle = getTableHeaderStyles();
 
+  // Send this invoice to the tenant over WhatsApp: the same numbers as the document (PPN lines only when the
+  // breakdown is shown). The PDF itself is attached by hand after "Download PDF".
+  const handleSendWhatsApp = () => {
+    const digits = String(inv.client_phone || '').replace(/\D/g, '');
+    const phone = digits.startsWith('0') ? `62${digits.slice(1)}` : digits;
+    if (phone.length < 9) {
+      alert('Nomor WhatsApp / telepon tenant belum diisi di invoice ini.');
+      return;
+    }
+    const money = [];
+    if (taxView.showBreakdown) {
+      money.push(`Harga (sebelum PPN): ${rp(taxView.dpp)}`);
+      money.push(`PPN ${taxView.rate}%${taxView.method === 'inclusive' ? ' (termasuk dalam harga)' : ''}: ${rp(taxView.ppn)}`);
+    }
+    money.push(`Total Tagihan: *${rp(inv.total_amount)}*${taxView.method === 'inclusive' && !taxView.showBreakdown ? ` (${taxView.note})` : ''}`);
+    const lines = [
+      `📌 *${docTitle('INVOICE')}*`,
+      `No. Invoice : *${inv.invoice_number}*`,
+      `Kepada : *${inv.company_name}*${inv.client_name && inv.client_name !== '-' ? ` (PIC ${inv.client_name})` : ''}`,
+      inv.booth_code ? `Booth : *#${inv.booth_code}*` : '',
+      ...money,
+      `Jatuh Tempo : ${formattedDate(inv.due_date)}`,
+      `Status : *${isPaid ? 'LUNAS' : isCanceled ? 'DIBATALKAN' : 'MENUNGGU PEMBAYARAN'}*`,
+      !isPaid && !isCanceled && showBank ? `Transfer ke : ${bankDetails.bankName || cfg.bankName} ${bankDetails.accountNumber || cfg.accountNumber} a.n. ${bankDetails.accountName || cfg.accountName}` : '',
+      '',
+      'Dokumen invoice (PDF) kami lampirkan pada pesan ini.',
+      '',
+      `Salam,\n*${cfg.companyName || ''}*`
+    ].filter((l, i, arr) => l !== '' || (arr[i - 1] !== '' && i < arr.length - 1));
+    const text = encodeURIComponent(lines.join('\n'));
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    window.open(`${isMobile ? 'https://api.whatsapp.com' : 'https://web.whatsapp.com'}/send?phone=${phone}&text=${text}`, '_blank');
+  };
+
   return (
     <div className={`${isLivePreview ? 'w-full flex justify-center' : 'fixed inset-0 z-50 flex flex-col items-center justify-start bg-slate-950/85 backdrop-blur-md overflow-y-auto p-4 sm:p-6 animate-fadeIn print:p-0 print:bg-white print:static'}`}>
       
@@ -273,6 +309,18 @@ export default function InvoiceA4View({
               >
                 <Edit3 size={13} />
                 <span>Edit Diskon & Data</span>
+              </button>
+            )}
+
+            {allowSend && (
+              <button
+                type="button"
+                onClick={handleSendWhatsApp}
+                className="px-3.5 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs font-semibold rounded-xl shadow-md shadow-green-600/20 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                title="Kirim ringkasan invoice ke WhatsApp tenant (lampirkan PDF hasil Download)"
+              >
+                <Phone size={14} />
+                <span>Kirim WhatsApp</span>
               </button>
             )}
 

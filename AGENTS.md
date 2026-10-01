@@ -120,7 +120,11 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 
 ## 11. Authentication, Role Access & Audit Trail Lock (`middleware/auth.js`, `middleware/audit.js`, `utils/roles.js`)
 - **Every `/api` request** passes `authenticate → enforceAccessPolicy → stampActorIdentity → auditTrail` (mounted in `index.js`). Endpoints not listed in `ACCESS_RULES` require a login by default; only the Live Floorplan / booking / facility-portal reads & submits are `public`.
-- **Roles**: `superadmin` (everything), `finance` (invoices & payment status), `sales` (Studio/floorplan, tiers, brand categories), `operations` (Denah Operasional only, §17), `developer` (Pusat Maintenance only, §22). When adding an endpoint or admin page, update BOTH `ACCESS_RULES` (server) and `PAGE_ACCESS` (client `utils/roles.js`).
+- **Roles**: `superadmin` (everything, the only role that edits a floorplan), `finance` (invoices, payment status, private booth discount), `sales` (see below), `operations` (Denah Operasional only, §17), `developer` (Pusat Maintenance only, §22).
+- **Sales is limited to two menus** (`PAGE_ACCESS`: `floorplan`, `exhibitors`):
+  - Studio is read-only (`canEditFloorplan(role)` → `readOnlyStudio` in `AdminDashboard.jsx`): the locked preview canvas, no tool sidebar / Property Inspector, no Simpan / Publish / Buat Baru / Tier / Preset / Blueprint, autosave off (`handleSaveDraft` returns). A click on an EMPTY booth opens the registration form (`POST /orders/checkout`, staff); a booked booth only shows a notice.
+  - Data Exhibitor: open, print, download and "Kirim WhatsApp" (`InvoiceA4View` `allowSend`) the invoices; no editing or issuing.
+  - Server: every write under `/floorplan`, `/categories`, `/brand-categories`, `/invoices` (incl. `sync-booth-discount`) and `/ops/:id/copy-from` is refused for Sales (403). When adding an endpoint or admin page, update BOTH `ACCESS_RULES` (server) and `PAGE_ACCESS` (client `utils/roles.js`).
 - **Actor identity comes from the session only**: `adminName`, `deletedBy`, `restoredBy`, `confirmedBy`, `registeredBy` in request bodies are overwritten with the logged-in user's name; anonymous requests cannot set `source: 'admin'`.
 - **Client API calls** must go through `apiFetch` (`services/session.js`) so the bearer token is attached and revoked sessions log the user out.
 - **Audit**: authenticated mutations are written to `audit_logs` automatically; add a readable rule in `AUDIT_RULES` for new mutating endpoints.

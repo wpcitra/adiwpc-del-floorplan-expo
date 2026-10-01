@@ -656,6 +656,7 @@ export default function ExhibitorTable() {
       {selectedInvoiceForA4 && (
         <InvoiceA4View
           invoice={selectedInvoiceForA4}
+          allowSend
           onClose={() => setSelectedInvoiceForA4(null)}
           onEdit={canEditInvoice ? (inv) => setEditingInvoice(inv) : undefined}
           onOpenEditor={canEditInvoice ? () => {

@@ -29,6 +29,8 @@ export default function TopNavbar({
   onOpenBlueprintModal,
   hasBlueprint,
   onOpenTemplatesModal,
+  // Read-only Studio (Sales): no editing / saving / publishing controls, only viewing, switching project and export
+  readOnly = false,
   onOpenNewTemplateModal,
   onOpenInvoiceModal,
   onOpenCategoryModal,
@@ -151,13 +153,13 @@ export default function TopNavbar({
                 <span 
                   className="text-slate-200 font-semibold truncate max-w-[100px] sm:max-w-[160px] cursor-pointer hover:text-blue-300 transition-colors" 
                   title={`Klik untuk edit nama project (${currentFloorplanTitle})`}
-                  onClick={() => setIsEditingTitle(true)}
+                  onClick={() => !readOnly && setIsEditingTitle(true)}
                 >
                   {currentFloorplanTitle || 'Denah Utama'}
                 </span>
                 <button
                   type="button"
-                  onClick={() => setIsEditingTitle(true)}
+                  onClick={() => !readOnly && setIsEditingTitle(true)}
                   className="p-0.5 text-slate-400 hover:text-blue-400 transition-colors cursor-pointer opacity-70 group-hover:opacity-100"
                   title="Edit Nama Project"
                 >
@@ -213,13 +215,13 @@ export default function TopNavbar({
                 <span 
                   className="text-slate-300 font-medium truncate max-w-[100px] sm:max-w-[160px] cursor-pointer hover:text-indigo-300 transition-colors" 
                   title={`Klik untuk edit lokasi venue (${currentFloorplanVenue})`}
-                  onClick={() => setIsEditingVenue(true)}
+                  onClick={() => !readOnly && setIsEditingVenue(true)}
                 >
                   {currentFloorplanVenue || 'Tambah Lokasi Venue...'}
                 </span>
                 <button
                   type="button"
-                  onClick={() => setIsEditingVenue(true)}
+                  onClick={() => !readOnly && setIsEditingVenue(true)}
                   className="p-0.5 text-slate-400 hover:text-indigo-400 transition-colors cursor-pointer opacity-70 group-hover:opacity-100"
                   title="Edit Lokasi / Venue Gedung"
                 >
@@ -275,6 +277,7 @@ export default function TopNavbar({
 
       {/* 2. Right Section: Action Controls */}
       <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+        {!readOnly && (<>
         {/* Template Catalog Button */}
         <button
           type="button"
@@ -367,6 +370,8 @@ export default function TopNavbar({
           <span>Publish</span>
         </button>
 
+        </>)}
+
         {/* Export Layout Button */}
         <button
           type="button"
@@ -407,6 +412,7 @@ export default function TopNavbar({
           </button>
         )}
 
+        {!readOnly && (<>
         {/* Preview Mode Switcher */}
         <button
           type="button"
@@ -431,6 +437,7 @@ export default function TopNavbar({
           <PlusCircle size={13} />
           <span>+ Buat Baru</span>
         </button>
+        </>)}
       </div>
     </header>
   );

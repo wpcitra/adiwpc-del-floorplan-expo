@@ -855,6 +855,7 @@ export default function InvoicePage() {
       {selectedInvoiceForA4 && (
         <InvoiceA4View
           invoice={selectedInvoiceForA4}
+          allowSend
           onClose={() => setSelectedInvoiceForA4(null)}
           onEdit={(inv) => setEditingInvoice(inv)}
           onOpenEditor={() => setIsEditorModalOpen(true)}

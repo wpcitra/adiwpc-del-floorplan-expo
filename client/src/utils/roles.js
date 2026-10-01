@@ -8,18 +8,22 @@ export const ROLE_LABELS = {
   developer: 'Developer'
 };
 
+// Sales: only the Studio (view the floorplan and register tenants, no editing) and Data Exhibitor (open / send invoices)
 export const PAGE_ACCESS = {
-  analytics: ['superadmin', 'finance', 'sales'],
+  analytics: ['superadmin', 'finance'],
   floorplan: ['superadmin', 'sales'],
   ops: ['superadmin', 'operations'],
   exhibitors: ['superadmin', 'finance', 'sales'],
   invoices: ['superadmin', 'finance'],
-  facilities: ['superadmin', 'finance', 'sales'],
+  facilities: ['superadmin', 'finance'],
   settings: ['superadmin'],
   users: ['superadmin'],
   audit: ['superadmin'],
   maintenance: ['superadmin', 'developer']
 };
+
+// Who may edit a floorplan in the Studio (draw, move, price, save, publish). Everyone else with the page sees it read-only.
+export const canEditFloorplan = (role) => role === 'superadmin';
 
 export const canAccessPage = (role, page) => Boolean(role && PAGE_ACCESS[page]?.includes(role));
 
