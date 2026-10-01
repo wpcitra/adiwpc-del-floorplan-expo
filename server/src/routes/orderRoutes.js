@@ -1,12 +1,13 @@
 import express from 'express';
-import db from '../db.js';
+import db, { ordersEmailNullable } from '../db.js';
 import { syncPaymentStatusFromInvoices, applyBoothChangesToCanvas } from '../utils/syncPaymentStatus.js';
 import { getContractInvoices, getContract, boothContractValue, invoicePaidAmount, invoiceCodeTokens, removeBoothFromInvoice, contractValueForCode } from '../utils/contractBilling.js';
 import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
 import { clusterCheckoutBooths, computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
 import { sortCodes } from '../../../shared/boothGroups.js';
 import { notifyOpsOfSalesChange } from '../utils/opsLayer.js';
-import { taxOptionsFrom, readBookingRules } from '../utils/taxSettings.js';
+import { taxOptionsFrom, readBookingRules, readEmailRequired } from '../utils/taxSettings.js';
+import { checkEmail } from '../../../shared/emailRule.js';
 import { buildInvoiceRow } from './invoiceRoutes.js';
 import { computeContractTax, taxPortion } from '../../../shared/invoiceTax.js';
 
@@ -21,7 +22,6 @@ router.post('/checkout', (req, res) => {
       fullName,
       brandName,
       brandCategory = '',
-      email,
       phone,
       bookingType = 'booking',
       paymentMethod = 'qris',
@@ -37,9 +37,13 @@ router.post('/checkout', (req, res) => {
     }
 
     const hasBooths = Boolean(boothCode) || (Array.isArray(req.body.boothCodes) && req.body.boothCodes.some(Boolean));
-    if (!hasBooths || !brandName || !email || !phone) {
+    if (!hasBooths || !brandName || !phone) {
       return res.status(400).json({ success: false, error: 'Data formulir tidak lengkap' });
     }
+    // Email: optional unless the Setting says "Wajib"; when sent it must be valid. Empty is stored as NULL.
+    const emailCheck = checkEmail(req.body.email, { required: readEmailRequired() });
+    if (emailCheck.error) return res.status(400).json({ success: false, code: 'EMAIL_INVALID', error: emailCheck.error });
+    const email = emailCheck.email;
 
     // Public registration offers only "Booking Dulu" and "Transfer Bank Manual": neither records a payment.
     // There is no real payment gateway, so an instantly-PAID booking is reserved for logged-in staff
@@ -307,6 +311,8 @@ router.post('/checkout', (req, res) => {
 
       // One order row per booth (dashboard & reports count booths, not groups): its share of the invoice
       const orderIds = [];
+      // NULL when there is no email ('' only if the one-time column migration in db.js could not run)
+      const orderEmail = email ?? (ordersEmailNullable() ? null : '');
       const insertOrder = db.prepare(`
         INSERT INTO orders (
           id, floorplan_id, booth_id, booth_code, company_name, pic_name, email, phone, total_amount, payment_method, payment_status,
@@ -316,7 +322,7 @@ router.post('/checkout', (req, res) => {
       priced.forEach((p, i) => {
         const orderId = `ORD-${stamp}${priced.length > 1 ? `-${i + 1}` : ''}`;
         orderIds.push(orderId);
-        insertOrder.run(orderId, floorplanId, p.b.id, p.b.code, brandName, fullName || brandName, email, phone,
+        insertOrder.run(orderId, floorplanId, p.b.id, p.b.code, brandName, fullName || brandName, orderEmail, phone,
           subtotal - discount > 0 ? Math.round((contractTotal * (p.price - p.discount)) / (subtotal - discount)) : 0,
           resolvedPaymentMethod, resolvedPaymentStatus, deferInvoice ? '' : invoiceNumber, brandCategory || '', registrationSource, adminName, exhibitorId,
           String(notes || '').trim().slice(0, 500));
@@ -330,7 +336,7 @@ router.post('/checkout', (req, res) => {
       if (deferInvoice) {
         applyBoothChangesToCanvas(floorplanId, targetBooths.map(b => ({
           code: b.code, id: b.id, boothStatus: resolvedBoothStatus, ownerName: brandName, exhibitorId,
-          extra: { picName: fullName || brandName, email, phone, brandCategory: brandCategory || '', registrationSource, registeredBy: adminName }
+          extra: { picName: fullName || brandName, email: email || '', phone, brandCategory: brandCategory || '', registrationSource, registeredBy: adminName }
         })));
       }
 
@@ -743,14 +749,16 @@ router.put('/update-tenant', (req, res) => {
       fullName,
       brandName,
       brandCategory,
-      email,
       phone,
       adminName = 'Admin'
     } = req.body;
 
-    if (!brandName || !fullName || !email || !phone) {
+    if (!brandName || !fullName || !phone) {
       return res.status(400).json({ success: false, error: 'Data biodata tenant wajib diisi lengkap' });
     }
+    const emailCheck = checkEmail(req.body.email, { required: readEmailRequired() });
+    if (emailCheck.error) return res.status(400).json({ success: false, code: 'EMAIL_INVALID', error: emailCheck.error });
+    const email = emailCheck.email;
 
     const fpId = floorplanId || 'FP-2026-001';
 
@@ -776,7 +784,7 @@ router.put('/update-tenant', (req, res) => {
             email = ?, 
             phone = ?
         WHERE (booth_id = ? OR (floorplan_id = ? AND booth_code = ?))
-      `).run(brandName, fullName, brandCategory || '', email, phone, boothId || '', fpId, boothCode || '');
+      `).run(brandName, fullName, brandCategory || '', email ?? (ordersEmailNullable() ? null : ''), phone, boothId || '', fpId, boothCode || '');
 
       // Note of the booking (Booking Manual): only when the form sent one
       if (req.body.notes !== undefined) {
@@ -813,7 +821,7 @@ router.put('/update-tenant', (req, res) => {
                 if ((targetCode && bCode === targetCode) || (targetId && bId === targetId)) {
                   obj.boothData.ownerName = brandName;
                   obj.boothData.picName = fullName;
-                  obj.boothData.email = email;
+                  obj.boothData.email = email || ''; // the canvas keeps strings
                   obj.boothData.phone = phone;
                   if (brandCategory) obj.boothData.brandCategory = brandCategory;
 

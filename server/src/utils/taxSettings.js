@@ -69,3 +69,10 @@ export function readSalesDiscountLimit() {
     maxAmount: Number.isFinite(amount) && amount > 0 ? Math.round(amount) : 0
   };
 }
+
+// Exhibitor email: optional by default; "Wajib" when the Super Admin / Finance turns it on (Setting > Aturan Booking)
+export function readEmailRequired() {
+  let cfg = {};
+  try { cfg = JSON.parse(db.prepare('SELECT config_json FROM invoice_settings WHERE id = ?').get('default_template')?.config_json || '{}'); } catch (e) {}
+  return cfg.exhibitorEmailRequired === true;
+}

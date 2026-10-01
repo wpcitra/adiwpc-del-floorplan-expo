@@ -1516,7 +1516,7 @@ router.post('/save', (req, res) => {
           b.status || 'available',
           b.owner_name || b.ownerName || '',
           b.pic_name || b.picName || '',
-          b.email || '',
+          String(b.email || '').trim() || null, // no email = NULL (AGENTS.md §29)
           b.phone || '',
           b.registration_source || b.registrationSource || 'online',
           b.registered_by || b.registeredBy || '',

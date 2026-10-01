@@ -84,6 +84,8 @@ const DEFAULT_SYSTEM_CONFIG = {
   // Smallest DP (% of the contract) a visitor may choose when registering online
   publicMinDpPercent: 20,
   // Largest private discount Sales may give per booth: % of the booth price, and an optional cap in Rp (0 = no Rp cap)
+  // Exhibitor email in registration / booking forms: optional unless true (shared/emailRule.js)
+  exhibitorEmailRequired: false,
   salesMaxDiscountPercent: 10,
   salesMaxDiscountAmount: 0,
   bookingExpiryMinutes: 15,

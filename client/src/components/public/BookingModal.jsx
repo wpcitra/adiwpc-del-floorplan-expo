@@ -30,6 +30,7 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { api } from '../../services/api';
+import { checkEmail } from '../../utils/emailRule';
 import { computeContractTax, DEFAULT_TAX_NOTE } from '../../utils/invoiceTax';
 import InvoiceA4View from '../admin/InvoiceA4View';
 
@@ -66,11 +67,14 @@ export default function BookingModal({
   // The invoice the server issued for this registration (the same one as in Manajemen Invoice)
   const [issuedInvoice, setIssuedInvoice] = useState(null);
   const [adminApplyTax, setAdminApplyTax] = useState(null); // null = follow the setting
+  // Email is optional unless Setting > Aturan Booking says "Wajib" (shared/emailRule.js, AGENTS.md §29)
+  const [emailRequired, setEmailRequired] = useState(false);
   useEffect(() => {
     api.fetchInvoiceConfig().then(cfg => {
       if (!cfg) return;
       const rate = Number(cfg.taxRate);
       const method = cfg.defaultTaxMethod === 'inclusive' ? 'inclusive' : 'exclusive';
+      setEmailRequired(cfg.exhibitorEmailRequired === true);
       const minDp = Number(cfg.publicMinDpPercent);
       if (Number.isFinite(minDp) && minDp >= 1 && minDp < 100) {
         setMinDpPercent(minDp);
@@ -260,7 +264,8 @@ export default function BookingModal({
     if (!fullName.trim()) errors.fullName = 'Nama lengkap wajib diisi';
     if (!brandName.trim()) errors.brandName = 'Nama brand / perusahaan wajib diisi';
     if (!brandCategory.trim()) errors.brandCategory = 'Kategori brand wajib dipilih';
-    if (!email.trim() || !email.includes('@')) errors.email = 'Format email tidak valid';
+    const emailCheck = checkEmail(email, { required: emailRequired });
+    if (emailCheck.error) errors.email = emailCheck.error;
     if (!phone.trim() || phone.length < 9) errors.phone = 'Nomor HP / WhatsApp wajib diisi (minimal 9 digit)';
 
     setFormErrors(errors);
@@ -403,7 +408,7 @@ export default function BookingModal({
         fullName,
         brandName,
         brandCategory,
-        email,
+        email: email.trim(),
         phone,
         price,
         grandTotal,
@@ -655,7 +660,7 @@ export default function BookingModal({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
-                    <Mail size={13} className="text-indigo-600" /> Email Bisnis *
+                    <Mail size={13} className="text-indigo-600" /> {emailRequired ? 'Email Bisnis *' : 'Email Bisnis (opsional)'}
                   </label>
                   <input
                     type="email"

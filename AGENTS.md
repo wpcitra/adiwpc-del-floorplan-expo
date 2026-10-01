@@ -477,3 +477,14 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - The database backup (`createBackup`) contains the URLs, not the image files: `DATA_DIR/uploads` must be kept with the Volume.
 - Tests: `server/test/uploads.test.js`.
 
+---
+
+## 29. Email Exhibitor Opsional Lock (`shared/emailRule.js`, `utils/taxSettings.js` `readEmailRequired`)
+- **One rule, server and forms**: `checkEmail(value, { required })`. Only spaces = empty. An empty email is allowed unless `exhibitorEmailRequired` is true (Setting > Aturan Booking, "Email Exhibitor: Opsional / Wajib", default Opsional; one setting for the whole application, not per event). A filled email must match `EMAIL_RE`, otherwise "Format email tidak valid" (400 `EMAIL_INVALID`).
+- **Where it applies**: `POST /orders/checkout` (online registration, admin registration, Booking Manual Sales), `PUT /orders/update-tenant`, `BookingModal` ("Email Bisnis (opsional)" / "Email Bisnis *"), `SalesBoothActions` booking form, and the tenant completeness check of the Property Inspector (`isTenantComplete`). Nama PIC, Brand, Kategori and No. WhatsApp stay required.
+- **Storage**: no email = `NULL` in `orders.email`, `booths.email`, `invoices.client_email` (never `''` for new data). The canvas `boothData.email` and API DTOs keep `''` (the client works with strings).
+  - `orders.email` was created `NOT NULL`: `db.js` rebuilds the table once (copy of the database first with `VACUUM INTO backups/pre-migration_email-opsional_*.db`, same definition without the NOT NULL, all rows, indexes and triggers). If that ever fails the app keeps working and stores `''` (`ordersEmailNullable()`).
+- **Identity without email**: `exhibitorIdFor(null, company)` falls back to the company name (§18), so auto-merge still groups the booths of one brand.
+- **Display**: an empty email is not printed on the invoice (`showClientEmail && inv.client_email`) nor in the Property Inspector tenant block. Data Exhibitor shows "-". The application sends no email at all; WhatsApp is the contact channel.
+- Tests: `server/test/email-opsional.test.js`.
+

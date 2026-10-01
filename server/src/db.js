@@ -84,7 +84,7 @@ db.exec(`
     booth_code TEXT NOT NULL,
     company_name TEXT NOT NULL,
     pic_name TEXT NOT NULL,
-    email TEXT NOT NULL,
+    email TEXT,
     phone TEXT NOT NULL,
     total_amount INTEGER NOT NULL,
     payment_method TEXT DEFAULT 'qris',
@@ -959,6 +959,43 @@ for (const col of [
 ]) {
   try { db.exec(col); } catch (e) {}
 }
+
+// Exhibitor email is optional (AGENTS.md §29): `orders.email` was created NOT NULL. SQLite cannot drop that with
+// ALTER TABLE, so the table is rebuilt once: a copy of the database is written first (VACUUM INTO), then the table is
+// recreated from its own definition without the NOT NULL, with every row, index and trigger.
+try {
+  const emailCol = db.prepare('PRAGMA table_info(orders)').all().find(c => c.name === 'email');
+  if (emailCol?.notnull) {
+    const def = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'orders'").get().sql;
+    const relaxed = def.replace(/(\bemail\s+TEXT)\s+NOT\s+NULL/i, '$1').replace(/CREATE TABLE\s+("?orders"?)/i, 'CREATE TABLE orders_email_nullable');
+    if (relaxed === def || !/orders_email_nullable/.test(relaxed) || /\bemail\s+TEXT\s+NOT\s+NULL/i.test(relaxed)) throw new Error('definisi tabel orders tidak dikenali');
+    const backupsDir = path.join(dataDir, 'backups');
+    fs.mkdirSync(backupsDir, { recursive: true });
+    const copy = path.join(backupsDir, `pre-migration_email-opsional_${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
+    db.prepare('VACUUM INTO ?').run(copy);
+    const extras = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name = 'orders' AND type IN ('index', 'trigger') AND sql IS NOT NULL").all();
+    const before = db.prepare('SELECT COUNT(*) AS n FROM orders').get().n;
+    const foreignKeys = db.pragma('foreign_keys', { simple: true });
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(relaxed);
+        db.exec('INSERT INTO orders_email_nullable SELECT * FROM orders');
+        if (db.prepare('SELECT COUNT(*) AS n FROM orders_email_nullable').get().n !== before) throw new Error('jumlah baris tidak sama');
+        db.exec('DROP TABLE orders');
+        db.exec('ALTER TABLE orders_email_nullable RENAME TO orders');
+        extras.forEach(x => db.exec(x.sql));
+      })();
+    } finally {
+      db.pragma(`foreign_keys = ${foreignKeys ? 'ON' : 'OFF'}`);
+    }
+    console.log(`📧 Kolom email pesanan kini opsional (${before} baris dipertahankan, salinan: backups/${path.basename(copy)}).`);
+  }
+} catch (e) {
+  // The app keeps working: an order without email is then stored with '' (see orderRoutes.js `orderEmailValue`)
+  console.error('Migrasi email opsional gagal:', e);
+}
+export const ordersEmailNullable = () => !db.prepare('PRAGMA table_info(orders)').all().find(c => c.name === 'email')?.notnull;
 
 // Auto-merge booth (AGENTS.md §18): exhibitor identity per booth / order and the "Tampilkan Terpisah" switch
 for (const col of [

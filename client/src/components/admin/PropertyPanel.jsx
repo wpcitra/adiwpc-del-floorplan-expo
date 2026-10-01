@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import BoothDiscountFields, { boothDiscountAmount } from './BoothDiscountFields';
+import { checkEmail } from '../../utils/emailRule';
 import { 
   Tag, 
   DollarSign, 
@@ -56,7 +57,7 @@ import BoothCornerControl from './BoothCornerControl';
 import { isCaptionable } from '../../utils/elementCaptions';
 import { isLibraryElement, isShapeElement } from '../../utils/elementLibrary';
 import { BOOTH_CATEGORIES, BOOTH_SHAPES, STATUS_CONFIG } from '../../utils/floorplanUtils';
-import { api } from '../../services/api';
+import { api, getCachedInvoiceConfig } from '../../services/api';
 import { NAME_DIRECTIONS, NAME_DIRECTION_LABELS, nameDirectionOf } from '../../utils/boothNameFit';
 
 export default function PropertyPanel({ 
@@ -988,6 +989,13 @@ function BoothInspector({
   // Tenant biodata state
   const picName = booth.picName || '';
   const email = booth.email || '';
+  // Email is optional unless Setting > Aturan Booking says "Wajib" (AGENTS.md §29)
+  const [emailRequired, setEmailRequired] = useState(() => getCachedInvoiceConfig()?.exhibitorEmailRequired === true);
+  useEffect(() => {
+    let alive = true;
+    if (!getCachedInvoiceConfig()) api.fetchInvoiceConfig().then(cfg => { if (alive) setEmailRequired(cfg?.exhibitorEmailRequired === true); });
+    return () => { alive = false; };
+  }, []);
   const phone = booth.phone || '';
   const registrationSource = booth.registrationSource || 'online';
   const registeredBy = booth.registeredBy || '';
@@ -996,8 +1004,7 @@ function BoothInspector({
   const isTenantComplete = Boolean(
     hasOwner && 
     picName.trim() && 
-    email.trim() && 
-    email.includes('@') && 
+    !checkEmail(email, { required: emailRequired }).error && 
     phone.trim() && 
     (brandCategory || booth.brandCategory)
   );
@@ -1101,7 +1108,7 @@ function BoothInspector({
         if (!ownerName?.trim()) missing.push('Nama Brand / Perusahaan');
         if (!picName?.trim()) missing.push('Nama Lengkap (PIC)');
         if (!brandCategory?.trim() && !booth.brandCategory?.trim()) missing.push('Kategori Brand');
-        if (!email?.trim() || !email.includes('@')) missing.push('Email Bisnis');
+        if (checkEmail(email, { required: emailRequired }).error) missing.push('Email Bisnis');
         if (!phone?.trim() || phone.trim().length < 9) missing.push('Nomor WhatsApp (min 9 digit)');
 
         setStatusValidationError({
@@ -1386,10 +1393,12 @@ function BoothInspector({
                   <Phone size={12} className="text-slate-400 shrink-0" />
                   <span className="font-mono text-[11px]">{phone}</span>
                 </div>
-                <div className="flex items-center gap-1.5 truncate">
-                  <Mail size={12} className="text-slate-400 shrink-0" />
-                  <span className="text-[11px] text-slate-500 truncate" title={email}>{email}</span>
-                </div>
+                {email.trim() && (
+                  <div className="flex items-center gap-1.5 truncate">
+                    <Mail size={12} className="text-slate-400 shrink-0" />
+                    <span className="text-[11px] text-slate-500 truncate" title={email}>{email}</span>
+                  </div>
+                )}
               </div>
 
               {/* Action Buttons */}

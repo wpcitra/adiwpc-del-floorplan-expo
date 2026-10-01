@@ -36,7 +36,7 @@ function draftInvoiceRow(booth, taxBody = {}) {
   return {
     floorplan_id: booth.floorplan_id, booth_id: booth.id, booth_code: booth.code,
     client_name: booth.pic_name || booth.owner_name || '', company_name: booth.owner_name || '',
-    client_email: booth.email || '', client_phone: booth.phone || '',
+    client_email: String(booth.email || '').trim() || null, client_phone: booth.phone || '',
     issue_date: new Date().toISOString().split('T')[0],
     due_date: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
     items: [{
