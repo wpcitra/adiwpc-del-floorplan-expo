@@ -2,6 +2,7 @@ import * as fabric from 'fabric';
 import { applyDoorBehavior } from './doorSymbols';
 import { isLibraryElement, applyLibraryBehavior } from './elementLibrary';
 import { isCaptionable, customCaption, captionText } from './elementCaptions';
+import { fitTenantName, nameDirectionOf, maxNameSize, MIN_NAME_M, NAME_FONT_FAMILY } from './boothNameFit';
 
 export const DEFAULT_GRID_SCALE = 20; // 20px = 1 meter (1 grid box = 1 meter)
 
@@ -855,6 +856,52 @@ export function applyBoothCorners(canvas, globalPct = 0) {
   return changed;
 }
 
+/**
+ * Tenant name of a booth: ONE rule for every booth and every view (Studio, Denah Operasional, Live, exports; merged
+ * groups use the same fitTenantName in boothMerge.js). The name fills the free area between the header (strip, size,
+ * number) and the status with the largest font that fits, horizontal or vertical (bottom to top), decided from what
+ * is seen on the screen: a rotated booth never shows the name upside down. `boothData.nameDirection` ("Arah Nama
+ * Tenant": auto / horizontal / vertical) only fixes the direction; the size stays automatic.
+ */
+export function layoutTenantName(group, ownerText, {
+  name, pixelWidth, pixelHeight, padX = 4, headerBottom, statusTop, gridScale = DEFAULT_GRID_SCALE, smallSize = 8, fill = '#0f172a', visible = true
+}) {
+  const minDim = Math.min(pixelWidth, pixelHeight);
+  const gap = Math.max(2, minDim * 0.03);
+  const top = headerBottom + gap;
+  const bottom = statusTop - gap;
+  const fit = visible
+    ? fitTenantName(name, (pixelWidth - padX * 2) * 0.96, Math.max(1, bottom - top), {
+      frameAngle: (group.angle || 0) + (group.group?.angle || 0),
+      direction: nameDirectionOf(group.boothData),
+      maxSize: maxNameSize(minDim, smallSize),
+      minSize: gridScale * MIN_NAME_M,
+      weight: '800',
+      family: NAME_FONT_FAMILY
+    })
+    : null;
+  // Cut with "…" at the minimum size: the full name stays in boothData (hover card / panel)
+  group.__nameTruncated = Boolean(fit?.truncated);
+  ownerText.set({
+    left: 0,
+    top: (top + bottom) / 2,
+    angle: fit ? fit.localAngle : 0,
+    text: fit ? fit.lines.join('\n') : String(name || ''),
+    fontSize: fit ? fit.size : smallSize,
+    fontFamily: NAME_FONT_FAMILY,
+    fontWeight: '800',
+    fontStyle: 'normal',
+    textAlign: 'center',
+    // Fabric multiplies the line height by 1.13: keep the same line spacing as the measurement
+    lineHeight: fit ? fit.lineHeight / 1.13 : 1.05,
+    fill,
+    originX: 'center',
+    originY: 'center',
+    visible: Boolean(fit)
+  });
+  return fit;
+}
+
 export function layoutBoothInternals(group, {
   widthM = 3,
   heightM = 3,
@@ -993,21 +1040,32 @@ export function layoutBoothInternals(group, {
     visible: canShowHeaderItems
   });
 
-  // 5. Center: Nama Pemilik Booth (ownerText)
-  ownerText.set({
-    left: 0,
-    top: typo.isMultiLine ? 0 : (canShowHeaderItems ? 1 : 0),
-    text: typo.finalOwnerText,
-    fontSize: typo.ownerFontSize,
-    fontWeight: isCustomOwner ? 'bold' : 'normal',
-    fontStyle: isCustomOwner ? 'normal' : 'italic',
-    textAlign: 'center',
-    lineHeight: 1.05,
-    fill: isCustomOwner ? '#0f172a' : '#94a3b8',
-    originX: 'center',
-    originY: 'center',
-    visible: canShowOwner
-  });
+  // 5. Center: tenant name, laid out by the one shared rule (layoutTenantName above)
+  const headerBottom = topY + (canShowHeaderItems ? Math.max(typo.dimFontSize, typo.codeFontSize) * 1.15 : 0);
+  const statusTop = halfH - typo.padY - (canShowStatus ? typo.statusFontSize * 1.1 : 0);
+  if (isCustomOwner) {
+    layoutTenantName(group, ownerText, {
+      name: rawOwner, pixelWidth, pixelHeight, padX: typo.padX, headerBottom, statusTop, gridScale,
+      smallSize: Math.max(typo.dimFontSize, typo.codeFontSize), visible: canShowOwner
+    });
+  } else {
+    // Placeholder of an empty booth: always horizontal and small
+    ownerText.set({
+      left: 0,
+      top: typo.isMultiLine ? 0 : (canShowHeaderItems ? 1 : 0),
+      angle: 0,
+      text: typo.finalOwnerText,
+      fontSize: typo.ownerFontSize,
+      fontWeight: 'normal',
+      fontStyle: 'italic',
+      textAlign: 'center',
+      lineHeight: 1.05,
+      fill: '#94a3b8',
+      originX: 'center',
+      originY: 'center',
+      visible: canShowOwner
+    });
+  }
 
   // 6. Bottom-Center: Status (statusText)
   statusText.set({
@@ -1174,6 +1232,9 @@ export function updateBoothAppearance(group, newProps) {
 
   const statusCfg = STATUS_CONFIG[updated.status] || STATUS_CONFIG.available;
   const catColor = BOOTH_CATEGORIES[updated.category]?.border || '#3b82f6';
+
+  // The rotation is applied first: the tenant name's direction is decided from the booth as seen on the screen
+  if (newProps.angle !== undefined) group.set('angle', newProps.angle);
 
   layoutBoothInternals(group, {
     widthM: parseFloat(updated.widthM) || 3,

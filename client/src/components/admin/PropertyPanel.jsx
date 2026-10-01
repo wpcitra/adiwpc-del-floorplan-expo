@@ -56,6 +56,7 @@ import { isCaptionable } from '../../utils/elementCaptions';
 import { isLibraryElement, isShapeElement } from '../../utils/elementLibrary';
 import { BOOTH_CATEGORIES, BOOTH_SHAPES, STATUS_CONFIG } from '../../utils/floorplanUtils';
 import { api } from '../../services/api';
+import { NAME_DIRECTIONS, NAME_DIRECTION_LABELS, nameDirectionOf } from '../../utils/boothNameFit';
 
 export default function PropertyPanel({ 
   selectedObject, 
@@ -731,6 +732,24 @@ export default function PropertyPanel({
             globalPct={boothCornerPct}
             onChange={(v) => onUpdateProperty({ cornerPct: v })}
           />
+          {/* Arah Nama Tenant: the font size is always automatic; a merged booth shares the setting */}
+          <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[11px] mt-3 mb-1.5">Arah Nama Tenant</label>
+          <div className="flex bg-slate-100 border border-slate-200 rounded-lg p-0.5">
+            {NAME_DIRECTIONS.map(dir => (
+              <button
+                key={dir}
+                type="button"
+                onClick={() => onUpdateProperty({ nameDirection: dir })}
+                className={`flex-1 px-2 py-1.5 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${nameDirectionOf(selectedObject.boothData) === dir ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-white'}`}
+              >
+                {NAME_DIRECTION_LABELS[dir]}
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-slate-500 mt-1">
+            Otomatis memilih arah yang membuat nama paling besar. Ukuran huruf selalu dihitung otomatis.
+            {mergeGroup ? ' Berlaku untuk seluruh booth gabungan.' : ''}
+          </p>
         </div>
       )}
     />

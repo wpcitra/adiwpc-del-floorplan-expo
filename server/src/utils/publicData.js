@@ -7,7 +7,7 @@ import crypto from 'crypto';
 // boothData fields a visitor may see
 const PUBLIC_BOOTH_FIELDS = [
   'id', 'code', 'booth_number', 'category', 'shape', 'status', 'price', 'widthM', 'heightM', 'gridScale',
-  'ownerName', 'brandCategory', 'facilities', 'exhibitorId', 'mergeSeparate', 'cornerPct', 'isMerged', 'mergedFrom'
+  'ownerName', 'brandCategory', 'facilities', 'exhibitorId', 'mergeSeparate', 'cornerPct', 'nameDirection', 'isMerged', 'mergedFrom'
 ];
 // booth rows (GET /floorplan/active, /:id) a visitor may see
 const PUBLIC_BOOTH_ROW_FIELDS = [

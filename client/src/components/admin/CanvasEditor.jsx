@@ -635,6 +635,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
       if (active.isBooth) {
         updateBoothAppearance(active, newProps);
+        // "Arah Nama Tenant" of a merged booth applies to the whole group (one name is drawn for all of them)
+        if ('nameDirection' in newProps) {
+          const mergeGroup = (canvas.__mergeGroups || []).find(g => g.active && g.members.includes(active));
+          mergeGroup?.members.forEach(m => { if (m !== active) updateBoothAppearance(m, { nameDirection: newProps.nameDirection }); });
+        }
       } else if (active.venueData?.type === 'door') {
         // Type, width, hinge side, swing, label and angle change the drawing: rebuild in place (same id & position)
         canvas.setActiveObject(rebuildDoorObject(canvas, active, newProps));
@@ -1604,6 +1609,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     // Object Modified: Normalize scale factors & keep text neatly inside boundaries!
     canvas.on('object:modified', (opt) => {
       const target = opt.target;
+      // A rotated booth: the tenant name's direction is decided again from what is seen on the screen
+      if ((opt.action || opt.transform?.action) === 'rotate' && target) {
+        const rotated = target.isBooth ? [target] : (target.getObjects?.() || []).filter(o => o.isBooth);
+        rotated.forEach(b => updateBoothAppearance(b, {}));
+      }
       // A rebuilt element replaces the one Fabric is still finishing a transform on: selecting it right away
       // would end that transform again (object:modified -> rebuild -> ... thousands of copies, stack overflow)
       const selectAfterTransform = (obj) => setTimeout(() => {

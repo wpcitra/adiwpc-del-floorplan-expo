@@ -23,7 +23,7 @@ import {
   LayoutGrid,
   FileText
 } from 'lucide-react';
-import { STATUS_CONFIG, hydrateBoothObject, getProportionalBoothTypography, applyBoothCorners } from '../../utils/floorplanUtils';
+import { STATUS_CONFIG, hydrateBoothObject, getProportionalBoothTypography, applyBoothCorners, layoutTenantName } from '../../utils/floorplanUtils';
 import { exportFloorplanToPdf } from '../../utils/floorplanPdfExport';
 import { drawElementCaptions, findCaptionHit } from '../../utils/elementCaptions';
 import { resolveAnchors } from '../../utils/opsLayer';
@@ -863,20 +863,35 @@ export default function LiveFloorplan() {
 
             // [C] TENGAH: Nama Peserta / Tenant (PT Telkom / Tersedia / Free)
             const tOwner = textObjs[2];
-            tOwner.set({
-              text: typo.finalOwnerText,
-              fontSize: typo.ownerFontSize,
-              fontWeight: owner ? '700' : '500',
-              fontStyle: owner ? 'normal' : 'italic',
-              textAlign: 'center',
-              lineHeight: 1.05,
-              fill: status === 'sold' ? '#0f172a' : (status === 'reserved' ? '#b45309' : (status === 'free' ? '#1d4ed8' : '#059669')),
-              left: 0,
-              top: typo.isMultiLine ? 0 : 1,
-              originX: 'center',
-              originY: 'center',
-              visible: true
-            });
+            const ownerFill = status === 'sold' ? '#0f172a' : (status === 'reserved' ? '#b45309' : (status === 'free' ? '#1d4ed8' : '#059669'));
+            if (owner) {
+              // Same rule as the Studio and merged booths: largest font, horizontal or vertical (floorplanUtils.layoutTenantName)
+              const headerTop = -(h / 2) + typo.padY + Math.max(2, Math.round(h * 0.04));
+              layoutTenantName(obj, tOwner, {
+                name: String(owner).trim(), pixelWidth: w, pixelHeight: h, padX: typo.padX,
+                headerBottom: headerTop + Math.max(typo.dimFontSize, typo.codeFontSize) * 1.15,
+                statusTop: (h / 2) - typo.padY - typo.statusFontSize * 1.1,
+                gridScale: obj.boothData?.gridScale || 20,
+                smallSize: Math.max(typo.dimFontSize, typo.codeFontSize),
+                fill: ownerFill
+              });
+            } else {
+              tOwner.set({
+                text: typo.finalOwnerText,
+                fontSize: typo.ownerFontSize,
+                fontWeight: '500',
+                fontStyle: 'italic',
+                textAlign: 'center',
+                lineHeight: 1.05,
+                angle: 0,
+                fill: ownerFill,
+                left: 0,
+                top: typo.isMultiLine ? 0 : 1,
+                originX: 'center',
+                originY: 'center',
+                visible: true
+              });
+            }
 
             // [D] PALING BAWAH: Status Booth (AVAILABLE / FREE / RESERVED / SOLD)
             const tStatus = textObjs[3];

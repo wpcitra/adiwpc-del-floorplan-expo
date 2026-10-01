@@ -3,6 +3,7 @@ import {
   outlineLoops, signedArea, isConvexVertex
 } from '../../../shared/boothGroups.js';
 import { STATUS_CONFIG, effectiveCornerPct, cornerRadiusPx } from './floorplanUtils';
+import { fitTenantName, nameDirectionOf, NAME_FONT_FAMILY, MIN_NAME_M } from './boothNameFit';
 
 // Auto-merge booth on the canvas (AGENTS.md §18). Booth objects never move or change size: each member of a
 // merge group draws itself as part of one shape (its own rectangle filled, no inner border, no own label), and
@@ -182,35 +183,6 @@ function pointInPoly(pt, poly) {
 
 const FONT = (weight, size) => `${weight} ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
 
-// Brand name as big as possible: 1 or 2 lines, horizontal or vertical, whichever gives the larger font
-function fitBrand(ctx, text, boxW, boxH, maxSize) {
-  const words = text.split(/\s+/).filter(Boolean);
-  const options = [[text]];
-  if (words.length > 1) {
-    let bestSplit = null;
-    for (let i = 1; i < words.length; i++) {
-      const l1 = words.slice(0, i).join(' ');
-      const l2 = words.slice(i).join(' ');
-      const diff = Math.abs(l1.length - l2.length);
-      if (!bestSplit || diff < bestSplit.diff) bestSplit = { lines: [l1, l2], diff };
-    }
-    options.push(bestSplit.lines);
-  }
-  ctx.font = FONT('800', 100);
-  let best = null;
-  options.forEach(lines => {
-    const widest = Math.max(...lines.map(l => ctx.measureText(l).width)) / 100; // width per 1px of font size
-    const lineH = 1.12;
-    [false, true].forEach(vertical => {
-      const along = vertical ? boxH : boxW;
-      const across = vertical ? boxW : boxH;
-      const size = Math.min(maxSize, along / widest, across / (lines.length * lineH));
-      if (!best || size > best.size + 0.01) best = { size, lines, vertical };
-    });
-  });
-  return best;
-}
-
 function drawGroupLabel(ctx, group, style) {
   const { rect, rad, isRectangle } = labelFrame(group);
   const W = rect.r - rect.l;
@@ -279,18 +251,24 @@ function drawGroupLabel(ctx, group, style) {
     const bottom = rect.b - pad - statusFit.size - pad * 0.6;
     const boxW = W - pad * 2;
     const boxH = Math.max(4, bottom - top);
-    const brand = fitBrand(ctx, owner, boxW, boxH, Math.max(small * 1.2, minDim * 0.42));
-    if (brand && brand.size >= 3.5) {
+    // Same rule as every single booth (utils/boothNameFit.js): largest font, horizontal or vertical, never upside down.
+    // "Arah Nama Tenant" of a merged group applies to the whole group.
+    const direction = group.members.map(m => nameDirectionOf(m.boothData)).find(d => d !== 'auto') || 'auto';
+    const brand = fitTenantName(owner, boxW, boxH, {
+      frameAngle: (rad * 180) / Math.PI, direction,
+      maxSize: Math.max(small * 1.2, minDim * 0.42), minSize: gridScale * MIN_NAME_M, weight: '800', family: NAME_FONT_FAMILY
+    });
+    if (brand) {
       const cx = (rect.l + rect.r) / 2;
       const cy = (top + bottom) / 2;
       ctx.save();
       ctx.translate(cx, cy);
-      if (brand.vertical) ctx.rotate(-Math.PI / 2);
+      if (brand.localAngle) ctx.rotate((brand.localAngle * Math.PI) / 180);
       ctx.font = FONT('800', brand.size);
       ctx.fillStyle = '#0f172a';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const lineH = brand.size * 1.12;
+      const lineH = brand.size * brand.lineHeight;
       brand.lines.forEach((line, i) => ctx.fillText(line, 0, (i - (brand.lines.length - 1) / 2) * lineH));
       ctx.restore();
     }

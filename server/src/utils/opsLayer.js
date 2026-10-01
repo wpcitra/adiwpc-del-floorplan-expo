@@ -9,7 +9,7 @@ export const INTERNET_OPTIONS = ['tidak', 'wifi', 'lan'];
 
 // Booth fields the operations team may see (no price, discount or billing data)
 const OPS_BOOTH_FIELDS = ['id', 'code', 'booth_number', 'category', 'status', 'ownerName', 'widthM', 'heightM', 'shape',
-  'brandCategory', 'facilities', 'pillarConflict', 'pillarNote', 'isMerged', 'mergedFrom', 'exhibitorId', 'mergeSeparate'];
+  'brandCategory', 'facilities', 'pillarConflict', 'pillarNote', 'isMerged', 'mergedFrom', 'exhibitorId', 'mergeSeparate', 'nameDirection'];
 
 export const parseJson = (value, fallback = null) => {
   if (value === null || value === undefined || value === '') return fallback;

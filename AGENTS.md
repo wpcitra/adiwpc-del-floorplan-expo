@@ -251,6 +251,16 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 
 ---
 
+- **Nama tenant di dalam booth: satu aturan (`utils/boothNameFit.js` `fitTenantName`).**
+  - Used by single booths (`layoutTenantName` in `floorplanUtils.js`, called by `layoutBoothInternals` and by the Live page) and by merged groups (`drawGroupLabel` in `boothMerge.js`). Never add a second fitting logic.
+  - Area = booth minus header (strip, size, number) and status. The largest font that fits, 1 line or 2 lines for several words (a single word is never cut), horizontal or vertical (rotated 90° counter-clockwise, bottom to top). Vertical only when > 10 % larger. Size between `MIN_NAME_M` (0,25 m) and `maxNameSize()`; below the minimum the name is cut with "…" (`group.__nameTruncated`).
+  - The direction is decided from what is seen on the screen (`frameAngle` = booth angle): never upside down, never top to bottom. A rotation re-runs the layout (`object:modified` with action `rotate`, and `updateBoothAppearance` sets the angle before the layout).
+  - Size, number, status and the "(Nama Pemilik)" placeholder stay horizontal in the booth's frame.
+  - `boothData.nameDirection` ("Arah Nama Tenant": `auto` / `horizontal` / `vertical`) fixes the direction only; it is saved with the canvas, is public (`PUBLIC_BOOTH_FIELDS`) and reaches Denah Operasional (`OPS_BOOTH_FIELDS`). On a merged booth the editor writes it to every member.
+  - Text widths and results are cached (`widthCache`, `resultCache`).
+
+---
+
 ## 20. Public Data Protection Lock (`utils/publicData.js`)
 - **Public view** of `GET /floorplan/active` and `/floorplan/:id` (anonymous visitors, or staff with `?view=public`) goes through `publicFloorplanPayload()`.
   - Canvas boothData is whitelisted: no `picName`, `email`, `phone`, `registeredBy`, or discounts.
