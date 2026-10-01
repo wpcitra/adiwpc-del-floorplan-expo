@@ -23,6 +23,7 @@ import { auditTrail } from './middleware/audit.js';
 import { readBackupStatus, startBackupSchedule } from './utils/backup.js';
 import { appVersion } from './utils/appVersion.js';
 import { removeDemoDataIfUntouched } from './utils/demoCleanup.js';
+import { storageKind } from './db.js';
 import { installErrorCapture, errorCaptureMiddleware, expressErrorHandler } from './utils/errorTracker.js';
 
 // Pusat Maintenance (AGENTS.md §22): record server errors (console.error(Error), 5xx responses, crashes)
@@ -75,6 +76,8 @@ app.get('/api/health', (req, res) => {
     environment: process.env.APP_ENV || 'production',
     version: appVersion(),
     lastBackupAt: backup?.at || null,
+    // 'volume' | 'ephemeral' (Railway without a Volume: data is lost on every deploy) | 'local'
+    storage: storageKind,
     timestamp: new Date().toISOString()
   });
 });

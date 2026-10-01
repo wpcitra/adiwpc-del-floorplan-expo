@@ -11,7 +11,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Ensure data directory exists. DATA_DIR (.env) points staging / tests at their own database copy.
-export const dataDir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, '../data');
+// On Railway the container's own disk is thrown away on every deploy: the database must live on a Volume.
+// A Volume attached to the service is used automatically (RAILWAY_VOLUME_MOUNT_PATH), DATA_DIR still wins.
+const volumeDir = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
+export const dataDir = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : (volumeDir ? path.resolve(volumeDir) : path.join(__dirname, '../data'));
+// 'volume' = survives deploys; 'ephemeral' = Railway without a Volume (all data is lost on the next deploy); 'local' = this computer
+export const storageKind = !process.env.RAILWAY_ENVIRONMENT
+  ? 'local'
+  : (volumeDir && (dataDir === path.resolve(volumeDir) || dataDir.startsWith(path.resolve(volumeDir) + path.sep)) ? 'volume' : 'ephemeral');
+if (storageKind === 'ephemeral') {
+  console.warn('⚠️ Database disimpan di disk kontainer Railway (bukan Volume): SEMUA DATA HILANG pada deploy berikutnya. Pasang Volume pada service ini.');
+}
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }

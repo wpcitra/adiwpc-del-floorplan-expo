@@ -112,3 +112,23 @@ test('RESET_ADMIN_PASSWORD mengatur ulang password Super Admin (akses darurat da
     assert.doesNotMatch(s.output(), new RegExp(fresh), 'password tidak pernah ditulis ke log');
   } finally { await s.stop(); }
 });
+
+test('Railway: Volume dipakai otomatis untuk database; tanpa Volume ditandai "ephemeral" di /health', async () => {
+  const fs = await import('fs');
+  const os = await import('os');
+  const volume = fs.mkdtempSync(path.join(os.tmpdir(), 'floorplan-volume-'));
+  // with a Volume and no DATA_DIR: the database file is created on the volume
+  const a = await startServer({ RAILWAY_ENVIRONMENT: 'production', RAILWAY_VOLUME_MOUNT_PATH: volume, DATA_DIR: '', INITIAL_ADMIN_PASSWORD: 'Rahasia-Awal-123' });
+  try {
+    const h = await (await fetch(`${a.base}/health`)).json();
+    assert.equal(h.storage, 'volume');
+    assert.ok(fs.existsSync(path.join(volume, 'floorplan.db')), 'database ada di Volume');
+  } finally { await a.stop(); fs.rmSync(volume, { recursive: true, force: true }); }
+  // Railway without a Volume
+  const b = await startServer({ RAILWAY_ENVIRONMENT: 'production', INITIAL_ADMIN_PASSWORD: 'Rahasia-Awal-123' });
+  try {
+    const h = await (await fetch(`${b.base}/health`)).json();
+    assert.equal(h.storage, 'ephemeral');
+    assert.match(b.output(), /SEMUA DATA HILANG/);
+  } finally { await b.stop(); }
+});
