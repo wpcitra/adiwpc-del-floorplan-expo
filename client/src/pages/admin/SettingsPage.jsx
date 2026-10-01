@@ -100,6 +100,9 @@ export default function SettingsPage() {
   const [bookingExpiryMinutes, setBookingExpiryMinutes] = useState(15);
   // Smallest DP a visitor may choose when registering online (% of the total)
   const [publicMinDpPercent, setPublicMinDpPercent] = useState(20);
+  // Largest private discount the Sales role may give per booth (Studio pop up "Beri Diskon")
+  const [salesMaxDiscountPercent, setSalesMaxDiscountPercent] = useState(10);
+  const [salesMaxDiscountAmount, setSalesMaxDiscountAmount] = useState(0);
   const [isPublicBookingActive, setIsPublicBookingActive] = useState(true);
   // Online registrations by visitors are charged PPN (staff choose per invoice)
   const [publicBookingTax, setPublicBookingTax] = useState(true);
@@ -169,6 +172,8 @@ Salam hangat,
           if (config.taxNote) setTaxNote(config.taxNote);
           if (config.bookingExpiryMinutes !== undefined) setBookingExpiryMinutes(config.bookingExpiryMinutes);
           if (config.publicMinDpPercent !== undefined) setPublicMinDpPercent(config.publicMinDpPercent);
+          if (config.salesMaxDiscountPercent !== undefined) setSalesMaxDiscountPercent(config.salesMaxDiscountPercent);
+          if (config.salesMaxDiscountAmount !== undefined) setSalesMaxDiscountAmount(config.salesMaxDiscountAmount);
           if (config.isPublicBookingActive !== undefined) setIsPublicBookingActive(config.isPublicBookingActive);
           if (config.isPaymentActive !== undefined) setIsPaymentActive(config.isPaymentActive);
           if (config.waTemplate) setWaTemplate(config.waTemplate);
@@ -218,6 +223,8 @@ Salam hangat,
       taxNote: taxNote.trim() || DEFAULT_TAX_NOTE,
       bookingExpiryMinutes,
       publicMinDpPercent: Math.min(99, Math.max(1, Number(publicMinDpPercent) || 20)),
+      salesMaxDiscountPercent: Math.min(100, Math.max(0, Number(salesMaxDiscountPercent) || 0)),
+      salesMaxDiscountAmount: Math.max(0, Math.round(Number(salesMaxDiscountAmount) || 0)),
       isPublicBookingActive,
       isPaymentActive,
       currencySymbol,
@@ -916,6 +923,39 @@ Salam hangat,
                 <p className="text-[11px] text-slate-500">
                   Pengunjung Live Denah bisa memilih Bayar Penuh atau Uang Muka (DP) sendiri, minimal persentase ini.
                   Invoice DP langsung bisa diunduh setelah pemesanan; sisanya ditagih lewat Invoice Pelunasan.
+                </p>
+              </div>
+
+              {/* Batas diskon Sales */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+                <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Percent size={15} className="text-emerald-600" /> Batas Diskon untuk Role Sales
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={salesMaxDiscountPercent}
+                    onChange={(e) => setSalesMaxDiscountPercent(Number(e.target.value))}
+                    aria-label="Batas diskon Sales dalam persen"
+                    className="w-24 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-bold text-emerald-700"
+                  />
+                  <span className="text-xs text-slate-600 font-semibold">% dari harga booth, dan maks. Rp</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={100000}
+                    value={salesMaxDiscountAmount}
+                    onChange={(e) => setSalesMaxDiscountAmount(Number(e.target.value))}
+                    aria-label="Batas diskon Sales dalam rupiah"
+                    className="w-40 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-bold text-emerald-700"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Sales memberi diskon lewat pop up booth di Studio. Diskon di atas batas ini tidak bisa disimpan oleh Sales
+                  (Finance / Super Admin tidak dibatasi). Isi 0 pada kolom Rp bila batasnya hanya persentase; isi 0% untuk
+                  melarang Sales memberi diskon.
                 </p>
               </div>
 

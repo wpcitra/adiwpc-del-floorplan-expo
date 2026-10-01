@@ -47,6 +47,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   isPreviewMode = false,
   // Read-only Studio (Sales): same locked canvas as the preview, with its own notice
   readOnlyNotice = false,
+  // Read-only Studio (Sales): a click on any booth opens the action pop up (booth data + the click position on the
+  // screen); `highlightBoothCode` outlines the booth whose pop up is open
+  onBoothAction,
+  highlightBoothCode = null,
   onHistoryChange,
   onOpenBookingForBooth,
   onOpenInvoiceForBooth,
@@ -97,6 +101,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const gridScaleRef = useRef(gridScale);
   const isPanModeRef = useRef(isPanMode);
   const isPreviewModeRef = useRef(isPreviewMode);
+  const onBoothActionRef = useRef(onBoothAction);
+  const highlightBoothCodeRef = useRef(highlightBoothCode);
+  useEffect(() => { onBoothActionRef.current = onBoothAction; }, [onBoothAction]);
+  useEffect(() => {
+    highlightBoothCodeRef.current = highlightBoothCode;
+    fabricRef.current?.requestRenderAll();
+  }, [highlightBoothCode]);
   const showCaptionsRef = useRef(showCaptions);
   const snapToBoothsRef = useRef(snapToBooths);
   snapToBoothsRef.current = snapToBooths;
@@ -1321,7 +1332,20 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           : null;
 
         if (boothObj && (boothObj.isBooth || boothObj.boothData)) {
-          onOpenBookingForBooth?.(boothObj.boothData);
+          if (onBoothActionRef.current) {
+            const pt = evt?.touches?.[0] || evt?.changedTouches?.[0] || evt || {};
+            // where the booth is on the screen, so the pop up opens beside it instead of on top of it
+            const el = canvas.upperCanvasEl?.getBoundingClientRect() || { left: 0, top: 0 };
+            const pts = boothObj.getCoords().map(c => fabric.util.transformPoint(c, canvas.viewportTransform));
+            const xs = pts.map(c => c.x + el.left);
+            const ys = pts.map(c => c.y + el.top);
+            onBoothActionRef.current(boothObj.boothData, {
+              x: pt.clientX ?? 0, y: pt.clientY ?? 0,
+              rect: { left: Math.min(...xs), right: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys) }
+            });
+          } else {
+            onOpenBookingForBooth?.(boothObj.boothData);
+          }
           return;
         }
 
@@ -1694,6 +1718,27 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         handleSelection();
         pushHistory();
       }
+    });
+
+    // Read-only Studio: outline the booth whose action pop up is open (never painted into exports)
+    canvas.on('after:render', ({ ctx }) => {
+      const code = highlightBoothCodeRef.current;
+      if (!code || (ctx && ctx !== canvas.contextContainer)) return;
+      const target = canvas.getObjects().find(o => o.boothData && (o.boothData.code || o.boothData.booth_number) === code);
+      if (!target) return;
+      const context = ctx || canvas.getContext();
+      const vpt = canvas.viewportTransform;
+      const pts = target.getCoords().map(p => fabric.util.transformPoint(p, vpt));
+      context.save();
+      context.strokeStyle = '#4f46e5';
+      context.lineWidth = 3;
+      context.shadowColor = 'rgba(79, 70, 229, 0.55)';
+      context.shadowBlur = 12;
+      context.beginPath();
+      pts.forEach((p, i) => (i ? context.lineTo(p.x, p.y) : context.moveTo(p.x, p.y)));
+      context.closePath();
+      context.stroke();
+      context.restore();
     });
 
     // Outline booths that overlap a pillar
@@ -2332,9 +2377,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       {/* Tenant Preview Mode Overlay */}
       {isPreviewMode && (
         readOnlyNotice ? (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-4 py-1.5 rounded-full shadow-lg text-xs font-semibold flex items-center gap-2 z-20">
-            <span className="w-2 h-2 rounded-full bg-amber-400" />
-            Mode Sales: denah hanya bisa dilihat. Klik booth kosong untuk mendaftarkan tenant.
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 w-max max-w-[92%] bg-slate-900 text-white px-4 py-1.5 rounded-2xl shadow-lg text-xs font-semibold flex items-center gap-2 z-20">
+            <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+            {onBoothAction ? 'Mode Sales: klik booth untuk booking, buat invoice, atau beri diskon.' : 'Denah hanya bisa dilihat.'}
           </div>
         ) : (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-emerald-600 text-white px-4 py-1.5 rounded-full shadow-lg text-xs font-semibold flex items-center gap-2 animate-bounce z-20">
@@ -2360,7 +2405,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
                 ? 'bg-blue-100 text-blue-800 border border-blue-300'
                 : 'bg-rose-100 text-rose-800 border border-rose-300'
             }`}>
-              {hoveredBooth.status === 'available' ? '🟢 Tersedia' : hoveredBooth.status === 'reserved' ? '🟡 Reserved' : hoveredBooth.status === 'free' ? '🔵 Free Booth' : '🔴 Terjual'}
+              {hoveredBooth.status === 'available' ? '🟢 Tersedia' : hoveredBooth.status === 'reserved' ? '🟡 Reserved' : hoveredBooth.status === 'free' ? '🔵 Free Booth' : hoveredBooth.status === 'maintenance' ? '⚙️ Maintenance' : '🔴 Terjual'}
             </span>
           </div>
 
@@ -2381,12 +2426,12 @@ const CanvasEditor = forwardRef(function CanvasEditor({
 
           {!hidePrices && (
             <>
-              <div className="text-xs font-bold text-slate-900 mb-2.5">
+              <div className={`text-xs font-bold text-slate-900 ${readOnlyNotice ? '' : 'mb-2.5'}`}>
                 Harga Sewa: <span className="text-emerald-600 font-mono">{hoveredBooth.status === 'free' ? 'GRATIS' : `Rp ${(hoveredBooth.price || 0).toLocaleString('id-ID')}`}</span>
               </div>
 
-              {/* Quick Actions in Hover Card */}
-              <div className="pt-2 border-t border-slate-100 flex gap-1.5">
+              {/* Quick Actions in Hover Card (the read-only Studio uses the booth pop up instead) */}
+              <div className={`pt-2 border-t border-slate-100 gap-1.5 ${readOnlyNotice ? 'hidden' : 'flex'}`}>
                 <button
                   type="button"
                   onClick={() => onOpenBookingForBooth?.(hoveredBooth)}

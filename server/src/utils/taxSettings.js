@@ -56,3 +56,16 @@ export function readBookingRules() {
   const min = Number(cfg.publicMinDpPercent);
   return { minDpPercent: Number.isFinite(min) && min >= 1 && min <= 99 ? Math.round(min * 100) / 100 : 20 };
 }
+
+// Largest private discount the Sales role may give on one booth (Setting > Aturan Booking, Super Admin only):
+// `maxPercent` of the booth price (default 10) and, when > 0, at most `maxAmount` rupiah.
+export function readSalesDiscountLimit() {
+  let cfg = {};
+  try { cfg = JSON.parse(db.prepare('SELECT config_json FROM invoice_settings WHERE id = ?').get('default_template')?.config_json || '{}'); } catch (e) {}
+  const pct = Number(cfg.salesMaxDiscountPercent);
+  const amount = Number(cfg.salesMaxDiscountAmount);
+  return {
+    maxPercent: Number.isFinite(pct) && pct >= 0 && pct <= 100 && cfg.salesMaxDiscountPercent !== '' && cfg.salesMaxDiscountPercent != null ? Math.round(pct * 100) / 100 : 10,
+    maxAmount: Number.isFinite(amount) && amount > 0 ? Math.round(amount) : 0
+  };
+}

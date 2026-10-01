@@ -8,6 +8,13 @@ const BULKY_KEYS = /fabric|canvas|blueprint|metadata|objects|items|logo|signatur
 const invoiceById = (id) => db.prepare('SELECT invoice_number, company_name, booth_code, payment_status FROM invoices WHERE id = ? OR invoice_number = ?').get(id, id);
 const userById = (id) => db.prepare('SELECT name, email, role, is_active FROM users WHERE id = ?').get(id);
 const floorplanTitle = (id) => db.prepare('SELECT title FROM floorplans WHERE id = ?').get(id)?.title;
+// Booth status / tenant before a booking or a tenant edit ("from -> to" in the log)
+const boothBefore = (req) => {
+  const b = req.body || {};
+  const code = b.boothCode || (Array.isArray(b.boothCodes) ? b.boothCodes[0] : '');
+  if (!b.floorplanId || !code) return null;
+  return db.prepare('SELECT code, status, owner_name FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL AND LOWER(TRIM(code)) = LOWER(TRIM(?))').get(b.floorplanId, code) || null;
+};
 const invoiceLabel = (inv, id) => inv ? `${inv.invoice_number} (${inv.company_name || '-'}, booth ${inv.booth_code || '-'})` : id;
 
 // Human-readable labels for mutations; `before` snapshots state so the log can show "from -> to".
@@ -44,9 +51,17 @@ const AUDIT_RULES = [
     before: (m) => db.prepare('SELECT code, status, floorplan_id FROM booths WHERE id = ?').get(m[1]),
     describe: (req, m, before) => ({ target: `Booth ${before?.code || m[1]}`, summary: `${before?.status || '?'} → ${req.body.status || '?'}` }) },
   { method: 'POST', path: /^\/(orders|exhibitors)\/checkout$/, category: 'Booking', action: 'Daftarkan tenant ke booth',
-    describe: (req) => ({ target: `Booth ${req.body.boothCode || '-'}`, summary: `${req.body.brandName || '-'} (${req.body.bookingType || 'booking'})` }) },
+    before: (m, req) => boothBefore(req),
+    describe: (req, m, before) => ({
+      target: `Booth ${req.body.boothCode || (req.body.boothCodes || []).join('+') || '-'}`,
+      summary: `${before?.status || '?'}${before?.owner_name ? ` (${before.owner_name})` : ''} → ${req.body.bookingType === 'payment_gateway' ? 'sold' : 'reserved'} · ${req.body.brandName || '-'} (${req.body.bookingType || 'booking'}${req.body.deferInvoice ? ', invoice menyusul' : ''})`
+    }) },
   { method: 'PUT', path: /^\/(orders|exhibitors)\/update-tenant$/, category: 'Booking', action: 'Edit data tenant',
-    describe: (req) => ({ target: `Booth ${req.body.boothCode || '-'}`, summary: req.body.brandName || '' }) },
+    before: (m, req) => boothBefore(req),
+    describe: (req, m, before) => ({
+      target: `Booth ${req.body.boothCode || '-'}`,
+      summary: before?.owner_name && before.owner_name !== req.body.brandName ? `${before.owner_name} → ${req.body.brandName || ''}` : (req.body.brandName || '')
+    }) },
   { method: 'POST', path: /^\/(orders|exhibitors)\/detach-tenant$/, category: 'Booking', action: 'Lepas tenant dari booth',
     describe: (req) => ({ target: `Booth ${req.body.boothCode || '-'}` }) },
 
@@ -170,7 +185,7 @@ export function auditTrail(req, res, next) {
 
   const found = findAuditRule(req.method, path);
   let before = null;
-  try { before = found?.rule.before ? found.rule.before(found.match) : null; } catch (e) { before = null; }
+  try { before = found?.rule.before ? found.rule.before(found.match, req) : null; } catch (e) { before = null; }
   const bodySnapshot = safeDetails(req.body);
 
   res.on('finish', () => {

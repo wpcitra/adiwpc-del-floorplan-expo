@@ -13,6 +13,7 @@ import NewTemplateModal from '../../components/admin/NewTemplateModal';
 import InvoiceModal from '../../components/admin/InvoiceModal';
 import InvoiceEditorModal from '../../components/admin/InvoiceEditorModal';
 import BookingModal from '../../components/public/BookingModal';
+import SalesBoothActions from '../../components/admin/SalesBoothActions';
 import CanvasBottomBar from '../../components/admin/CanvasBottomBar';
 import ShapePalette from '../../components/admin/ShapePalette';
 import CategoryTierModal from '../../components/admin/CategoryTierModal';
@@ -91,6 +92,30 @@ export default function AdminDashboard() {
   // Operations edits the floorplan but never registers / changes a tenant (tenant, status and discount are read-only)
   const tenantLocked = !canRegisterTenant(user?.role);
   const TENANT_LOCKED_MSG = 'Role Operasional tidak dapat mendaftarkan atau mengubah tenant / brand.';
+  // Read-only Studio (Sales): the booth whose action pop up is open ({ booth, anchor: click position on the screen })
+  const salesActions = readOnlyStudio && !tenantLocked;
+  const [actionBooth, setActionBooth] = useState(null);
+  const closeBoothActions = useCallback(() => setActionBooth(null), []);
+  // The server's booth data after an action (booking, discount, invoice): repaint that booth, no page reload. The
+  // read-only Studio never saves the canvas; the server already wrote the same change into the floorplan.
+  const applyServerBooth = useCallback((b) => {
+    const canvas = editorRef.current?.getCanvas();
+    if (!canvas || !b?.code) return;
+    const obj = canvas.getObjects().find(o => o.boothData && (o.boothData.code || o.boothData.booth_number) === b.code);
+    if (!obj) return;
+    const d = obj.boothData;
+    const next = {
+      status: b.status, ownerName: b.ownerName, picName: b.picName, email: b.email, phone: b.phone, brandCategory: b.brandCategory,
+      exhibitorId: b.exhibitorId, // auto-merge groups adjacent booths of one exhibitor (§18)
+      price: b.price, discountType: b.discountType, discountValue: b.discountValue, discountAmount: b.discountAmount, discountReason: b.discountReason
+    };
+    if (Object.keys(next).every(k => (d[k] ?? '') === (next[k] ?? ''))) return;
+    updateBoothAppearance(obj, next);
+    obj.dirty = true;
+    canvas.requestRenderAll();
+    setActionBooth(prev => (prev && prev.booth?.code === b.code ? { ...prev, booth: { ...prev.booth, ...next } } : prev));
+    setPropertyTick(t => t + 1);
+  }, []);
 
   // History (Undo / Redo) state
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
@@ -1220,6 +1245,8 @@ export default function AdminDashboard() {
               setActiveBookingBooth(boothData);
             }}
             readOnlyNotice={readOnlyStudio}
+            onBoothAction={salesActions ? (boothData, anchor) => setActionBooth({ booth: boothData, anchor }) : undefined}
+            highlightBoothCode={actionBooth?.booth?.code || null}
             onStateLoaded={(canvas) => {
               // corners are applied inside the load, so the "saved" snapshot already contains them
               applyBoothCorners(canvas, boothCornerRef.current);
@@ -1369,6 +1396,18 @@ export default function AdminDashboard() {
           <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
           <span>{toastMessage}</span>
         </div>
+      )}
+
+      {/* Sales: booth pop up (Buat Invoice / Booking Manual / Beri Diskon) */}
+      {salesActions && actionBooth && (
+        <SalesBoothActions
+          floorplanId={currentFloorplanId}
+          booth={actionBooth.booth}
+          anchor={actionBooth.anchor}
+          onClose={closeBoothActions}
+          onChanged={applyServerBooth}
+          showToast={showToast}
+        />
       )}
 
       {/* Booking Tenant Modal */}

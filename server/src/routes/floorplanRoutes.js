@@ -1355,7 +1355,12 @@ router.post('/save', (req, res) => {
         if (!contractStateCache.has(key)) {
           const c = getContract(floorplanId, code);
           const inv = c.latestInvoice;
-          contractStateCache.set(key, c.status ? {
+          // Only canceled invoices + an open booking without invoice (Booking Manual by Sales): the booking decides
+          const openBooking = c.status === 'CANCELED' && db.prepare(`
+            SELECT 1 FROM orders WHERE floorplan_id = ? AND deleted_at IS NULL AND UPPER(COALESCE(payment_status, '')) != 'CANCELED'
+              AND TRIM(COALESCE(invoice_number, '')) = '' AND LOWER(TRIM(booth_code)) = ? LIMIT 1
+          `).get(floorplanId, key);
+          contractStateCache.set(key, c.status && !openBooking ? {
             derived_status: c.boothStatus,
             company_name: c.ownerName,
             client_name: inv?.client_name || '',

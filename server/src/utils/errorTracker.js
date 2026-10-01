@@ -94,6 +94,7 @@ const AREA_RULES = [
   { re: /^\/login\b/, priority: 'KRITIS', feature: 'Login' },
   { re: /^\/api\/(orders|exhibitors)\/checkout/, priority: 'KRITIS', feature: 'Pemesanan booth' },
   { re: /^\/api\/invoices/, priority: 'KRITIS', feature: 'Invoice & pembayaran' },
+  { re: /^\/api\/booth-actions/, priority: 'KRITIS', feature: 'Aksi booth Sales (booking, diskon, invoice)' },
   { re: /^\/api\/payment-methods/, priority: 'KRITIS', feature: 'Pembayaran' },
   { re: /^\/admin\/invoices/, priority: 'KRITIS', feature: 'Invoice & pembayaran' },
   { re: /^\/(live\/[^/]+|portal)?\/?$/, priority: 'KRITIS', feature: 'Live Floorplan & pemesanan booth' },

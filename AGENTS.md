@@ -98,7 +98,7 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Atomic SQLite Transaction**: `POST /api/orders/checkout` MUST run inside an atomic `db.transaction()`:
   1. Inserts record into `orders` table.
   2. Updates booth status to `sold` / `reserved` and populates `owner_name` & `brand_category`.
-  3. Creates or replaces corresponding record in `invoices` table.
+  3. Creates the corresponding record in `invoices` table. Only exception: a staff "Booking Manual" (`deferInvoice: true` with `bookingType: 'booking'`, §27) reserves the booth now and gets its invoice later.
   4. Parses and updates `canvas_fabric_json` in `floorplans` table to keep canvas objects and SQLite database 100% in sync.
 
 ---
@@ -122,9 +122,10 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Every `/api` request** passes `authenticate → enforceAccessPolicy → stampActorIdentity → auditTrail` (mounted in `index.js`). Endpoints not listed in `ACCESS_RULES` require a login by default; only the Live Floorplan / booking / facility-portal reads & submits are `public`.
 - **Roles**: `superadmin` (everything), `finance` (invoices, payment status, private booth discount), `sales` (see below), `operations` (Studio + Denah Operasional, see below and §17), `developer` (Pusat Maintenance only, §22). Only `superadmin` and `operations` edit a floorplan (`canEditFloorplan`); only `superadmin` and `sales` register a tenant (`canRegisterTenant`).
 - **Sales is limited to two menus** (`PAGE_ACCESS`: `floorplan`, `exhibitors`):
-  - Studio is read-only (`canEditFloorplan(role)` → `readOnlyStudio` in `AdminDashboard.jsx`): the locked preview canvas, no tool sidebar / Property Inspector, no Simpan / Publish / Buat Baru / Tier / Preset / Blueprint, autosave off (`handleSaveDraft` returns). A click on an EMPTY booth opens the registration form (`POST /orders/checkout`, staff); a booked booth only shows a notice.
+  - Studio is read-only (`canEditFloorplan(role)` → `readOnlyStudio` in `AdminDashboard.jsx`): the locked preview canvas, no tool sidebar / Property Inspector, no Simpan / Publish / Buat Baru / Tier / Preset / Blueprint, autosave off (`handleSaveDraft` returns). A click on any booth opens the booth pop up (Buat Invoice / Booking Manual / Beri Diskon, §27).
+  - Sales books (Reserved) but never records a payment: `POST /orders/checkout` refuses `payment_gateway` (403) and an already booked booth (409 `BOOTH_TAKEN`) for this role.
   - Data Exhibitor: open, print, download and "Kirim WhatsApp" (`InvoiceA4View` `allowSend`) the invoices; no editing or issuing.
-  - Server: every write under `/floorplan`, `/categories`, `/brand-categories`, `/invoices` (incl. `sync-booth-discount`) and `/ops/:id/copy-from` is refused for Sales (403).
+  - Server: every write under `/floorplan`, `/categories`, `/brand-categories`, `/invoices` (incl. `sync-booth-discount`) and `/ops/:id/copy-from` is refused for Sales (403). Its discount and invoice go through `/booth-actions/*` only (§27).
 - **Operasional sees two menus** (`PAGE_ACCESS`: `floorplan`, `ops`) and uses every Studio feature (draw, move, price, tiers, presets, blueprint, save, publish) **except registering a client / brand**:
   - Client (`tenantLocked = !canRegisterTenant(role)` in `AdminDashboard.jsx` → `PropertyPanel`): no "Daftarkan" / "Lengkapi Biodata" / "Lepas Tenant", the tenant block is read-only, booth status and private discount are disabled. The sidebar hides "Katalog Invoice" (`canAccessPage(role, 'invoices')`).
   - Server: `POST /orders/checkout` is refused (403, `denyRoles` in `ACCESS_RULES`). `POST /floorplan/save` by this role keeps every existing booth's status, tenant, biodata, exhibitor id and private discount from the booths table, whatever the canvas sends; a new booth is saved as Available without a tenant. Invoices, orders, exhibitors, stats, settings and users stay closed (403).
@@ -432,3 +433,26 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Moving never changes an object.** `normalizeScaledObject` only runs on a real resize (scale ≠ 1): a plain move no longer rounds booth sizes to 0,1 m, recomputes venue label fonts, or grows venue shapes by their stroke.
 - **Rebuilt elements are selected after the transform** (`selectAfterTransform` in `object:modified`). Selecting them immediately re-ended the transform: resizing a library element or door by its handles produced thousands of copies and a stack overflow.
 - Tests: `server/test/copy.test.js`. Browser check: every element type × Duplikasi / copy-paste / Ctrl-drag / move gives an identical serialization except id & position.
+
+---
+
+## 27. Aksi Booth Sales Lock (`boothActionRoutes.js`, `utils/boothDiscount.js`, `SalesBoothActions.jsx`)
+- **Pop up.** In the read-only Studio (role Sales) a click on any booth opens `SalesBoothActions`: a popover beside the booth on a wide screen, a bottom sheet below 768 px. It closes with a click outside (capture phase, so a click on another booth switches booths), the X button, or Esc. The open booth is outlined on the canvas (`highlightBoothCode`, drawn in `after:render`, never exported). The layout stays locked.
+- **The server decides the buttons** (`actionsFor()` in `GET /api/booth-actions/summary`); the same function guards the POST endpoints, so the pop up and the API never disagree.
+  - Available: all three. "Buat Invoice" on a booth without tenant leads to Booking Manual first (`mode: 'booking'`).
+  - Reserved: "Buat Invoice" (or "Lihat Invoice" once one exists), "Lihat/Ubah Booking", "Beri Diskon".
+  - Sold: only "Lihat Invoice"; the others are disabled with the reason.
+  - Maintenance: everything disabled, "Booth sedang maintenance".
+- **Booking Manual** = `POST /orders/checkout` with `bookingType: 'booking'` + `deferInvoice: true` (staff only): order + booth Reserved + tenant on the canvas (`applyBoothChangesToCanvas`), **no invoice yet** (`orders.invoice_number = ''`, note in `orders.notes`).
+  - An open booking without invoice is never undone by older canceled invoices of the booth: `syncPaymentStatusFromInvoices` (`openBookingWithoutInvoice`) and `POST /floorplan/save` (`contractStateFor`) both skip the "all canceled → available" rule for it.
+  - "Lihat/Ubah Booking" = `PUT /orders/update-tenant` (also `notes`).
+- **Beri Diskon** = `POST /api/booth-actions/discount`. The form is `BoothDiscountFields` (shared with the Property Inspector); the save is `saveBoothDiscount()` (shared with `POST /invoices/sync-booth-discount`): booth row, `recalcContract`, canvas. Never write a second discount logic.
+  - The price comes from the booth row, never from the request. The reason is mandatory for a discount > 0.
+  - Sales limit (`readSalesDiscountLimit`, Setting > Aturan Booking): `salesMaxDiscountPercent` (default 10) of the booth price and, when > 0, `salesMaxDiscountAmount` rupiah. Above it: 403 `DISCOUNT_OVER_LIMIT`, nothing is saved (there is no approval queue). Only the Super Admin can change the limit (`POST /invoices/config` keeps the stored values for other roles). Finance / Super Admin are not limited.
+- **Buat Invoice** = `POST /api/booth-actions/invoice`: one unpaid `full` invoice from `draftInvoiceRow(booth)` (price − private discount, PPN from Setting for Sales; totals from the form are ignored). The same row is the preview (`invoicePreview.invoice`, shown with `InvoiceA4View isLivePreview`).
+  - Refused without a tenant (409 `NEED_BOOKING`) and when the contract already has a live invoice (409 `CONTRACT_HAS_INVOICES` + that invoice, shown as "Lihat Invoice"). The open order gets the invoice number.
+  - The issued invoice opens in `InvoiceA4View` (`allowSend`): Download PDF, Print, Kirim WhatsApp. There is no public invoice link (§12, §20).
+- **Access.** `/booth-actions/*`: Sales, Finance, Super Admin (`ACCESS_RULES`). Operations: 403 (outside `OPERATIONS_AREA`); visitors: 401.
+- **Audit.** Discount and invoice write their own entries (category `Booth`, `req.skipAudit`) with the values before and after in the summary and `details_json`. Booking and tenant edits log "status (tenant) → status · brand" through `AUDIT_RULES` (`boothBefore`).
+- **No reload.** Every action returns the fresh summary; `applyServerBooth` repaints that booth (`updateBoothAppearance`). The read-only Studio never saves the canvas: the server writes the same change into `canvas_fabric_json`.
+- Tests: `server/test/sales-aksi.test.js`.

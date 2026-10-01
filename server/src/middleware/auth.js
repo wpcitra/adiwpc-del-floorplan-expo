@@ -81,6 +81,9 @@ const ACCESS_RULES = [
     denyMessage: 'Role Operasional tidak dapat mendaftarkan tenant / brand.' },
   { methods: ['GET'], path: /^\/(orders|exhibitors)\/check-client$/, access: 'public' },
 
+  // Booth actions of the Sales pop up in the Studio (summary, "Beri Diskon" with the Sales limit, "Buat Invoice")
+  { methods: ['GET', ...WRITE], path: /^\/booth-actions(\/.*)?$/, access: [...SALES, ...FINANCE] },
+
   // Invoices: finance owns billing, including the private booth discount (sales reads invoices only)
   { methods: ['GET'], path: /^\/invoices\/config$/, access: 'public' },
   { methods: ['POST'], path: /^\/invoices\/sync-booth-discount$/, access: FINANCE },

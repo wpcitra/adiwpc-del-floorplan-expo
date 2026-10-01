@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../db.js';
-import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
+import { syncPaymentStatusFromInvoices, applyBoothChangesToCanvas } from '../utils/syncPaymentStatus.js';
 import { getContractInvoices, getContract, boothContractValue, invoicePaidAmount, invoiceCodeTokens, removeBoothFromInvoice, contractValueForCode } from '../utils/contractBilling.js';
 import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
 import { clusterCheckoutBooths, computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
@@ -48,6 +48,13 @@ router.post('/checkout', (req, res) => {
     if (!req.user && !PUBLIC_BOOKING_TYPES.includes(bookingType)) {
       return res.status(400).json({ success: false, error: 'Metode pembayaran tidak tersedia. Pilih "Booking Dulu" atau "Transfer Bank Manual".' });
     }
+    // Sales books a booth (Reserved); recording a payment stays with Finance / Super Admin
+    const isSales = req.user?.role === 'sales';
+    if (isSales && !PUBLIC_BOOKING_TYPES.includes(bookingType)) {
+      return res.status(403).json({ success: false, code: 'FORBIDDEN', error: 'Role Sales hanya dapat membuat booking (Reserved). Pembayaran dicatat oleh Finance.' });
+    }
+    // "Booking Manual" (staff): the booth is reserved now and the invoice is issued later with "Buat Invoice"
+    const deferInvoice = Boolean(req.user) && req.body.deferInvoice === true && bookingType === 'booking';
 
     // Determine status based on bookingType:
     // 1. 'payment_gateway' -> PAID & sold immediately
@@ -136,6 +143,14 @@ router.post('/checkout', (req, res) => {
       const taken = targetBooths.filter(b => ['sold', 'reserved', 'booked'].includes(lower(b.status)));
       if (taken.length && !req.user) {
         throw httpError(409, `Booth ${taken.map(b => b.code).join(', ')} baru saja dipesan / terjual oleh pengunjung lain. Booth tersebut dikeluarkan dari pilihan Anda.`, { unavailable: taken.map(b => b.code) });
+      }
+      // Sales never re-assigns a booked booth (two sales people booking the same booth: the second one is refused)
+      if (taken.length && isSales) {
+        throw httpError(409, `Booth ${taken.map(b => b.code).join(', ')} sudah dibooking${taken[0].owner_name ? ` oleh ${taken[0].owner_name}` : ''}. Pilih booth lain.`, { code: 'BOOTH_TAKEN', unavailable: taken.map(b => b.code) });
+      }
+      const blocked = targetBooths.filter(b => lower(b.status) === 'maintenance');
+      if (blocked.length && (isSales || !req.user)) {
+        throw httpError(409, `Booth ${blocked.map(b => b.code).join(', ')} sedang maintenance.`, { code: 'BOOTH_MAINTENANCE', unavailable: blocked.map(b => b.code) });
       }
       // A booth in a project belongs to one exhibitor: if another exhibitor already paid for it, it must be released
       // first ("Lepas Tenant"), otherwise both exhibitors' invoices would count toward the same booth.
@@ -235,7 +250,7 @@ router.post('/checkout', (req, res) => {
       const invoiceItems = isDpInvoice
         ? [{ id: 'item-1', description: `Uang Muka (DP ${resolvedDpPercent}%) Sewa Booth #${codeLabel} - ${resolvedPaymentMethod}`, qty: 1, unitPrice: dpAmount, amount: dpAmount }]
         : items;
-      db.prepare(`
+      if (!deferInvoice) db.prepare(`
         INSERT INTO invoices (
           id, invoice_number, floorplan_id, booth_id, booth_code,
           client_name, company_name, client_email, client_phone,
@@ -287,7 +302,7 @@ router.post('/checkout', (req, res) => {
         contract.method,
         contract.display
       );
-      const invoiceNumbers = [invoiceNumber];
+      const invoiceNumbers = deferInvoice ? [] : [invoiceNumber];
       const warnings = [];
 
       // One order row per booth (dashboard & reports count booths, not groups): its share of the invoice
@@ -295,20 +310,29 @@ router.post('/checkout', (req, res) => {
       const insertOrder = db.prepare(`
         INSERT INTO orders (
           id, floorplan_id, booth_id, booth_code, company_name, pic_name, email, phone, total_amount, payment_method, payment_status,
-          invoice_number, brand_category, source, admin_name, exhibitor_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          invoice_number, brand_category, source, admin_name, exhibitor_id, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       priced.forEach((p, i) => {
         const orderId = `ORD-${stamp}${priced.length > 1 ? `-${i + 1}` : ''}`;
         orderIds.push(orderId);
         insertOrder.run(orderId, floorplanId, p.b.id, p.b.code, brandName, fullName || brandName, email, phone,
           subtotal - discount > 0 ? Math.round((contractTotal * (p.price - p.discount)) / (subtotal - discount)) : 0,
-          resolvedPaymentMethod, resolvedPaymentStatus, invoiceNumber, brandCategory || '', registrationSource, adminName, exhibitorId);
+          resolvedPaymentMethod, resolvedPaymentStatus, deferInvoice ? '' : invoiceNumber, brandCategory || '', registrationSource, adminName, exhibitorId,
+          String(notes || '').trim().slice(0, 500));
       });
 
       // Booths that touch each other are still SHOWN as one booth on the floorplan (display only, §18)
       const clusterInfo = clusterCheckoutBooths(floorplanId, codes, exhibitorId)
-        .map(c => ({ codes: sortCodes([...c.targets, ...c.existing]), newBooths: c.targets, invoiceNumber }));
+        .map(c => ({ codes: sortCodes([...c.targets, ...c.existing]), newBooths: c.targets, invoiceNumber: deferInvoice ? null : invoiceNumber }));
+
+      // Without an invoice the contract sync below does not reach these booths: the canvas gets the booking here
+      if (deferInvoice) {
+        applyBoothChangesToCanvas(floorplanId, targetBooths.map(b => ({
+          code: b.code, id: b.id, boothStatus: resolvedBoothStatus, ownerName: brandName, exhibitorId,
+          extra: { picName: fullName || brandName, email, phone, brandCategory: brandCategory || '', registrationSource, registeredBy: adminName }
+        })));
+      }
 
       // 8. Booth status, tenant & canvas follow the contracts (precise matching, AGENTS.md §12)
       try {
@@ -339,7 +363,7 @@ router.post('/checkout', (req, res) => {
       order: {
         id: result.orderIds[0],
         orderIds: result.orderIds,
-        invoiceNumber: result.invoiceNumbers[0],
+        invoiceNumber: result.invoiceNumbers[0] || null,
         invoiceNumbers: result.invoiceNumbers,
         contracts: result.clusters,
         boothCodes: result.boothCodes,
@@ -351,7 +375,7 @@ router.post('/checkout', (req, res) => {
         phone,
         // The invoice just issued, exactly as Manajemen Invoice stores it: the registrant views / downloads it
         // right away (visitors cannot open invoices afterwards; they get this one copy)
-        invoice: buildInvoiceRow(result.invoiceNumbers[0]),
+        invoice: result.invoiceNumbers[0] ? buildInvoiceRow(result.invoiceNumbers[0]) : null,
         // computed by the server (price - discount + PPN), not the value sent by the form
         totalAmount: result.contractTotal,
         taxRate: result.taxRate,
@@ -753,6 +777,14 @@ router.put('/update-tenant', (req, res) => {
             phone = ?
         WHERE (booth_id = ? OR (floorplan_id = ? AND booth_code = ?))
       `).run(brandName, fullName, brandCategory || '', email, phone, boothId || '', fpId, boothCode || '');
+
+      // Note of the booking (Booking Manual): only when the form sent one
+      if (req.body.notes !== undefined) {
+        db.prepare(`
+          UPDATE orders SET notes = ?
+          WHERE floorplan_id = ? AND deleted_at IS NULL AND UPPER(COALESCE(payment_status, '')) != 'CANCELED' AND LOWER(TRIM(booth_code)) = LOWER(TRIM(?))
+        `).run(String(req.body.notes || '').trim().slice(0, 500), fpId, boothCode || '');
+      }
 
       // 3. Update invoices
       db.prepare(`

@@ -964,7 +964,9 @@ for (const col of [
 for (const col of [
   "ALTER TABLE booths ADD COLUMN exhibitor_id TEXT DEFAULT ''",
   "ALTER TABLE booths ADD COLUMN merge_separate INTEGER DEFAULT 0",
-  "ALTER TABLE orders ADD COLUMN exhibitor_id TEXT DEFAULT ''"
+  "ALTER TABLE orders ADD COLUMN exhibitor_id TEXT DEFAULT ''",
+  // Note of a manual booking (Sales); copied to the invoice when it is generated
+  "ALTER TABLE orders ADD COLUMN notes TEXT DEFAULT ''"
 ]) {
   try { db.exec(col); } catch (e) {}
 }

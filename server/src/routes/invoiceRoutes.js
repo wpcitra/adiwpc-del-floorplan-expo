@@ -10,6 +10,7 @@ import { taxOptionsFrom, readTaxSettings } from '../utils/taxSettings.js';
 import { writeAuditLog } from '../middleware/audit.js';
 import { clientIp } from '../middleware/auth.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
+import { saveBoothDiscount } from '../utils/boothDiscount.js';
 
 const router = express.Router();
 
@@ -81,6 +82,9 @@ const DEFAULT_SYSTEM_CONFIG = {
   publicBookingTax: true,
   // Smallest DP (% of the contract) a visitor may choose when registering online
   publicMinDpPercent: 20,
+  // Largest private discount Sales may give per booth: % of the booth price, and an optional cap in Rp (0 = no Rp cap)
+  salesMaxDiscountPercent: 10,
+  salesMaxDiscountAmount: 0,
   bookingExpiryMinutes: 15,
   isPublicBookingActive: true,
   isPaymentActive: true,
@@ -131,6 +135,13 @@ router.post('/config', (req, res) => {
       ...config,
       updatedAt: new Date().toISOString()
     };
+
+    // The Sales discount limit is set by the Super Admin only (Finance edits the rest of this configuration)
+    if (req.user?.role !== 'superadmin') {
+      for (const key of ['salesMaxDiscountPercent', 'salesMaxDiscountAmount']) {
+        if (existingConfig[key] !== undefined) merged[key] = existingConfig[key]; else merged[key] = DEFAULT_SYSTEM_CONFIG[key];
+      }
+    }
 
     // One primary bank account: Setting > No. Rekening (bank1*) and Desain Layout Invoice (bankName / accountNumber /
     // accountName / bankBranch, printed on the invoice) edit the same account. The side that changed wins.
@@ -1233,72 +1244,15 @@ router.post('/sync-booth-discount', (req, res) => {
       return res.status(400).json({ success: false, error: 'Kode booth atau ID booth wajib diisi' });
     }
 
-    const numPrice = Number(price) || 5000000;
-    const numDiscVal = Number(discountValue) || 0;
-    let calcDiscountAmount = Number(discountAmount) || 0;
-
-    if (discountType === 'percentage') {
-      calcDiscountAmount = Math.round((numPrice * Math.min(100, Math.max(0, numDiscVal))) / 100);
-    } else {
-      calcDiscountAmount = Math.min(numPrice, Math.max(0, Math.round(numDiscVal)));
-    }
-
-    const netTotal = Math.max(0, numPrice - calcDiscountAmount);
-
-    const syncTransaction = db.transaction(() => {
-      // 1. Update the booth in this floorplan only (price + private discount define the contract value)
-      db.prepare(`
-        UPDATE booths 
-        SET price = COALESCE(?, price), discount_type = ?, discount_value = ?, discount_amount = ?, discount_reason = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE floorplan_id = ? AND deleted_at IS NULL AND (LOWER(TRIM(code)) = LOWER(TRIM(?)) OR (? != '' AND id = ?))
-      `).run(req.body.price !== undefined ? numPrice : null, discountType, numDiscVal, calcDiscountAmount, discountReason.trim(), floorplanId, boothCode || '', boothId || '', boothId || '');
-
-      // 2. The booth's contract (also a multi-booth "A-01+A-04" invoice): the unpaid Penuh / Pelunasan follows the
-      //    price - discount (+ PPN) of all its booths (subtotal, discount line, total). DP and paid invoices are never
-      //    rewritten; add-on invoices are untouched.
-      recalcContract(floorplanId, boothCode, boothId);
-
-      // 3. Update active floorplan canvas_fabric_json if exists
-      if (floorplanId) {
-        const fp = db.prepare('SELECT canvas_fabric_json FROM floorplans WHERE id = ?').get(floorplanId);
-        if (fp && fp.canvas_fabric_json) {
-          try {
-            const fabric = JSON.parse(fp.canvas_fabric_json);
-            if (fabric.objects) {
-              fabric.objects.forEach(obj => {
-                if (obj.isBooth && (obj.boothData?.code === boothCode || obj.boothData?.id === boothId)) {
-                  if (obj.boothData) {
-                    obj.boothData.discountType = discountType;
-                    obj.boothData.discountValue = numDiscVal;
-                    obj.boothData.discountAmount = calcDiscountAmount;
-                    obj.boothData.discountReason = discountReason.trim();
-                  }
-                }
-              });
-              db.prepare('UPDATE floorplans SET canvas_fabric_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
-                JSON.stringify(fabric),
-                floorplanId
-              );
-            }
-          } catch (e) {}
-        }
-      }
+    const discount = saveBoothDiscount({
+      floorplanId, boothCode, boothId, price: req.body.price, numPrice: Number(price) || 5000000,
+      discountType, discountValue, discountReason
     });
-
-    syncTransaction();
-    syncPaymentStatusFromInvoices();
 
     res.json({
       success: true,
       message: `Diskon booth #${boothCode} berhasil disimpan & disinkronkan langsung ke Invoice!`,
-      discount: {
-        discountType,
-        discountValue: numDiscVal,
-        discountAmount: calcDiscountAmount,
-        discountReason: discountReason.trim(),
-        subtotal: numPrice,
-        netTotal
-      }
+      discount
     });
   } catch (error) {
     console.error("Sync booth discount error:", error);

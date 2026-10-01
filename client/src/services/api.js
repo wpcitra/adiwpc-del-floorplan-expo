@@ -1011,6 +1011,37 @@ export const api = {
     }
   },
 
+  // 44b. Booth actions of the Sales pop up in the Studio (summary, Beri Diskon, Buat Invoice)
+  async fetchBoothActionSummary({ floorplanId, boothCode, boothId }) {
+    try {
+      const params = new URLSearchParams({ floorplanId: floorplanId || '', boothCode: boothCode || '', boothId: boothId || '' });
+      const res = await apiFetch(`${API_BASE_URL}/booth-actions/summary?${params.toString()}`);
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi.' };
+    }
+  },
+  async saveBoothActionDiscount(payload) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/booth-actions/discount`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi. Diskon belum tersimpan.' };
+    }
+  },
+  async generateBoothInvoice(payload) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/booth-actions/invoice`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi. Invoice belum diterbitkan.' };
+    }
+  },
+
   // 45. Fetch soft-deleted projects in Trash
   async fetchTrashProjects() {
     try {

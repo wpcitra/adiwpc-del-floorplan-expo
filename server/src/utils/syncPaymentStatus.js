@@ -125,6 +125,50 @@ function applyBoothVisual(obj, targetBoothStatus, targetOwner) {
 }
 
 /**
+ * Write booth status / tenant changes into a floorplan's canvas_fabric_json (only when something changed).
+ * changes: [{ code, id, boothStatus, ownerName, exhibitorId, extra }] - `extra` (optional) is merged into boothData
+ * (tenant biodata of a booking that has no invoice yet).
+ */
+export function applyBoothChangesToCanvas(fpId, changes) {
+  const fp = db.prepare('SELECT canvas_fabric_json FROM floorplans WHERE id = ?').get(fpId);
+  if (!fp?.canvas_fabric_json) return;
+  try {
+    const fabric = JSON.parse(fp.canvas_fabric_json);
+    if (!Array.isArray(fabric.objects)) return;
+    let changed = false;
+    fabric.objects.forEach(obj => {
+      if (!obj.boothData) return;
+      const code = obj.boothData.code || obj.boothData.booth_number;
+      const change = changes.find(c => (obj.boothData.id && (obj.boothData.id === c.id || c.id.endsWith(`_${obj.boothData.id}`))) || sameBooth(code, c.code));
+      if (!change) return;
+      const extra = change.extra || {};
+      const extraSame = Object.keys(extra).every(k => (obj.boothData[k] ?? '') === (extra[k] ?? ''));
+      if (extraSame && obj.boothData.status === change.boothStatus && (obj.boothData.ownerName || '') === change.ownerName && (obj.boothData.exhibitorId || '') === change.exhibitorId) return;
+      Object.assign(obj.boothData, extra);
+      obj.boothData.status = change.boothStatus;
+      obj.boothData.ownerName = change.ownerName;
+      obj.boothData.exhibitorId = change.exhibitorId;
+      applyBoothVisual(obj, change.boothStatus, change.ownerName);
+      changed = true;
+    });
+    if (changed) {
+      db.prepare('UPDATE floorplans SET canvas_fabric_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(fabric), fpId);
+    }
+  } catch (e) {
+    console.error(`Error updating canvas fabric in sync for floorplan ${fpId}:`, e);
+  }
+}
+
+// A manual booking by Sales has no invoice until "Buat Invoice" (orders.invoice_number = ''). Older, canceled invoices
+// of the same booth must not turn that new booking back into Available.
+const openBookingWithoutInvoice = (booth) => Boolean(db.prepare(`
+  SELECT 1 FROM orders
+  WHERE floorplan_id = ? AND deleted_at IS NULL AND UPPER(COALESCE(payment_status, '')) != 'CANCELED'
+    AND TRIM(COALESCE(invoice_number, '')) = '' AND LOWER(TRIM(booth_code)) = LOWER(TRIM(?))
+  LIMIT 1
+`).get(booth.floorplan_id, booth.code));
+
+/**
  * Universal Payment & Booth Status Synchronizer
  * Booth status, tenant and order payment status follow the booth CONTRACT computed from all its
  * active invoices (DP + Pelunasan / Penuh), not from a single "latest" invoice. Add-on (facility)
@@ -147,6 +191,7 @@ export function syncPaymentStatusFromInvoices() {
       for (const booth of booths) {
         const contract = summarizeContract(getContractInvoices(booth.floorplan_id, booth.code, booth.id), booth);
         if (!contract.boothStatus) continue;
+        if (contract.status === 'CANCELED' && openBookingWithoutInvoice(booth)) continue;
 
         // Exhibitor ID follows the contract (auto-merge groups booths per exhibitor, AGENTS.md §18)
         const exhibitorId = contract.boothStatus === 'available' ? '' : (contract.exhibitorId || booth.exhibitor_id || '');
@@ -160,32 +205,7 @@ export function syncPaymentStatusFromInvoices() {
       }
 
       // Keep canvas_fabric_json in sync, writing a floorplan only when one of its booths changed
-      for (const [fpId, changes] of canvasChanges) {
-        const fp = db.prepare('SELECT canvas_fabric_json FROM floorplans WHERE id = ?').get(fpId);
-        if (!fp?.canvas_fabric_json) continue;
-        try {
-          const fabric = JSON.parse(fp.canvas_fabric_json);
-          if (!Array.isArray(fabric.objects)) continue;
-          let changed = false;
-          fabric.objects.forEach(obj => {
-            if (!obj.boothData) return;
-            const code = obj.boothData.code || obj.boothData.booth_number;
-            const change = changes.find(c => (obj.boothData.id && (obj.boothData.id === c.id || c.id.endsWith(`_${obj.boothData.id}`))) || sameBooth(code, c.code));
-            if (!change) return;
-            if (obj.boothData.status === change.boothStatus && (obj.boothData.ownerName || '') === change.ownerName && (obj.boothData.exhibitorId || '') === change.exhibitorId) return;
-            obj.boothData.status = change.boothStatus;
-            obj.boothData.ownerName = change.ownerName;
-            obj.boothData.exhibitorId = change.exhibitorId;
-            applyBoothVisual(obj, change.boothStatus, change.ownerName);
-            changed = true;
-          });
-          if (changed) {
-            db.prepare('UPDATE floorplans SET canvas_fabric_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(fabric), fpId);
-          }
-        } catch (e) {
-          console.error(`Error updating canvas fabric in sync for floorplan ${fpId}:`, e);
-        }
-      }
+      for (const [fpId, changes] of canvasChanges) applyBoothChangesToCanvas(fpId, changes);
     });
 
     syncTransaction();
