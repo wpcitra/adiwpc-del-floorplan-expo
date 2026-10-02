@@ -34,6 +34,8 @@ import { canAccessPage } from '../../utils/roles';
 
 // Live Denah shows only the floorplan the admin published, even for a logged-in admin
 const PUBLIC_VIEW = { view: 'public' };
+// Background version check of the live page (a few bytes; the floorplan is reloaded only when it changed)
+const LIVE_POLL_MS = 5000;
 
 // Public link of one published floorplan: /live/<slug> (several floorplans can be live, each on its own link)
 const slugFromPath = () => {
@@ -72,6 +74,8 @@ export default function LiveFloorplan() {
   const [mergeTick, setMergeTick] = useState(0);
   const [groupDetail, setGroupDetail] = useState(null);
   const liveLoadSeqRef = useRef(0);
+  // floorplan the view was last fitted for (a background refresh keeps the visitor's zoom and position)
+  const fittedFloorplanRef = useRef('');
   const captionHitsRef = useRef([]);
   const captionFocusIdRef = useRef(null);
   const captionTipTimerRef = useRef(null);
@@ -258,6 +262,7 @@ export default function LiveFloorplan() {
     systemConfigRef.current = systemConfig;
   }, [systemConfig]);
   const lastStateStrRef = useRef('');
+  const liveVersionRef = useRef('');
 
   // Dynamic categories strictly derived from booths currently existing on the active floorplan
   const availableCategories = useMemo(() => {
@@ -493,14 +498,51 @@ export default function LiveFloorplan() {
     }
   };
 
+  // Background refresh (AGENTS.md §35): every few seconds only a tiny version check; the floorplan itself is fetched
+  // and redrawn only when that version changed. Nothing runs while the tab is hidden, and nothing is replaced while
+  // the visitor has booths selected or the booking form open (it is picked up at the next check).
   useEffect(() => {
-    loadFloorplan();
-    const interval = setInterval(loadFloorplan, 3000);
-    const handleFocus = () => loadFloorplan();
-    window.addEventListener('focus', handleFocus);
+    let alive = true;
+    let busy = false;
+    let lastFullLoad = 0;
+    const versionParams = () => {
+      const q = new URLSearchParams(window.location.search);
+      return { slug: slugFromPath(), id: liveFpIdRef.current || q.get('templateId') || q.get('project') || q.get('hallId') };
+    };
+    const refresh = async ({ initial = false } = {}) => {
+      if (busy || (!initial && document.hidden)) return;
+      busy = true;
+      try {
+        if (initial) {
+          await loadFloorplan();
+          lastFullLoad = Date.now();
+          const v = await api.fetchLiveVersion(versionParams());
+          if (alive && v) liveVersionRef.current = v.version;
+          return;
+        }
+        if (showBookingModalRef.current || selectedBoothObjsRef.current.length > 0) return;
+        const v = await api.fetchLiveVersion(versionParams());
+        if (!alive) return;
+        // version unknown (offline, older server): fall back to a full check, but rarely
+        const changed = v ? v.version !== liveVersionRef.current : Date.now() - lastFullLoad > 20000;
+        if (!changed) return;
+        await loadFloorplan();
+        lastFullLoad = Date.now();
+        if (alive && v) liveVersionRef.current = v.version;
+      } finally {
+        busy = false;
+      }
+    };
+    refresh({ initial: true });
+    const interval = setInterval(refresh, LIVE_POLL_MS);
+    const onVisible = () => { if (!document.hidden) refresh(); };
+    window.addEventListener('focus', onVisible);
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
+      alive = false;
       clearInterval(interval);
-      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('focus', onVisible);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [loadFloorplan]);
 
@@ -594,16 +636,31 @@ export default function LiveFloorplan() {
     }
     const rawObjects = parsedState?.objects || [];
 
-    // Clear previous objects to prevent ghost elements
-    canvas.clear();
+    // No canvas.clear() before the load: the old drawing stays on screen while the new objects (and their images)
+    // are prepared, and everything is swapped and painted in one go at the end. A cleared canvas during that wait
+    // was the blink of the live page. The visitor's zoom and position are kept as well.
+    const fpKey = liveFpIdRef.current || 'default';
+    const firstLoadOfThisFloorplan = fittedFloorplanRef.current !== fpKey;
+    const viewport = canvas.viewportTransform ? [...canvas.viewportTransform] : null;
+
+    // Operational elements published to visitors are fetched before the swap, so they do not pop in afterwards
+    let opsRaws = [];
+    try {
+      if (liveFpIdRef.current) opsRaws = (await api.fetchPublicOpsElements(liveFpIdRef.current)).map(e => e.object).filter(Boolean);
+    } catch (e) { opsRaws = []; }
+    const opsObjs = opsRaws.length ? await fabric.util.enlivenObjects(opsRaws).catch(() => []) : [];
+    if (loadSeq !== liveLoadSeqRef.current || fabricRef.current !== canvas) return;
+
+    canvas.renderOnAddRemove = false;
+    await canvas.loadFromJSON(parsedState);
+    if (loadSeq !== liveLoadSeqRef.current || fabricRef.current !== canvas) return;
     canvas.backgroundColor = '#F8FAFC';
+    if (viewport && !firstLoadOfThisFloorplan) canvas.setViewportTransform(viewport);
 
     // Deselect any previous selection
     setSelectedBooths([]);
     selectedBoothObjsRef.current = [];
     setHoveredBooth(null);
-
-    await canvas.loadFromJSON(parsedState);
 
     let totalBooths = 0;
     let availCount = 0;
@@ -1135,37 +1192,34 @@ export default function LiveFloorplan() {
         free: freeCount
       });
 
-      canvas.requestRenderAll();
-
       // Same corner setting as the Studio (the restyle above uses the Live colours only)
       applyBoothCorners(canvas, boothCornerRef.current);
+
+      // Denah Operasional: only the operational elements an admin chose to publish are shown to visitors
+      if (opsObjs.length) {
+        opsObjs.forEach((obj, i) => {
+          hydrateBoothObject(obj, opsRaws[i], []);
+          obj.set({ selectable: false, evented: false, hasControls: false, hasBorders: false });
+          if (obj.type?.toLowerCase() === 'i-text') obj.set({ editable: false });
+          obj.isOpsItem = false;
+          obj.isPublicOpsItem = true;
+          canvas.add(obj);
+        });
+        resolveAnchors(canvas, opsObjs);
+      }
+
       // Adjacent booths of the same exhibitor are drawn as one booth (positions unchanged)
       refreshMergeRendering(canvas, { enabled: autoMergeRef.current });
       setMergeTick(t => t + 1);
 
-      setTimeout(() => {
+      // One paint for the whole swap. The view is fitted only the first time a floorplan is shown: a background
+      // refresh never moves or zooms what the visitor is looking at.
+      canvas.renderOnAddRemove = true;
+      if (firstLoadOfThisFloorplan) {
+        fittedFloorplanRef.current = fpKey;
         fitToScreen();
-      }, 150);
-
-      // Denah Operasional: only the operational elements an admin chose to publish are shown to visitors
-      const opsFpId = liveFpIdRef.current;
-      if (opsFpId) {
-        const raws = (await api.fetchPublicOpsElements(opsFpId)).map(e => e.object).filter(Boolean);
-        if (raws.length && loadSeq === liveLoadSeqRef.current && fabricRef.current === canvas) {
-          const opsObjs = await fabric.util.enlivenObjects(raws);
-          if (loadSeq !== liveLoadSeqRef.current) return;
-          opsObjs.forEach((obj, i) => {
-            hydrateBoothObject(obj, raws[i], []);
-            obj.set({ selectable: false, evented: false, hasControls: false, hasBorders: false });
-            if (obj.type?.toLowerCase() === 'i-text') obj.set({ editable: false });
-            obj.isOpsItem = false;
-            obj.isPublicOpsItem = true;
-            canvas.add(obj);
-          });
-          resolveAnchors(canvas, opsObjs);
-          canvas.requestRenderAll();
-        }
       }
+      canvas.renderAll();
   }, [fitToScreen]);
 
   // 3. Initialize Interactive Canvas once on mount

@@ -1,4 +1,5 @@
 import express from 'express';
+import crypto from 'crypto';
 import db from '../db.js';
 import { getContract, recalcContract, invoiceCodeTokens } from '../utils/contractBilling.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
@@ -289,6 +290,42 @@ router.get('/list', (req, res) => {
 });
 
 // GET /api/floorplan/active - Fetch current active/published floorplan with sibling halls
+// GET /api/floorplan/live-version?slug=|id= : a small fingerprint of what the Live Floorplan shows (AGENTS.md §35).
+// The public page polls THIS in the background and loads the floorplan again only when the fingerprint changes.
+// Computed from the stored data (never from the aliased public payload), so it is the same on every server instance.
+router.get('/live-version', (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const cols = 'id, title, event_id, canvas_fabric_json, metadata_json, blueprint_json';
+    let fp = null;
+    if (req.query.slug) {
+      fp = db.prepare(`SELECT ${cols} FROM floorplans WHERE public_slug = ? AND deleted_at IS NULL ${PUBLIC_HALL_FILTER}`).get(String(req.query.slug));
+      if (!fp) return res.status(404).json({ success: false, code: 'LINK_NOT_FOUND' });
+    }
+    if (!fp && req.query.id) fp = db.prepare(`SELECT ${cols} FROM floorplans WHERE id = ? AND deleted_at IS NULL ${PUBLIC_HALL_FILTER}`).get(String(req.query.id));
+    if (!fp) fp = db.prepare(`SELECT ${cols} FROM floorplans WHERE status = 'published' AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 1`).get();
+    if (!fp) return res.json({ success: true, id: null, version: 'empty' });
+
+    const hash = crypto.createHash('sha1');
+    hash.update([fp.id, fp.title, fp.event_id, fp.canvas_fabric_json, fp.metadata_json, fp.blueprint_json].map(v => String(v ?? '')).join('\u0001'));
+    db.prepare(`SELECT code, status, owner_name, category, price, width_m, height_m, exhibitor_id, merge_separate FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL ORDER BY code`)
+      .all(fp.id).forEach(b => hash.update(JSON.stringify(b)));
+    // operational elements published to visitors, the public switches of Setting, and the list of live floorplans
+    db.prepare(`SELECT id, object_json FROM ops_elements WHERE floorplan_id = ? AND deleted_at IS NULL AND public_visible = 1 ORDER BY sort_order`)
+      .all(fp.id).forEach(e => hash.update(`${e.id}:${e.object_json}`));
+    try {
+      const cfg = JSON.parse(db.prepare('SELECT config_json FROM invoice_settings WHERE id = ?').get('default_template')?.config_json || '{}');
+      hash.update(`${cfg.isPublicBookingActive !== false}|${cfg.isPaymentActive !== false}`);
+    } catch (e) { /* default switches */ }
+    db.prepare(`SELECT id, title, public_slug FROM floorplans WHERE status = 'published' AND deleted_at IS NULL ORDER BY id`).all().forEach(h => hash.update(JSON.stringify(h)));
+
+    res.json({ success: true, id: fp.id, version: hash.digest('hex') });
+  } catch (error) {
+    console.error('Live version error:', error);
+    res.status(500).json({ success: false, error: 'Gagal memeriksa versi denah' });
+  }
+});
+
 router.get('/active', (req, res) => {
   try {
     // Ensure all booth and order statuses strictly follow the Invoice & Tenant Management page

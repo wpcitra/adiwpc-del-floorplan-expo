@@ -11,6 +11,21 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/a
 
 export const api = {
   // 1. Fetch active floorplan from SQLite database with multi-hall support
+  // Fingerprint of what the Live Floorplan shows (a few bytes): polled in the background instead of the whole floorplan.
+  // null = could not be checked (offline, older server); { notFound: true } = the public link no longer exists.
+  async fetchLiveVersion(params = {}) {
+    try {
+      const qs = new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([, v]) => v))).toString();
+      const res = await apiFetch(`${API_BASE_URL}/floorplan/live-version${qs ? `?${qs}` : ''}`, { cache: 'no-store' });
+      if (res.status === 404) return { notFound: true, version: 'not-found' };
+      if (!res.ok) return null;
+      const json = await res.json();
+      return json?.version ? json : null;
+    } catch (e) {
+      return null;
+    }
+  },
+
   async fetchActiveFloorplan(params = {}) {
     try {
       const qs = new URLSearchParams(params).toString();

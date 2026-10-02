@@ -578,3 +578,14 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Railway**: `railpack.json` installs `chromium` and fonts in the runtime image (`deploy.aptPackages`). A VPS needs `chromium` (or Chrome) installed, or `PUPPETEER_EXECUTABLE_PATH`.
 - The facility form still uses `invoicePrintUtils.js` (its print now waits for the stylesheets; its html2canvas download has the same `oklch()` limit).
 - Tests: `server/test/invoice-pdf.test.js` (the real render is skipped without Chromium or `client/dist`).
+
+---
+
+## 35. Live Floorplan Background Refresh Lock (`floorplanRoutes.js` `/live-version`, `LiveFloorplan.jsx`)
+- **Why.** The live page fetched the whole floorplan (4 requests) every 3 seconds, and each time the data differed it cleared the canvas, waited for the new objects and images, and re-fitted the view. On a real server that wait was a visible blink, and the visitor's zoom and position were lost.
+- **Light polling.** `GET /api/floorplan/live-version?slug=|id=` (public) returns only `{ id, version }`: a hash of what the page shows (canvas, metadata, blueprint, booths, published operational elements, the public booking switches, the list of live floorplans). It is computed from stored data, never from the aliased public payload (§20), so it is identical on every server instance, and it does not run `syncPaymentStatusFromInvoices`.
+  - The page checks it every `LIVE_POLL_MS` (5 s), on focus and when the tab becomes visible; never while the tab is hidden, and never while booths are selected or the booking form is open.
+  - `loadFloorplan()` (the full fetch) runs on the first load, on a hall switch, after a booking, and only when the version changed. If the version cannot be read, a full check runs at most every 20 s.
+- **No blank canvas** (`loadObjectsIntoCanvas`): never call `canvas.clear()` before `loadFromJSON`; the old drawing stays until the new objects, their images and the published operational elements are ready, then everything is swapped and painted once (`renderOnAddRemove = false`, one `renderAll()`).
+  - The view is fitted only the first time a floorplan is shown (`fittedFloorplanRef`); a refresh keeps the visitor's `viewportTransform`.
+- Tests: `server/test/live-version.test.js`. Browser check: idle = one small request per 5 s; a booking made elsewhere appears within ~5 s with no frame where the canvas is empty.
