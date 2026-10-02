@@ -12,6 +12,7 @@ import { clientIp } from '../middleware/auth.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
 import { saveBoothDiscount } from '../utils/boothDiscount.js';
 import { externalizeImages, CONFIG_INLINE_KEYS } from '../utils/uploads.js';
+import { canDeleteInvoice, canDeletePaidInvoice, canRestoreInvoice, cleanDeleteReason, sameInvoiceNumber, DELETE_REASON_MIN } from '../../../shared/invoicePermissions.js';
 
 const router = express.Router();
 
@@ -445,6 +446,68 @@ router.get('/', (req, res) => {
   } catch (error) {
     console.error("Fetch invoices error:", error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ---------- Hapus Invoice, Tempat Sampah & Pulihkan (AGENTS.md §31) ----------
+const rupiahText = (n) => `Rp ${(Number(n) || 0).toLocaleString('id-ID')}`;
+const KIND_LABELS = { dp: 'DP', settlement: 'Pelunasan', full: 'Penuh', facility: 'Fasilitas' };
+const STATUS_LABELS = { PAID: 'Lunas', PARTIAL: 'Uang Muka / DP', PENDING: 'Menunggu Verifikasi', UNPAID: 'Menunggu Bayar', CANCELED: 'Batal' };
+const invoiceStatus = (inv) => String(inv?.payment_status || 'UNPAID').toUpperCase();
+
+// What the confirmation, the trash list and the audit entry show about one invoice
+const invoiceBrief = (inv) => ({
+  id: inv.id,
+  invoiceNumber: inv.invoice_number,
+  kind: kindOf(inv),
+  kindLabel: KIND_LABELS[kindOf(inv)] || 'Invoice',
+  companyName: inv.company_name || inv.client_name || '',
+  boothCode: inv.booth_code || '',
+  floorplanId: inv.floorplan_id || '',
+  totalAmount: Number(inv.total_amount) || 0,
+  paidAmount: invoicePaidAmount(inv),
+  paymentStatus: invoiceStatus(inv),
+  statusLabel: STATUS_LABELS[invoiceStatus(inv)] || invoiceStatus(inv)
+});
+
+const auditInvoice = (req, action, brief, extra = {}) => {
+  req.skipAudit = true; // written here with the invoice number, amount and reason
+  writeAuditLog({
+    user: req.user, action, category: 'Invoice',
+    target: `${brief.invoiceNumber} (${brief.companyName || '-'}, booth ${brief.boothCode || '-'})`,
+    summary: [`${brief.kindLabel} ${rupiahText(brief.totalAmount)}`, brief.statusLabel,
+      brief.paidAmount > 0 ? `sudah dibayar ${rupiahText(brief.paidAmount)}` : '', extra.reason ? `Alasan: ${extra.reason}` : ''].filter(Boolean).join(' · '),
+    method: req.method, path: `/api/invoices${req.path}`, statusCode: 200, ip: clientIp(req),
+    details: { ...brief, ...extra }
+  });
+};
+
+// GET /api/invoices/trash: invoices deleted on their own (Super Admin). Invoices of a project that is itself in the
+// trash are listed there, not here.
+router.get('/trash', (req, res) => {
+  try {
+    if (!canRestoreInvoice(req.user)) return res.status(403).json({ success: false, error: 'Tempat Sampah Invoice hanya untuk Super Admin.' });
+    const rows = db.prepare(`
+      SELECT inv.*, fp.title AS project_title, fp.deleted_at AS project_deleted_at
+      FROM invoices inv LEFT JOIN floorplans fp ON fp.id = inv.floorplan_id
+      WHERE inv.deleted_at IS NOT NULL AND inv.deleted_by IS NOT NULL
+      ORDER BY inv.deleted_at DESC, inv.id DESC LIMIT 500
+    `).all();
+    res.json({
+      success: true,
+      invoices: rows.map(inv => ({
+        ...invoiceBrief(inv),
+        projectTitle: inv.project_title || '',
+        projectInTrash: Boolean(inv.project_deleted_at),
+        deletedAt: inv.deleted_at,
+        deletedBy: inv.deleted_by || '',
+        deletedByRole: inv.deleted_by_role || '',
+        deleteReason: inv.delete_reason || ''
+      }))
+    });
+  } catch (error) {
+    console.error('Invoice trash error:', error);
+    res.status(500).json({ success: false, error: 'Gagal memuat Tempat Sampah Invoice' });
   }
 });
 
@@ -1265,8 +1328,64 @@ router.post('/sync-booth-discount', (req, res) => {
 });
 
 // DELETE /api/invoices/:id - Delete invoice
+// POST /api/invoices/:id/restore: bring a deleted invoice back (Super Admin)
+router.post('/:id/restore', (req, res) => {
+  try {
+    if (!canRestoreInvoice(req.user)) return res.status(403).json({ success: false, error: 'Hanya Super Admin yang dapat memulihkan invoice.' });
+    const invoice = db.prepare('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NOT NULL').get(req.params.id);
+    if (!invoice) return res.status(404).json({ success: false, error: 'Invoice tidak ada di Tempat Sampah' });
+
+    const kind = kindOf(invoice);
+    const isContract = CONTRACT_KINDS.includes(kind) && invoice.floorplan_id && invoice.booth_code;
+    if (invoice.floorplan_id) {
+      const fp = db.prepare('SELECT title, deleted_at FROM floorplans WHERE id = ?').get(invoice.floorplan_id);
+      if (!fp || fp.deleted_at) {
+        return res.status(409).json({ success: false, code: 'PROJECT_IN_TRASH', error: `Project invoice ini ${fp ? `("${fp.title}") ada di Tempat Sampah` : 'sudah tidak ada'}. Pulihkan project-nya lebih dulu.` });
+      }
+    }
+    if (isContract) {
+      // The contract may have received new invoices meanwhile: never two DP, two Pelunasan, or a Penuh next to them
+      const live = getContractInvoices(invoice.floorplan_id, invoice.booth_code, invoice.booth_id).filter(i => invoiceStatus(i) !== 'CANCELED');
+      const clash = live.find(i => kind === 'full' || kindOf(i) === 'full' || kindOf(i) === kind);
+      if (clash) {
+        return res.status(409).json({
+          success: false, code: 'CONTRACT_HAS_INVOICES',
+          error: `Booth ${invoice.booth_code} sudah punya invoice ${KIND_LABELS[kindOf(clash)] || ''} ${clash.invoice_number}. Hapus invoice itu lebih dulu bila invoice ${invoice.invoice_number} yang harus berlaku.`
+        });
+      }
+    }
+
+    const brief = invoiceBrief(invoice);
+    db.transaction(() => {
+      db.prepare(`UPDATE invoices SET deleted_at = NULL, deleted_by = NULL, deleted_by_role = NULL, restored_at = CURRENT_TIMESTAMP, restored_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+        .run(req.user?.name || 'Super Admin', invoice.id);
+      if (isContract) {
+        if (kind === 'dp') {
+          // the Pelunasan issued for this DP subtracts it again
+          db.prepare(`UPDATE invoices SET related_invoice_id = ? WHERE id IN (
+            SELECT id FROM invoices WHERE floorplan_id = ? AND deleted_at IS NULL AND invoice_kind = 'settlement' AND related_invoice_id IS NULL AND LOWER(TRIM(booth_code)) = LOWER(TRIM(?)))`)
+            .run(invoice.id, invoice.floorplan_id, invoice.booth_code);
+        }
+        recalcContract(invoice.floorplan_id, invoice.booth_code, invoice.booth_id);
+      }
+    })();
+    syncPaymentStatusFromInvoices();
+    auditInvoice(req, 'Pulihkan invoice', brief, { reason: invoice.delete_reason || '', deletedBy: invoice.deleted_by || '', deletedAt: invoice.deleted_at });
+
+    res.json({ success: true, message: `Invoice ${invoice.invoice_number} dipulihkan.`, invoice: brief });
+  } catch (error) {
+    console.error('Restore invoice error:', error);
+    res.status(500).json({ success: false, error: 'Gagal memulihkan invoice' });
+  }
+});
+
+// DELETE /api/invoices/:id { reason, confirmNumber }: soft delete. Only the invoice goes: the tenant, the booking and
+// the booth status stay (a booth without any invoice left keeps its status; see syncPaymentStatusFromInvoices).
 router.delete('/:id', (req, res) => {
   try {
+    if (!canDeleteInvoice(req.user)) {
+      return res.status(403).json({ success: false, error: 'Hanya Keuangan dan Super Admin yang dapat menghapus invoice.' });
+    }
     const { id } = req.params;
     const invoice = db.prepare('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL').get(id);
 
@@ -1275,17 +1394,27 @@ router.delete('/:id', (req, res) => {
     }
 
     const kind = kindOf(invoice);
-    if (CONTRACT_KINDS.includes(kind) && invoicePaidAmount(invoice) > 0) {
+    const brief = invoiceBrief(invoice);
+    const hasPayment = brief.paidAmount > 0;
+    if (hasPayment && !canDeletePaidInvoice(req.user)) {
       return res.status(409).json({
         success: false,
         code: 'INVOICE_PAID',
-        error: `Invoice ${invoice.invoice_number} sudah menerima pembayaran sehingga tidak dapat dihapus. Ubah statusnya menjadi "Batal" (dengan konfirmasi) bila memang harus dibatalkan.`
+        error: `Invoice ${invoice.invoice_number} sudah menerima pembayaran (${brief.statusLabel}). Hanya Super Admin yang dapat menghapusnya.`
       });
+    }
+    const reason = cleanDeleteReason(req.body?.reason);
+    if (!reason) {
+      return res.status(400).json({ success: false, code: 'REASON_REQUIRED', error: `Alasan penghapusan wajib diisi (minimal ${DELETE_REASON_MIN} karakter).` });
+    }
+    if (hasPayment && !sameInvoiceNumber(req.body?.confirmNumber, invoice.invoice_number)) {
+      return res.status(400).json({ success: false, code: 'CONFIRM_NUMBER', error: `Ketik ulang nomor invoice ${invoice.invoice_number} untuk menghapus invoice yang sudah ada pembayarannya.` });
     }
 
     const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
     db.transaction(() => {
-      db.prepare('UPDATE invoices SET deleted_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(nowStr, id);
+      db.prepare('UPDATE invoices SET deleted_at = ?, deleted_by = ?, deleted_by_role = ?, delete_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(nowStr, req.user?.name || req.user?.role || 'Admin', req.user?.role || '', reason, id);
       if (kind === 'dp') {
         // The Pelunasan no longer has a DP to subtract
         db.prepare("UPDATE invoices SET related_invoice_id = NULL WHERE related_invoice_id = ? AND deleted_at IS NULL").run(id);
@@ -1295,14 +1424,16 @@ router.delete('/:id', (req, res) => {
       }
     })();
     syncPaymentStatusFromInvoices();
+    auditInvoice(req, 'Hapus invoice', brief, { reason });
 
     res.json({
       success: true,
-      message: `Invoice ${invoice.invoice_number} dipindahkan ke Sampah.`
+      message: `Invoice ${invoice.invoice_number} dipindahkan ke Tempat Sampah.`,
+      invoice: brief
     });
   } catch (error) {
     console.error("Delete invoice error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Gagal menghapus invoice' });
   }
 });
 

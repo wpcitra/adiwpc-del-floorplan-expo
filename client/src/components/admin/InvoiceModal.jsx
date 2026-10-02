@@ -27,6 +27,8 @@ import { api } from '../../services/api';
 import InvoiceA4View from './InvoiceA4View';
 import TaxOptionsField from './TaxOptionsField';
 import { computeContractTax, invoiceTaxView } from '../../utils/invoiceTax';
+import InvoiceDeleteModal from './InvoiceDeleteModal';
+import { invoiceBriefOf } from '../../utils/invoicePermissions';
 
 export default function InvoiceModal({
   isOpen,
@@ -443,18 +445,9 @@ export default function InvoiceModal({
   };
 
   // Delete invoice
-  const handleDeleteInvoice = async (inv) => {
-    if (!confirm(`Hapus invoice ${inv.invoice_number} atas nama "${inv.company_name}"?`)) return;
-    try {
-      const res = await api.deleteInvoice(inv.id);
-      if (res.success) {
-        showToast?.(`🗑️ Invoice ${inv.invoice_number} berhasil dihapus`);
-        await fetchInvoiceList();
-      }
-    } catch (e) {
-      showToast?.('⚠️ Gagal menghapus invoice');
-    }
-  };
+  // The shared confirmation (reason, typed number for a paid invoice): InvoiceDeleteModal, AGENTS.md §31
+  const [invoiceToDelete, setInvoiceToDelete] = useState(null);
+  const handleDeleteInvoice = (inv) => setInvoiceToDelete(invoiceBriefOf(inv));
 
   if (!isOpen) return null;
 
@@ -1283,6 +1276,16 @@ export default function InvoiceModal({
           </form>
         )}
       </div>
+
+      <InvoiceDeleteModal
+        invoice={invoiceToDelete}
+        onClose={() => setInvoiceToDelete(null)}
+        showToast={showToast}
+        onDeleted={async () => {
+          setInvoiceToDelete(null);
+          await fetchInvoiceList();
+        }}
+      />
     </div>
   );
 }

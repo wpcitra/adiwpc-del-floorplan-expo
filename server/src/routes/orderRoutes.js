@@ -1081,7 +1081,7 @@ export function getExhibitorsData(targetId) {
   };
 
   const boothInvoicesStmt = db.prepare(`
-    SELECT id, invoice_number, invoice_kind, payment_status, total_amount, created_at FROM invoices
+    SELECT id, invoice_number, invoice_kind, payment_status, total_amount, paid_amount, company_name, booth_code, created_at FROM invoices
     WHERE floorplan_id = ? AND deleted_at IS NULL AND UPPER(COALESCE(payment_status, '')) != 'CANCELED'
       AND TRIM(COALESCE(booth_code, '')) != ''
       AND (LOWER(TRIM(booth_code)) = LOWER(TRIM(?)) OR ('+' || LOWER(TRIM(booth_code)) || '+') LIKE ('%+' || LOWER(TRIM(?)) || '+%'))
@@ -1122,7 +1122,7 @@ export function getExhibitorsData(targetId) {
     // Every active invoice of this booth (contract DP / Pelunasan / Penuh and add-on facilities), the same
     // invoices as Manajemen Invoice: Sales can open and download what Finance issued (precise matching, §12)
     const boothInvoices = boothInvoicesStmt.all(item.floorplanId, item.booth, item.booth)
-      .map(i => ({ id: i.id, invoiceNumber: i.invoice_number, kind: i.invoice_kind || 'full', paymentStatus: String(i.payment_status || 'UNPAID').toUpperCase(), totalAmount: Number(i.total_amount) || 0, createdAt: i.created_at }));
+      .map(i => ({ id: i.id, invoiceNumber: i.invoice_number, kind: i.invoice_kind || 'full', paymentStatus: String(i.payment_status || 'UNPAID').toUpperCase(), totalAmount: Number(i.total_amount) || 0, paidAmount: invoicePaidAmount(i), companyName: i.company_name || '', boothCode: i.booth_code || '', createdAt: i.created_at }));
 
     const baseItem = !c.status ? {
       ...item,

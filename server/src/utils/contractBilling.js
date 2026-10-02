@@ -318,7 +318,12 @@ export function impliedTaxRate(contractTotal, booth) {
 // Next invoice number with a type marker, following the existing INV/<TYPE>/<YEAR>/<n> format
 export function nextInvoiceNumber(kind) {
   const marker = kind === 'dp' ? 'DP' : kind === 'settlement' ? 'PL' : 'EXP';
-  return `INV/${marker}/${new Date().getFullYear()}/${Date.now().toString().slice(-5)}`;
+  const prefix = `INV/${marker}/${new Date().getFullYear()}/`;
+  // A number is never used twice, also not the number of a deleted invoice (Tempat Sampah, AGENTS.md §31)
+  const taken = db.prepare('SELECT 1 FROM invoices WHERE invoice_number = ?');
+  let n = Number(Date.now().toString().slice(-5));
+  while (taken.get(`${prefix}${String(n).padStart(5, '0')}`)) n = (n + 1) % 100000;
+  return `${prefix}${String(n).padStart(5, '0')}`;
 }
 
 /**

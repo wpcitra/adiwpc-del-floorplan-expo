@@ -92,6 +92,9 @@ const ACCESS_RULES = [
   // Invoices: finance owns billing, including the private booth discount (sales reads invoices only)
   { methods: ['GET'], path: /^\/invoices\/config$/, access: 'public' },
   { methods: ['POST'], path: /^\/invoices\/sync-booth-discount$/, access: FINANCE },
+  // Tempat Sampah Invoice (list, restore): Super Admin only. Deleting: Finance + Super Admin (shared/invoicePermissions.js)
+  { methods: ['GET'], path: /^\/invoices\/trash$/, access: [] },
+  { methods: ['POST'], path: /^\/invoices\/[^/]+\/restore$/, access: [] },
   { methods: WRITE, path: /^\/invoices(\/.*)?$/, access: FINANCE },
 
   // Master data read by the public booking form; edited by the Super Admin only (Studio tiers & brand categories)

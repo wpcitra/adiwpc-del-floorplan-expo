@@ -653,7 +653,8 @@ router.post('/soft-delete', (req, res) => {
       const softDeleteFp = db.prepare(`UPDATE floorplans SET deleted_at = ? WHERE id = ?`);
       const softDeleteBooths = db.prepare(`UPDATE booths SET deleted_at = ? WHERE floorplan_id = ?`);
       const softDeleteOrders = db.prepare(`UPDATE orders SET deleted_at = ? WHERE floorplan_id = ?`);
-      const softDeleteInvoices = db.prepare(`UPDATE invoices SET deleted_at = ? WHERE floorplan_id = ?`);
+      // invoices deleted on their own (Hapus Invoice, §31) keep their own date and stay deleted when the project returns
+      const softDeleteInvoices = db.prepare(`UPDATE invoices SET deleted_at = ? WHERE floorplan_id = ? AND deleted_at IS NULL`);
       const softDeleteVenues = db.prepare(`UPDATE venue_items SET deleted_at = ? WHERE floorplan_id = ?`);
       const insertLog = db.prepare(`
         INSERT INTO activity_logs (id, action, target_type, target_id, target_title, user_name, details_json, created_at)
@@ -714,7 +715,7 @@ router.post('/restore', (req, res) => {
       const restoreFp = db.prepare(`UPDATE floorplans SET deleted_at = NULL WHERE id = ?`);
       const restoreBooths = db.prepare(`UPDATE booths SET deleted_at = NULL WHERE floorplan_id = ?`);
       const restoreOrders = db.prepare(`UPDATE orders SET deleted_at = NULL WHERE floorplan_id = ?`);
-      const restoreInvoices = db.prepare(`UPDATE invoices SET deleted_at = NULL WHERE floorplan_id = ?`);
+      const restoreInvoices = db.prepare(`UPDATE invoices SET deleted_at = NULL WHERE floorplan_id = ? AND deleted_by IS NULL`);
       const restoreVenues = db.prepare(`UPDATE venue_items SET deleted_at = NULL WHERE floorplan_id = ?`);
       const insertLog = db.prepare(`
         INSERT INTO activity_logs (id, action, target_type, target_id, target_title, user_name, details_json, created_at)

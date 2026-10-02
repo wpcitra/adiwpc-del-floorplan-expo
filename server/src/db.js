@@ -673,6 +673,26 @@ for (const col of [
   try { db.exec(col); } catch (e) {}
 }
 
+// Hapus Invoice (AGENTS.md §31): who deleted an invoice, why, and who restored it. `deleted_by` also marks an
+// invoice deleted on its own, so restoring a project from its trash never brings such an invoice back.
+for (const col of [
+  'ALTER TABLE invoices ADD COLUMN deleted_by TEXT',
+  'ALTER TABLE invoices ADD COLUMN deleted_by_role TEXT',
+  'ALTER TABLE invoices ADD COLUMN delete_reason TEXT',
+  'ALTER TABLE invoices ADD COLUMN restored_at DATETIME',
+  'ALTER TABLE invoices ADD COLUMN restored_by TEXT'
+]) {
+  try { db.exec(col); } catch (e) {}
+}
+try {
+  // Invoices deleted before this column existed, in a project that is not in the trash: deleted on their own
+  db.exec(`
+    UPDATE invoices SET deleted_by = '(tidak tercatat)'
+    WHERE deleted_at IS NOT NULL AND deleted_by IS NULL
+      AND floorplan_id IN (SELECT id FROM floorplans WHERE deleted_at IS NULL)
+  `);
+} catch (e) {}
+
 // Public link per published floorplan: /live/<public_slug> (several floorplans can be live at once)
 try {
   db.exec("ALTER TABLE floorplans ADD COLUMN public_slug TEXT");

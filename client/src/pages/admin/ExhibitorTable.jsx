@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Search, Download, Filter, Users, Layers, Tag, FileText, Sliders, Calendar, Eye, EyeOff, AlertTriangle, ChevronDown } from 'lucide-react';
+import { Search, Download, Filter, Users, Layers, Tag, FileText, Sliders, Calendar, Eye, EyeOff, AlertTriangle, ChevronDown, Trash2, X } from 'lucide-react';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import ProjectYearFolderSelector, { getProjectDateInfo } from '../../components/admin/ProjectYearFolderSelector';
@@ -8,7 +8,10 @@ import InvoiceA4View from '../../components/admin/InvoiceA4View';
 import InvoiceEditModal from '../../components/admin/InvoiceEditModal';
 import ContractInvoiceWizard from '../../components/admin/ContractInvoiceWizard';
 import GenerateTenantFacilityModal from '../../components/admin/GenerateTenantFacilityModal';
+import InvoiceDeleteModal from '../../components/admin/InvoiceDeleteModal';
+import InvoiceTrashModal from '../../components/admin/InvoiceTrashModal';
 import { collapseMergedRows } from '../../utils/mergeRows';
+import { canDeleteInvoice, canRestoreInvoice, invoiceBriefOf } from '../../utils/invoicePermissions';
 
 export default function ExhibitorTable() {
   const [exhibitors, setExhibitors] = useState([]);
@@ -30,6 +33,11 @@ export default function ExhibitorTable() {
   // Sales can open / print / download invoices; editing and issuing stay with Finance (server enforces it too)
   const { user } = useAuth();
   const canEditInvoice = ['superadmin', 'finance'].includes(user?.role);
+  // Hapus Invoice: Keuangan and Super Admin only (the icon is not rendered for other roles; the server refuses them too)
+  const canDelete = canDeleteInvoice(user);
+  const [deletePicker, setDeletePicker] = useState(null); // tenant row with several invoices: choose which one
+  const [invoiceToDelete, setInvoiceToDelete] = useState(null); // brief of the invoice in the confirmation
+  const [isInvoiceTrashOpen, setIsInvoiceTrashOpen] = useState(false);
   const [wizardFor, setWizardFor] = useState(null); // { projectId, boothCode }
   const [editingInvoice, setEditingInvoice] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -317,6 +325,13 @@ export default function ExhibitorTable() {
     </div>
   ) : null;
 
+  const briefOf = (inv, exh) => invoiceBriefOf(inv, { companyName: exh.company, boothCode: exh.booth });
+  // One invoice: straight to the confirmation. Several (DP + Pelunasan...): a small list to choose from, never all at once.
+  const askDeleteInvoice = (exh) => {
+    if (exh.invoices.length === 1) setInvoiceToDelete(briefOf(exh.invoices[0], exh));
+    else setDeletePicker(exh);
+  };
+
   const renderActions = (exh) => (
     <div className="flex items-center justify-end gap-1.5 flex-wrap">
       <button 
@@ -350,6 +365,13 @@ export default function ExhibitorTable() {
               </button>
             );
           })}
+          {canDelete && (
+            <button type="button" onClick={() => askDeleteInvoice(exh)}
+              className="inline-flex items-center justify-center w-6 h-6 rounded-md border border-red-200 bg-white text-red-600 hover:bg-red-50 hover:border-red-300 transition-colors cursor-pointer"
+              title="Hapus Invoice" aria-label={`Hapus invoice booth ${exh.booth}`}>
+              <Trash2 size={12} />
+            </button>
+          )}
         </div>
       ) : canEditInvoice ? (
         <button type="button"
@@ -561,6 +583,18 @@ export default function ExhibitorTable() {
             </button>
           )}
 
+          {canRestoreInvoice(user) && (
+            <button
+              type="button"
+              onClick={() => setIsInvoiceTrashOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer shrink-0"
+              title="Invoice yang dihapus: lihat dan pulihkan"
+            >
+              <Trash2 size={13} className="text-slate-500" />
+              <span>Sampah Invoice</span>
+            </button>
+          )}
+
           <div className="relative shrink-0" ref={exportMenuRef}>
             <button
               type="button"
@@ -692,6 +726,58 @@ export default function ExhibitorTable() {
           if (invoice?.id) openInvoice(invoice.id);
         }}
         onOpenInvoice={(id) => { setWizardFor(null); openInvoice(id); }}
+      />
+
+      {/* Hapus Invoice: choose one of the booth's invoices, then confirm with a reason */}
+      {canDelete && deletePicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 animate-fadeIn" role="dialog" aria-modal="true" aria-label="Pilih invoice yang dihapus"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setDeletePicker(null); }}>
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden text-left">
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold text-slate-900">Pilih invoice yang dihapus</h2>
+                <p className="text-[11px] text-slate-500 truncate">#{deletePicker.booth} • {deletePicker.company}</p>
+              </div>
+              <button type="button" onClick={() => setDeletePicker(null)} title="Tutup" className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-2 space-y-1">
+              {deletePicker.invoices.map(inv => {
+                const brief = briefOf(inv, deletePicker);
+                return (
+                  <button key={inv.id} type="button"
+                    onClick={() => { setInvoiceToDelete(brief); setDeletePicker(null); }}
+                    className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg hover:bg-red-50 text-left text-xs cursor-pointer">
+                    <span className="min-w-0">
+                      <span className="block font-semibold text-slate-900 truncate">{brief.kindLabel} {brief.invoiceNumber}</span>
+                      <span className="block text-[11px] text-slate-500">Rp {brief.totalAmount.toLocaleString('id-ID')} • {brief.statusLabel}</span>
+                    </span>
+                    <Trash2 size={13} className="text-red-600 shrink-0" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <InvoiceDeleteModal
+        invoice={invoiceToDelete}
+        onClose={() => setInvoiceToDelete(null)}
+        showToast={showToast}
+        onDeleted={() => {
+          setInvoiceToDelete(null);
+          if (selectedInvoiceForA4?.id === invoiceToDelete?.id) setSelectedInvoiceForA4(null);
+          setReloadKey(k => k + 1);
+        }}
+      />
+
+      <InvoiceTrashModal
+        isOpen={isInvoiceTrashOpen}
+        onClose={() => setIsInvoiceTrashOpen(false)}
+        showToast={showToast}
+        onRestored={() => setReloadKey(k => k + 1)}
       />
 
       {/* Generate Tenant Facility Modal (PDF & WA with Company Letterhead & Template Catalog) */}

@@ -158,7 +158,7 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - Checkout computes the invoice itself: Σ price − private discounts, + PPN, stored in `tax_rate` / `tax_amount` / `contract_tax_rate`. The total sent by the form is ignored.
   - Editing a `full` invoice's total / PPN also updates its `contract_total` / `contract_tax_rate` (a full invoice is the whole contract).
 - **Amounts are computed on the server** (`POST /api/invoices` with `invoiceKind: 'dp' | 'settlement'`). Pelunasan = contract − DP. `recalcContract()` rewrites only the unpaid balance invoice after a price/discount change or a DP cancel/delete; paid invoices are never rewritten. A DP turns an unpaid `full` invoice into the Pelunasan.
-- Paid contract invoices cannot be deleted (409); canceling a paid DP needs `confirmCancelPaidDp` and is written to the audit log. Deleted invoices are soft-deleted (`deleted_at`).
+- An invoice that received a payment is deleted by the Super Admin only, after typing its number (Finance: 409 `INVOICE_PAID`, see §31); canceling a paid DP needs `confirmCancelPaidDp` and is written to the audit log. Deleted invoices are soft-deleted (`deleted_at`).
 - **Client summaries** (`client/src/utils/invoiceSummary.js`) count each contract once (total, discount, paid, remaining) via `inv.contract`; tabs filter AND count by the contract status (`matchesStatusTab`), so a paid DP is "Uang Muka / DP", never "Lunas". After a status change the UI reports the booth status returned by the server, never the one it asked for.
 - **A DP chosen at registration** is `downPaymentPercent` × the contract value computed by the server; the form's `paidAmount` estimate is ignored (a stale booth price once produced "DP 50%" billing 30%).
 
@@ -499,3 +499,21 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - "Nomor / Kode Booth" in the Property Inspector: a number another booth has is not applied (`updateActiveProperty` refuses it too), the field shows the warning and returns to the booth's own number on blur. "+Next" skips used numbers.
 - An older floorplan that already contains a repeated number opens normally; the next save names the numbers to fix.
 - Tests: `server/test/booth-codes.test.js`.
+
+---
+
+## 31. Hapus Invoice, Tempat Sampah & Pulihkan Lock (`shared/invoicePermissions.js`, `invoiceRoutes.js`, `InvoiceDeleteModal.jsx`, `InvoiceTrashModal.jsx`)
+- **One rule for pages and server** (`shared/invoicePermissions.js`, re-exported by `client/src/utils/invoicePermissions.js`): `canDeleteInvoice(user)` = roles `finance` (Keuangan) and `superadmin`; `canDeletePaidInvoice` / `canRestoreInvoice` = `superadmin`. No new role.
+  - Pages do not render the delete icon / "Sampah Invoice" for other roles (not hidden with CSS). The server checks the session role itself: `DELETE /invoices/:id` 403 for other roles, `GET /invoices/trash` and `POST /invoices/:id/restore` 403 for everyone but the Super Admin (also in `ACCESS_RULES`).
+- **`DELETE /api/invoices/:id { reason, confirmNumber }`** (soft delete):
+  - `reason` is mandatory, at least `DELETE_REASON_MIN` (10) characters (400 `REASON_REQUIRED`).
+  - An invoice with a payment (`invoicePaidAmount > 0`: DP / Lunas, any kind): Finance gets 409 `INVOICE_PAID`; the Super Admin must send `confirmNumber` = the invoice number (400 `CONFIRM_NUMBER`).
+  - Stores `deleted_at`, `deleted_by`, `deleted_by_role`, `delete_reason`; a deleted DP is unlinked from its Pelunasan and `recalcContract` rewrites the unpaid balance (§14).
+- **Only the invoice goes.** Tenant, booking, contact, brand category and the booth status stay: a booth without any invoice left keeps its status (`summarizeContract` gives no status, `syncPaymentStatusFromInvoices` skips it). The row in Data Exhibitor stays and shows "Belum ada invoice — buat".
+- **Tempat Sampah Invoice** (`InvoiceTrashModal`, button "Sampah Invoice" in Data Exhibitor and Manajemen Invoice, Super Admin): lists invoices with `deleted_by` set. Restore is refused while the project is in the trash (409 `PROJECT_IN_TRASH`) or the booth already has a replacing contract invoice (409 `CONTRACT_HAS_INVOICES`); a restored DP is linked to its Pelunasan again.
+  - `deleted_by` marks an invoice deleted on its own: `POST /floorplan/soft-delete` only touches live invoices and `POST /floorplan/restore` only brings back invoices without `deleted_by`.
+  - An invoice number is never used twice: `invoice_number` is UNIQUE over deleted rows too and `nextInvoiceNumber` skips taken numbers.
+- **One confirmation** (`InvoiceDeleteModal`, fed by `invoiceBriefOf()`): number, brand, booth, kind, amount, status, reason, and for a paid invoice the red warning + retyped number. Used by Data Exhibitor (one invoice: directly; several: a small list to choose one, never all), Manajemen Invoice and Katalog Invoice. Never delete with a bare `confirm()` again.
+- **Audit**: "Hapus invoice" / "Pulihkan invoice" (category `Invoice`, `req.skipAudit`) with user, role, number, amount, paid amount, status and reason in `summary` / `details_json`.
+- **Migration**: the columns are added by `db.js` at every start (local and Railway), like every other schema change; there is no separate migration command and no new environment variable.
+- Tests: `server/test/hapus-invoice.test.js`.

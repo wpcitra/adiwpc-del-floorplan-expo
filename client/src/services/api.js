@@ -481,16 +481,38 @@ export const api = {
   },
 
   // 17. Delete an invoice
-  async deleteInvoice(id) {
+  // Soft delete with a mandatory reason; `confirmNumber` for an invoice that already received a payment
+  async deleteInvoice(id, { reason = '', confirmNumber = '' } = {}) {
     try {
-      const res = await apiFetch(`${API_BASE_URL}/invoices/${id}`, {
-        method: 'DELETE'
+      const res = await apiFetch(`${API_BASE_URL}/invoices/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason, confirmNumber })
       });
       return await res.json();
     } catch (e) {
       console.warn(`Failed to delete invoice ${id}:`, e);
     }
     return { success: false, error: 'Koneksi server gagal' };
+  },
+
+  // 17b. Tempat Sampah Invoice (Super Admin): deleted invoices and restore
+  async fetchInvoiceTrash() {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/invoices/trash`);
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Koneksi server gagal' };
+    }
+  },
+
+  async restoreInvoice(id) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/invoices/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Koneksi server gagal' };
+    }
   },
 
   // 18. Fetch Invoice Layout Template Configuration

@@ -32,6 +32,10 @@ import ContractInvoiceWizard from '../../components/admin/ContractInvoiceWizard'
 import InvoiceEditModal from '../../components/admin/InvoiceEditModal';
 import { INVOICE_KIND_BADGE, invoiceKind, summarizeInvoices, matchesStatusTab, groupByContract } from '../../utils/invoiceSummary';
 import { Palette } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import InvoiceDeleteModal from '../../components/admin/InvoiceDeleteModal';
+import InvoiceTrashModal from '../../components/admin/InvoiceTrashModal';
+import { canDeleteInvoice, canRestoreInvoice, invoiceBriefOf } from '../../utils/invoicePermissions';
 
 // Canceled invoices are neither billed revenue, money received, nor a receivable
 const isBillable = (inv) => (inv.payment_status || '').toUpperCase() !== 'CANCELED';
@@ -54,6 +58,10 @@ export default function InvoicePage() {
   const [selectedInvoiceForA4, setSelectedInvoiceForA4] = useState(null);
   const [activeBoothForModal, setActiveBoothForModal] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
+  // Hapus Invoice & Tempat Sampah Invoice (AGENTS.md §31)
+  const { user } = useAuth();
+  const [invoiceToDelete, setInvoiceToDelete] = useState(null);
+  const [isTrashOpen, setIsTrashOpen] = useState(false);
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -283,21 +291,8 @@ export default function InvoicePage() {
     }
   };
 
-  // Delete invoice handler
-  const handleDeleteInvoice = async (inv) => {
-    if (!confirm(`Hapus invoice ${inv.invoice_number} atas nama "${inv.company_name}"?`)) return;
-    try {
-      const res = await api.deleteInvoice(inv.id);
-      if (res.success) {
-        showToast(`🗑️ ${res.message || `Invoice ${inv.invoice_number} dipindahkan ke Sampah`}`);
-        await loadInvoices();
-      } else {
-        showToast(`⚠️ ${res.error || 'Gagal menghapus invoice'}`);
-      }
-    } catch (e) {
-      showToast('⚠️ Gagal menghapus invoice');
-    }
-  };
+  // Delete invoice: the shared confirmation (reason, typed number for a paid invoice), see InvoiceDeleteModal
+  const handleDeleteInvoice = (inv) => setInvoiceToDelete(invoiceBriefOf(inv));
 
   return (
     <div className={`p-4 sm:p-6 lg:p-8 w-full max-w-none space-y-6 ${(selectedInvoiceForA4 || isEditorModalOpen) ? 'print:p-0 print:m-0 print:max-w-none' : ''}`}>
@@ -337,6 +332,18 @@ export default function InvoicePage() {
             <Palette size={14} className="text-slate-500" />
             <span>Desain Layout Invoice</span>
           </button>
+
+          {canRestoreInvoice(user) && (
+            <button
+              type="button"
+              onClick={() => setIsTrashOpen(true)}
+              className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              title="Invoice yang dihapus: lihat dan pulihkan"
+            >
+              <Trash2 size={14} className="text-slate-500" />
+              <span>Sampah Invoice</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -831,14 +838,16 @@ export default function InvoicePage() {
                           </button>
 
                           {/* Delete */}
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteInvoice(inv)}
-                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-red-200"
-                            title="Hapus Invoice"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          {canDeleteInvoice(user) && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteInvoice(inv)}
+                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-red-200"
+                              title="Hapus Invoice"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -893,6 +902,23 @@ export default function InvoicePage() {
             setSelectedInvoiceForA4(existing);
           }
         }}
+      />
+
+      <InvoiceDeleteModal
+        invoice={invoiceToDelete}
+        onClose={() => setInvoiceToDelete(null)}
+        showToast={showToast}
+        onDeleted={async () => {
+          setInvoiceToDelete(null);
+          await loadInvoices();
+        }}
+      />
+
+      <InvoiceTrashModal
+        isOpen={isTrashOpen}
+        onClose={() => setIsTrashOpen(false)}
+        showToast={showToast}
+        onRestored={loadInvoices}
       />
 
       <InvoiceModal
