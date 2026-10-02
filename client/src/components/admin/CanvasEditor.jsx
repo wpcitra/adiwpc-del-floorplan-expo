@@ -24,7 +24,7 @@ import {
   elementSnapTargets, movingGeometry, snapLineEnds, snapPoint
 } from '../../utils/boothSnap';
 import CanvasRuler from './CanvasRuler';
-import { COPY_PROPS, prepareCopy } from '../../utils/copyRules';
+import { COPY_PROPS, prepareCopy, nextBoothCode, boothCodeTokens, boothCodeTaken } from '../../utils/copyRules';
 
 import { safeSet, safeGetJson, safeRemove } from '../../utils/safeStorage';
 const CLIPBOARD_KEY = 'floorplan_canvas_clipboard';
@@ -35,6 +35,10 @@ const MAX_HISTORY_STEPS = 20;
 // Booth hover glow (editor-only state) and the shadow a booth has at rest
 const BOOTH_HOVER_SHADOW = { color: 'rgba(59, 130, 246, 0.45)', blur: 16, offsetX: 0, offsetY: 3 };
 const BOOTH_REST_SHADOW = { color: 'rgba(0,0,0,0.06)', blur: 6, offsetX: 0, offsetY: 2 };
+// Booth numbers in use on the canvas ("A-01+A-02" counts as both), optionally without one booth (AGENTS.md §30)
+const usedBoothCodes = (canvas, except = null) => new Set(
+  canvas.getObjects().filter(o => o.isBooth && o !== except).flatMap(o => boothCodeTokens(o.boothData?.code))
+);
 
 const CanvasEditor = forwardRef(function CanvasEditor({
   onSelectionChange,
@@ -460,8 +464,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       const centerY = (canvas.height / 2 - vpt[5]) / vpt[3];
 
       const existingBooths = canvas.getObjects().filter(o => o.isBooth);
-      const nextNum = existingBooths.length + 1;
-      const code = `A-${String(nextNum).padStart(2, '0')}`;
+      // "A-<number of booths + 1>", or the next free number when that one is taken (AGENTS.md §30)
+      const code = nextBoothCode(`A-${String(existingBooths.length).padStart(2, '0')}`, usedBoothCodes(canvas));
 
       const category = params.category || 'Standard';
       const catConfig = BOOTH_CATEGORIES[category] || BOOTH_CATEGORIES.Standard;
@@ -649,6 +653,14 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           pushHistory();
           return;
         }
+      }
+
+      // A number another booth already has is never applied (the Property Inspector shows the warning)
+      if (active.isBooth && 'code' in newProps && boothCodeTaken(newProps.code, usedBoothCodes(canvas, active))) {
+        const rest = { ...newProps };
+        delete rest.code;
+        if (!Object.keys(rest).length) return;
+        newProps = rest;
       }
 
       if (active.isBooth) {
@@ -1169,7 +1181,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     const canvas = fabricRef.current;
     if (!canvas || !raws.length) return [];
     const ctx = {
-      usedCodes: new Set(canvas.getObjects().filter(o => o.isBooth).map(o => o.boothData?.code).filter(Boolean)),
+      usedCodes: usedBoothCodes(canvas),
       allowBooths: layerModeRef.current !== 'ops',
       opsLayer: layerModeRef.current === 'ops'
     };
@@ -2200,11 +2212,11 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       const dropY = sceneY;
 
       if (data.itemType === 'booth') {
-        const existingCount = canvas.getObjects().filter(o => o.isBooth).length + 1;
+        const existingCount = canvas.getObjects().filter(o => o.isBooth).length;
         const category = data.category || 'Standard';
         const catConfig = BOOTH_CATEGORIES[category] || BOOTH_CATEGORIES.Standard;
         const newBooth = createBoothObject({
-          code: `A-${String(existingCount).padStart(2, '0')}`,
+          code: nextBoothCode(`A-${String(existingCount).padStart(2, '0')}`, usedBoothCodes(canvas)),
           category,
           shape: data.shape || 'rectangle',
           price: data.price !== undefined ? data.price : (catConfig?.defaultPrice || 5000000),

@@ -58,6 +58,7 @@ import { isLibraryElement, isShapeElement } from '../../utils/elementLibrary';
 import { BOOTH_CATEGORIES, BOOTH_SHAPES, STATUS_CONFIG } from '../../utils/floorplanUtils';
 import { api } from '../../services/api';
 import { NAME_DIRECTIONS, NAME_DIRECTION_LABELS, nameDirectionOf } from '../../utils/boothNameFit';
+import { nextBoothCode, boothCodeTaken } from '../../utils/copyRules';
 
 export default function PropertyPanel({ 
   selectedObject, 
@@ -714,6 +715,7 @@ export default function PropertyPanel({
   return (
     <BoothInspector
       booth={selectedObject.boothData || {}}
+      otherBoothCodes={canvasObjects.filter(o => o.isBooth && o !== selectedObject).map(o => o.boothData?.code).filter(Boolean)}
       currentFloorplanId={currentFloorplanId}
       onUpdateProperty={onUpdateProperty}
       onBringForward={onBringForward}
@@ -958,6 +960,8 @@ function BrandCategoryManager() {
 // Subcomponent: BoothInspector with responsive local states
 function BoothInspector({
   booth,
+  // Numbers of the other booths of this floorplan: a booth number is unique (AGENTS.md §30)
+  otherBoothCodes = [],
   currentFloorplanId,
   onUpdateProperty,
   onBringForward,
@@ -974,6 +978,8 @@ function BoothInspector({
   cornerSection = null
 }) {
   const [code, setCode] = useState(booth.code || '');
+  // A number another booth already has stays in the field with a warning and is not applied to the booth
+  const codeTaken = boothCodeTaken(code, otherBoothCodes);
   const [shape, setShape] = useState(booth.shape || 'rectangle');
   const [widthM, setWidthM] = useState(String(booth.widthM || 3));
   const [heightM, setHeightM] = useState(String(booth.heightM || 3));
@@ -1305,9 +1311,11 @@ function BoothInspector({
               onChange={(e) => {
                 const val = e.target.value;
                 setCode(val);
-                onUpdateProperty({ code: val });
+                if (!boothCodeTaken(val, otherBoothCodes)) onUpdateProperty({ code: val });
               }}
-              className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-800 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+              onBlur={() => { if (codeTaken) setCode(booth.code || ''); }}
+              aria-invalid={codeTaken}
+              className={`flex-1 px-3 py-1.5 bg-slate-50 border rounded-lg font-bold text-slate-800 text-sm focus:outline-none focus:ring-1 ${codeTaken ? 'border-rose-400 focus:ring-rose-500' : 'border-slate-200 focus:ring-blue-500'}`}
             />
             <button
               type="button"
@@ -1316,8 +1324,9 @@ function BoothInspector({
                 const match = currentCode.match(/([A-Za-z]+)[-_]?(\d+)/i);
                 if (match) {
                   const prefix = match[1];
-                  const num = parseInt(match[2], 10) + 1;
-                  const nextCode = `${prefix}-${String(num).padStart(2, '0')}`;
+                  const num = parseInt(match[2], 10);
+                  // the next number no other booth uses
+                  const nextCode = nextBoothCode(`${prefix}-${String(num).padStart(2, '0')}`, otherBoothCodes.flatMap(c => String(c).split('+')));
                   setCode(nextCode);
                   onUpdateProperty({ code: nextCode });
                 }
@@ -1328,6 +1337,11 @@ function BoothInspector({
               +Next
             </button>
           </div>
+          {codeTaken && (
+            <p className="mt-1.5 text-[11px] font-medium text-rose-600">
+              Nomor {code.trim()} sudah dipakai booth lain. Booth ini tetap bernomor {booth.code || '-'}.
+            </p>
+          )}
         </div>
 
         {/* BAGIAN B: Pemilik / Tenant Booth */}

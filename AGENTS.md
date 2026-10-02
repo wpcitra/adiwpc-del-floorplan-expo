@@ -488,3 +488,14 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Identity without email**: `exhibitorIdFor(null, company)` falls back to the company name (§18), so auto-merge groups the booths of one brand by its name.
 - **Display**: an empty email is not printed on the invoice (`showClientEmail && inv.client_email`) nor in the Property Inspector tenant block; Data Exhibitor shows "-". Older registrations keep showing their email. The application sends no email at all.
 - Tests: `server/test/email-opsional.test.js`.
+
+---
+
+## 30. Nomor Booth Unik Lock (`shared/boothCodes.js`, `floorplanRoutes.js`, `CanvasEditor.jsx`, `PropertyPanel.jsx`)
+- **One floorplan never holds two booths with the same number.** Invoices, orders and the checkout find a booth by its code (§12): a shared number would share one tenant, contract and status. Compared without case and outer spaces; a merged code "A-01+A-02" occupies both numbers (`boothCodeTokens`). The same number in another floorplan is fine.
+- **Server (the guarantee):** `POST /floorplan/save` answers 409 `DUPLICATE_BOOTH_CODE` with `duplicates` and saves nothing when the canvas or the `booths` list repeats a number (`duplicateBoothCodes`). Never remove this check or rename booths silently on the server.
+- **Studio (so it does not happen):**
+  - New booths (button and drag from the sidebar) and copies take the next free number (`nextBoothCode` + `usedBoothCodes(canvas)`).
+  - "Nomor / Kode Booth" in the Property Inspector: a number another booth has is not applied (`updateActiveProperty` refuses it too), the field shows the warning and returns to the booth's own number on blur. "+Next" skips used numbers.
+- An older floorplan that already contains a repeated number opens normally; the next save names the numbers to fix.
+- Tests: `server/test/booth-codes.test.js`.

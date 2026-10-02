@@ -17,6 +17,8 @@ export const BOOTH_TENANT_FIELDS = [
   'paidAmount', 'discountType', 'discountValue', 'discountAmount', 'discountReason', 'mergeSeparate', 'isMerged', 'mergedFrom'
 ];
 
+export { boothCodeTokens, boothCodeTaken, duplicateBoothCodes } from '../../../shared/boothCodes.js';
+
 let counter = 0;
 export const newCopyId = (prefix) => `${prefix}_${Date.now()}_${(counter++ % 1000).toString().padStart(3, '0')}${Math.floor(Math.random() * 1000)}`;
 

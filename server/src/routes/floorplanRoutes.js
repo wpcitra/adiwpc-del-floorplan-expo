@@ -7,6 +7,7 @@ import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
 import { computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
 import { publicFloorplanPayload } from '../utils/publicData.js';
 import { externalizeImages } from '../utils/uploads.js';
+import { duplicateBoothCodes, duplicateBoothCodeMessage } from '../../../shared/boothCodes.js';
 
 const router = express.Router();
 
@@ -1250,6 +1251,15 @@ router.post('/save', (req, res) => {
 
     fabricJson = externalizeImages(fabricJson);
     metadata = externalizeImages(metadata);
+
+    // Booth numbers are unique per floorplan (AGENTS.md §30): nothing is saved while two booths share a number
+    const canvasBooths = extractBoothsFromFabricJson(fabricJson?.objects);
+    const duplicates = [canvasBooths, Array.isArray(booths) ? booths : []]
+      .map(list => duplicateBoothCodes(list.map(b => b?.code || b?.booth_number)))
+      .find(list => list.length);
+    if (duplicates) {
+      return res.status(409).json({ success: false, code: 'DUPLICATE_BOOTH_CODE', duplicates, error: duplicateBoothCodeMessage(duplicates) });
+    }
 
     // Booth layout before this save: the operations team is notified when booths change (Denah Operasional)
     const previousCanvasJson = db.prepare('SELECT canvas_fabric_json FROM floorplans WHERE id = ?').get(id)?.canvas_fabric_json || null;
