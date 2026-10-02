@@ -3,6 +3,7 @@ import { ELEMENTS, elementCenter, isLibraryElement, ICONS, accentOf } from './el
 import { getDoorOpeningCenter } from './doorSymbols';
 import { captionText, defaultCaption } from './elementCaptions';
 import { VENUE_TEMPLATES, FURNITURE_TEMPLATES } from './floorplanUtils';
+import { drawMergeGroupText, labelHost } from './boothMerge';
 
 // Denah Operasional (see AGENTS.md §17)
 // One floorplan, two layers: the sales layer (booths, walls, structures, doors, stage, blueprint) is read-only in
@@ -36,6 +37,9 @@ export const OPS_SERIALIZE_PROPS = ['isBooth', 'boothData', 'isVenueItem', 'venu
   'strokeUniform', 'noScaleCache', 'id', 'name', 'src', 'isLocked', 'isOpsItem', 'isSalesLayer', 'opsOrigOpacity'];
 
 export const SALES_DIM_OPACITY = 0.45;
+// Strength of the booth tints of the operational overlay (setup status, special design)
+const SETUP_TINT_ALPHA = 0.16;
+const SPECIAL_TINT_ALPHA = 0.42;
 
 export const boothKeyOf = (bd) => String(bd?.id || bd?.code || '').trim();
 export const emptyBoothOps = (booth) => ({
@@ -326,6 +330,85 @@ function screenPoly(obj, vpt) {
   return (obj.isBooth ? obj.getCoords() : footprintPolygon(obj)).map(p => fabric.util.transformPoint(p, vpt));
 }
 
+// ---------- booth texts above the operational colours ----------
+// The sales layer is dimmed and then tinted (setup status, special design), so the booth's own texts fade with it.
+// Size, number and tenant name are painted once more on top, in the ink that reads best on the booth's final colour.
+const INK_DARK = '#0f172a';
+const INK_LIGHT = '#ffffff';
+const PAGE_RGB = [255, 255, 255];
+
+function parseColor(value) {
+  const s = String(value || '').trim();
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(s);
+  if (hex) {
+    const h = hex[1].length === 3 ? hex[1].split('').map(c => c + c).join('') : hex[1];
+    return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
+  }
+  const rgb = /^rgba?\(([^)]+)\)$/i.exec(s);
+  if (rgb) {
+    const parts = rgb[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+    if (parts.length >= 3 && parts.slice(0, 3).every(Number.isFinite)) return parts.slice(0, 3);
+  }
+  return null;
+}
+
+const blend = (base, color, alpha) => {
+  const top = parseColor(color);
+  return top ? base.map((v, i) => v * (1 - alpha) + top[i] * alpha) : base;
+};
+
+function luminance(rgb) {
+  const [r, g, b] = rgb.map(v => {
+    const c = Math.min(255, Math.max(0, v)) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+
+const boothTexts = (b) => (typeof b.getObjects === 'function' ? b.getObjects() : []);
+const boothRect = (b) => boothTexts(b).find(o => (o.type || '').toLowerCase() === 'rect');
+
+// Colour the booth ends up with on the operational floorplan: dimmed sales fill + the same tints drawOpsOverlay paints
+function boothInk(b, data, showSetup) {
+  let rgb = blend(PAGE_RGB, boothRect(b)?.fill, Math.min(1, Math.max(0, b.opacity ?? 1)));
+  if (showSetup) rgb = blend(rgb, (SETUP_STATUS[data?.setupStatus || 'belum_datang'] || SETUP_STATUS.belum_datang).color, SETUP_TINT_ALPHA);
+  if (data?.specialDesign) rgb = blend(rgb, data.specialColor || SPECIAL_DESIGN_DEFAULT_COLOR, SPECIAL_TINT_ALPHA);
+  const l = luminance(rgb);
+  return contrast(l, luminance(parseColor(INK_DARK))) >= contrast(l, 1) ? INK_DARK : INK_LIGHT;
+}
+
+function drawBoothTexts(canvas, ctx, vpt, boothOps, showSetup) {
+  const inkOf = (b) => boothInk(b, boothOps[boothKeyOf(b.boothData)], showSetup);
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+  ctx.transform(...vpt);
+  salesBooths(canvas).forEach(b => {
+    if (b.__merge) {
+      // A merged group has one label, painted by its top-most member (boothMerge.js)
+      if (b.__merge.leader === b) drawMergeGroupText(ctx, b.__merge.group, inkOf(labelHost(b.__merge.group)));
+      return;
+    }
+    // [background, strip, size, number, tenant name, status] (layoutBoothInternals); the placeholder name is skipped
+    const [, , dimText, codeText, ownerText, statusText] = boothTexts(b);
+    if (!statusText) return;
+    const hasTenant = Boolean(String(b.boothData.ownerName || '').trim());
+    const ink = inkOf(b);
+    const matrix = b.calcTransformMatrix();
+    [dimText, codeText, hasTenant ? ownerText : null].forEach(text => {
+      if (!text || text.visible === false || typeof text._render !== 'function' || !/text/i.test(text.type || '')) return;
+      const fill = text.fill;
+      text.fill = ink; // plain assignment: the booth's own cache and saved colours stay as they are
+      ctx.save();
+      ctx.transform(...fabric.util.multiplyTransformMatrices(matrix, text.calcOwnMatrix()));
+      try { text._render(ctx); } finally { text.fill = fill; ctx.restore(); }
+    });
+  });
+  ctx.restore();
+}
+
 /**
  * Paint the operational overlay on ctx (canvas 'after:render'): setup-status colour per booth, warning badges on
  * conflicting / orphaned elements, lock badge on the inspected sales object and a pulse at a focused point.
@@ -347,7 +430,7 @@ export function drawOpsOverlay(canvas, ctx, { boothOps = {}, conflicts = new Map
       ctx.beginPath();
       pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       ctx.closePath();
-      ctx.globalAlpha = 0.16;
+      ctx.globalAlpha = SETUP_TINT_ALPHA;
       ctx.fillStyle = status.color;
       ctx.fill();
       ctx.globalAlpha = 1;
@@ -384,7 +467,7 @@ export function drawOpsOverlay(canvas, ctx, { boothOps = {}, conflicts = new Map
     ctx.beginPath();
     pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
     ctx.closePath();
-    ctx.globalAlpha = 0.42;
+    ctx.globalAlpha = SPECIAL_TINT_ALPHA;
     ctx.fillStyle = color;
     ctx.fill();
     ctx.globalAlpha = 1;
@@ -401,7 +484,8 @@ export function drawOpsOverlay(canvas, ctx, { boothOps = {}, conflicts = new Map
       ctx.font = `bold ${font}px system-ui, sans-serif`;
       const tw = Math.min(w - 6 * scale, ctx.measureText(label).width + 8 * scale);
       const x0 = Math.max(...xs) - tw - 3 * scale;
-      const y0 = Math.min(...ys) + 3 * scale;
+      // On the booth's top border (half outside), so the label never covers the booth number below it
+      const y0 = Math.min(...ys) - (font + 4 * scale) / 2;
       ctx.fillStyle = color;
       if (typeof ctx.roundRect === 'function') { ctx.beginPath(); ctx.roundRect(x0, y0, tw, font + 4 * scale, 3 * scale); ctx.fill(); } else ctx.fillRect(x0, y0, tw, font + 4 * scale);
       ctx.fillStyle = '#ffffff';
@@ -415,6 +499,8 @@ export function drawOpsOverlay(canvas, ctx, { boothOps = {}, conflicts = new Map
       ctx.restore();
     }
   });
+
+  drawBoothTexts(canvas, ctx, vpt, boothOps, showSetup);
 
   const r = Math.max(7, 9 * scale);
   conflicts.forEach((codes, el) => {

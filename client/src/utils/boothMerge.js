@@ -127,7 +127,7 @@ function fitText(ctx, text, maxWidth, size, weight, minSize = 3.5) {
 }
 
 // The member with the biggest area carries the label (centre of the largest part of the shape)
-function labelHost(group) {
+export function labelHost(group) {
   return group.members.reduce((best, m) => (polygonArea(coordsOf(m)) > polygonArea(coordsOf(best)) ? m : best), group.members[0]);
 }
 
@@ -183,7 +183,8 @@ function pointInPoly(pt, poly) {
 
 const FONT = (weight, size) => `${weight} ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
 
-function drawGroupLabel(ctx, group, style) {
+// `ink` (Denah Operasional): size, numbers and brand in that colour, without the status line
+function drawGroupLabel(ctx, group, style, ink = null) {
   const { rect, rad, isRectangle } = labelFrame(group);
   const W = rect.r - rect.l;
   const H = rect.b - rect.t;
@@ -228,11 +229,11 @@ function drawGroupLabel(ctx, group, style) {
     codeSize = fit.size;
   }
   ctx.font = FONT('600', sizeFit.size);
-  ctx.fillStyle = '#475569';
+  ctx.fillStyle = ink || '#475569';
   ctx.textAlign = 'left';
   ctx.fillText(sizeFit.text, rect.l + pad, rect.t + pad);
   ctx.font = FONT('800', codeSize);
-  ctx.fillStyle = '#0f172a';
+  ctx.fillStyle = ink || '#0f172a';
   ctx.textAlign = 'right';
   codeLines.forEach((line, i) => ctx.fillText(line, rect.r - pad, rect.t + pad + i * codeSize * 1.1));
   const headerH = Math.max(sizeFit.size, codeSize * 1.1 * codeLines.length);
@@ -240,10 +241,12 @@ function drawGroupLabel(ctx, group, style) {
   // Bottom-centre: status
   const statusFit = fitText(ctx, statusText, headerW, small * 0.95, '800');
   ctx.font = FONT('800', statusFit.size);
-  ctx.fillStyle = style.text;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText(statusFit.text, (rect.l + rect.r) / 2, rect.b - pad);
+  if (!ink) {
+    ctx.fillStyle = style.text;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(statusFit.text, (rect.l + rect.r) / 2, rect.b - pad);
+  }
 
   // Centre: brand, as large as the free space allows
   if (owner) {
@@ -265,7 +268,7 @@ function drawGroupLabel(ctx, group, style) {
       ctx.translate(cx, cy);
       if (brand.localAngle) ctx.rotate((brand.localAngle * Math.PI) / 180);
       ctx.font = FONT('800', brand.size);
-      ctx.fillStyle = '#0f172a';
+      ctx.fillStyle = ink || '#0f172a';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const lineH = brand.size * brand.lineHeight;
@@ -274,6 +277,11 @@ function drawGroupLabel(ctx, group, style) {
     }
   }
   ctx.restore();
+}
+
+/** Size, numbers and brand of a merged group again, in one colour (ctx in scene coordinates). Same layout as the label. */
+export function drawMergeGroupText(ctx, group, ink) {
+  drawGroupLabel(ctx, group, null, ink);
 }
 
 // "Sudut Booth" of a merged outline: the members' own value when they all agree, otherwise the floorplan setting
