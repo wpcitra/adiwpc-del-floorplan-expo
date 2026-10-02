@@ -32,7 +32,7 @@ import {
   DEFAULT_INVOICE_CONFIG, 
   INVOICE_PRESETS 
 } from '../../utils/invoiceTemplateConfig';
-import { printInvoiceElement, downloadInvoicePDF } from '../../utils/invoicePrintUtils';
+import { downloadInvoicePdf, printInvoice } from '../../utils/invoicePdf';
 import { api } from '../../services/api';
 import InvoiceA4View from './InvoiceA4View';
 import { looksLikeTypo } from '../../utils/nameCheck';
@@ -89,7 +89,7 @@ export default function InvoiceEditorModal({
 
   // Dedicated Print handler (prints ONLY the invoice area via isolated A4 frame)
   const handlePrintA4 = () => {
-    printInvoiceElement('printable-invoice-a4');
+    printInvoice({ invoice: SAMPLE_INVOICE_DATA, config });
   };
 
   // Dedicated PDF Download handler (generates official A4 PDF)
@@ -97,14 +97,16 @@ export default function InvoiceEditorModal({
     if (isGeneratingPDF) return;
     setIsGeneratingPDF(true);
     try {
-      const el = document.getElementById('printable-invoice-a4');
-      await downloadInvoicePDF(el, 'Invoice-Preview-Layout.pdf');
-      if (showToast) {
-        showToast('📄 Dokumen PDF invoice berhasil dibuat & diunduh!');
+      // the design as it is in the editor now (saved or not), rendered by the server from the print route
+      const res = await downloadInvoicePdf({ invoice: SAMPLE_INVOICE_DATA, config, preview: true, fileName: 'Invoice-Preview-Layout.pdf' });
+      if (res.success) {
+        if (showToast) showToast('📄 Dokumen PDF invoice berhasil dibuat & diunduh!');
+      } else if (res.unavailable) {
+        if (showToast) showToast(`⚠️ ${res.error}`);
+        printInvoice({ invoice: SAMPLE_INVOICE_DATA, config });
+      } else if (showToast) {
+        showToast(`⚠️ ${res.error}`);
       }
-    } catch (e) {
-      console.error(e);
-      if (showToast) showToast('⚠️ Gagal membuat file PDF invoice');
     } finally {
       setIsGeneratingPDF(false);
     }

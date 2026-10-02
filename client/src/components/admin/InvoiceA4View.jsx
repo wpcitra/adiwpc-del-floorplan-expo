@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { terbilang } from '../../utils/numberToWords';
 import { DEFAULT_INVOICE_CONFIG } from '../../utils/invoiceTemplateConfig';
-import { printInvoiceElement, downloadInvoicePDF } from '../../utils/invoicePrintUtils';
+import { downloadInvoicePdf, printInvoice } from '../../utils/invoicePdf';
 import { api } from '../../services/api';
 import { invoiceTaxView, allocate } from '../../utils/invoiceTax';
 import InvoiceTotals from './InvoiceTotals';
@@ -33,6 +33,8 @@ export default function InvoiceA4View({
   onEdit,
   onOpenEditor,
   isLivePreview = false,
+  // The print route (/print/invoice/:id): the sheet alone, as the PDF and the printer get it (AGENTS.md §34)
+  printMode = false,
   // Staff views (Manajemen Invoice, Data Exhibitor): "Kirim WhatsApp" to the tenant's number
   allowSend = false
 }) {
@@ -56,23 +58,28 @@ export default function InvoiceA4View({
 
   if (!invoice) return null;
 
-  // 1. Dedicated Print Handler (Isolated A4 single-page print dialog)
-  const handlePrint = () => {
-    printInvoiceElement(printRef.current || 'printable-invoice-a4');
+  // 1. Print: the print route (this same component) in a hidden frame, with the invoice and design shown here
+  const handlePrint = async () => {
+    if (isPrinting) return;
+    setIsPrinting(true);
+    const ok = await printInvoice({ invoice, config: activeConfig });
+    setIsPrinting(false);
+    if (!ok) alert('Halaman cetak invoice tidak dapat dimuat. Periksa koneksi lalu coba lagi.');
   };
 
-  // 2. Dedicated PDF Download Handler (Generates exact A4 PDF with logo, stamp & colors)
+  // 2. Download PDF: made by the server from the print route (headless Chromium), identical to this preview.
+  //    A server without Chromium answers 503: the browser's own print dialog ("Simpan sebagai PDF") is used instead.
   const handleDownloadPDF = async () => {
     if (isGeneratingPDF) return;
     setIsGeneratingPDF(true);
-    try {
-      const fileName = `Invoice-${invoice.invoice_number ? invoice.invoice_number.replace(/[\/\\]/g, '_') : 'Doc'}.pdf`;
-      await downloadInvoicePDF(printRef.current || 'printable-invoice-a4', fileName);
-    } catch (err) {
-      console.error('Gagal download PDF invoice:', err);
-      alert('Terjadi kendala saat export PDF. Silakan gunakan tombol Print Invoice (lalu pilih Save as PDF).');
-    } finally {
-      setIsGeneratingPDF(false);
+    const res = await downloadInvoicePdf({ invoice });
+    setIsGeneratingPDF(false);
+    if (res.success) return;
+    if (res.unavailable) {
+      alert(`${res.error}\n\nDialog cetak akan dibuka: pilih "Simpan sebagai PDF" sebagai printer.`);
+      handlePrint();
+    } else {
+      alert(res.error);
     }
   };
 
@@ -263,10 +270,10 @@ export default function InvoiceA4View({
   };
 
   return (
-    <div className={`${isLivePreview ? 'w-full flex justify-center' : 'fixed inset-0 z-50 flex flex-col items-center justify-start bg-slate-950/85 backdrop-blur-md overflow-y-auto p-4 sm:p-6 animate-fadeIn print:p-0 print:bg-white print:static'}`}>
+    <div className={`${printMode ? 'invoice-print-wrap' : isLivePreview ? 'w-full flex justify-center' : 'fixed inset-0 z-50 flex flex-col items-center justify-start bg-slate-950/85 backdrop-blur-md overflow-y-auto p-4 sm:p-6 animate-fadeIn print:p-0 print:bg-white print:static'}`}>
       
       {/* Top Floating Control Bar (Hidden on Print and in Live Preview Embed) */}
-      {!isLivePreview && (
+      {!isLivePreview && !printMode && (
         <div className="w-full max-w-[210mm] mb-4 bg-slate-900 text-white px-4 py-3 rounded-2xl border border-slate-700 shadow-xl flex items-center justify-between shrink-0 print:hidden">
           <div className="flex items-center gap-3">
             <div 
@@ -364,8 +371,8 @@ export default function InvoiceA4View({
       {/* A4 Sheet Paper Container (Standard ISO A4: 210mm x 297mm) */}
       <div 
         ref={printRef}
-        id="printable-invoice-a4"
-        className={`bg-white text-slate-900 shadow-2xl rounded-sm border border-slate-200 relative flex flex-col justify-between font-sans print:shadow-none print:border-none print:m-0 ${cfg.fontFamily || 'font-sans'}`}
+        id={printMode ? 'invoice-print-sheet' : 'printable-invoice-a4'}
+        className={`invoice-sheet bg-white text-slate-900 relative flex flex-col justify-between font-sans print:shadow-none print:border-none print:m-0 ${printMode ? '' : 'shadow-2xl rounded-sm border border-slate-200'} ${cfg.fontFamily || 'font-sans'}`}
         style={{
           boxSizing: 'border-box',
           width: '210mm',
@@ -632,7 +639,7 @@ export default function InvoiceA4View({
                   const itemTotal = item.amount ?? item.total ?? (itemQty * itemPrice);
 
                   return (
-                    <tr key={idx} className="hover:bg-slate-50/50">
+                    <tr key={idx} className="invoice-row hover:bg-slate-50/50">
                       {cfg.showItemNumber && <td className="py-3 px-3 font-semibold text-slate-500 align-top">{idx + 1}</td>}
                       <td className="py-3 px-3 align-top">
                         <div className="font-bold text-slate-900 text-xs">{item.description || `Sewa Booth ${inv.booth_code}`}</div>
@@ -679,7 +686,7 @@ export default function InvoiceA4View({
           </div>
 
           {/* SECTION 4: FINANCIAL CALCULATIONS & PRIVATE DISCOUNT */}
-          <div className="flex items-start justify-between gap-6 border-t-2 border-slate-200 pt-4 mb-6 text-xs">
+          <div className="invoice-keep flex items-start justify-between gap-6 border-t-2 border-slate-200 pt-4 mb-6 text-xs">
             {/* Left: Terbilang & Notes */}
             <div className="flex-1 space-y-3">
               {cfg.showTerbilang && (
@@ -816,7 +823,7 @@ export default function InvoiceA4View({
         </div>
 
         {/* SECTION 5: INSTRUCTIONS & SIGNATURES */}
-        <div className="pt-6 border-t border-slate-200 grid grid-cols-2 gap-6 items-end text-xs shrink-0">
+        <div className="invoice-keep pt-6 border-t border-slate-200 grid grid-cols-2 gap-6 items-end text-xs shrink-0">
           {/* Payment Instructions (hidden together with the bank account: they refer to it) */}
           <div className={`space-y-1.5 text-slate-600 ${showBank ? '' : 'invisible'}`}>
             <div className="flex items-center gap-1.5 text-slate-900 font-bold text-xs">
@@ -868,7 +875,7 @@ export default function InvoiceA4View({
 
         {/* Optional Footer Tagline */}
         {cfg.footerNotes && (
-          <div className="pt-4 mt-4 border-t border-slate-100 text-center text-[10px] text-slate-400">
+          <div className="invoice-footer pt-4 mt-4 border-t border-slate-100 text-center text-[10px] text-slate-400">
             {cfg.footerNotes}
           </div>
         )}

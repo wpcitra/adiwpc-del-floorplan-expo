@@ -9,6 +9,9 @@ import { notifyOpsOfSalesChange } from '../utils/opsLayer.js';
 import { taxOptionsFrom, readBookingRules } from '../utils/taxSettings.js';
 import { cleanEmail } from '../../../shared/emailRule.js';
 import { buildInvoiceRow } from './invoiceRoutes.js';
+import { pdfTokenFor } from '../utils/pdfRenderer.js';
+
+const withPdfToken = (invoice) => (invoice ? { ...invoice, pdfToken: pdfTokenFor(invoice.id) } : invoice);
 import { computeContractTax, taxPortion } from '../../../shared/invoiceTax.js';
 
 const router = express.Router();
@@ -379,7 +382,8 @@ router.post('/checkout', (req, res) => {
         phone,
         // The invoice just issued, exactly as Manajemen Invoice stores it: the registrant views / downloads it
         // right away (visitors cannot open invoices afterwards; they get this one copy)
-        invoice: result.invoiceNumbers[0] ? buildInvoiceRow(result.invoiceNumbers[0]) : null,
+        // with a short-lived token so the registrant (not logged in) can download this invoice as PDF
+        invoice: result.invoiceNumbers[0] ? withPdfToken(buildInvoiceRow(result.invoiceNumbers[0])) : null,
         // computed by the server (price - discount + PPN), not the value sent by the form
         totalAmount: result.contractTotal,
         taxRate: result.taxRate,

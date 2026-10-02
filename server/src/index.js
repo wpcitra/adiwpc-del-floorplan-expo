@@ -10,6 +10,7 @@ import invoiceRoutes from './routes/invoiceRoutes.js';
 import categoryRoutes from './routes/categoryRoutes.js';
 import templatePriceRoutes from './routes/templatePriceRoutes.js';
 import tenantRoutes from './routes/tenantRoutes.js';
+import { pdfEngineAvailable } from './utils/pdfRenderer.js';
 import brandCategoryRoutes from './routes/brandCategoryRoutes.js';
 import paymentMethodRoutes from './routes/paymentMethodRoutes.js';
 import facilityRoutes from './routes/facilityRoutes.js';
@@ -82,6 +83,8 @@ app.get('/api/health', (req, res) => {
     environment: process.env.APP_ENV || 'production',
     version: appVersion(),
     lastBackupAt: backup?.at || null,
+    // false: no Chromium on this server, "Download PDF" falls back to the browser's print dialog (AGENTS.md §34)
+    pdfEngine: pdfEngineAvailable(),
     // 'volume' | 'ephemeral' (Railway without a Volume: data is lost on every deploy) | 'local'
     storage: storageKind,
     timestamp: new Date().toISOString()

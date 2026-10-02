@@ -18,6 +18,7 @@ import RequireAuth, { RoleHomeRedirect } from './components/auth/RequireAuth';
 import LoginPage from './pages/auth/LoginPage';
 import AuditLogPage from './pages/admin/AuditLogPage';
 import MaintenancePage from './pages/admin/MaintenancePage';
+import InvoicePrintPage from './pages/print/InvoicePrintPage';
 
 function App() {
   return (
@@ -35,6 +36,9 @@ function App() {
 
         {/* Public Tenant Facility Request Portal */}
         <Route path="/facility-request" element={<PublicFacilityRequestPage />} />
+
+        {/* Invoice sheet alone at A4: the source of the server's PDF and of "Print Invoice" (AGENTS.md §34) */}
+        <Route path="/print/invoice/:id" element={<InvoicePrintPage />} />
 
         {/* Staff Login */}
         <Route path="/login" element={<LoginPage />} />

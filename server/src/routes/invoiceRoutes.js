@@ -12,6 +12,7 @@ import { clientIp } from '../middleware/auth.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
 import { saveBoothDiscount } from '../utils/boothDiscount.js';
 import { externalizeImages, CONFIG_INLINE_KEYS } from '../utils/uploads.js';
+import { renderInvoicePdf, printBaseUrl, pdfTokenValid, PdfEngineError } from '../utils/pdfRenderer.js';
 import { canDeleteInvoice, canDeletePaidInvoice, canRestoreInvoice, cleanDeleteReason, sameInvoiceNumber, DELETE_REASON_MIN } from '../../../shared/invoicePermissions.js';
 
 const router = express.Router();
@@ -447,6 +448,55 @@ router.get('/', (req, res) => {
     console.error("Fetch invoices error:", error);
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// ---------- Invoice PDF (AGENTS.md §34) ----------
+// The stored design; visitors (token download) get it without the signature image, like GET /config (§20)
+function invoiceDesign(forStaff) {
+  let saved = {};
+  try { saved = JSON.parse(db.prepare('SELECT config_json FROM invoice_settings WHERE id = ?').get('default_template')?.config_json || '{}'); } catch (e) { saved = {}; }
+  const config = { ...DEFAULT_SYSTEM_CONFIG, ...saved };
+  return forStaff ? config : publicInvoiceConfig(config);
+}
+
+const pdfFileName = (number) => `Invoice-${String(number || 'Dokumen').replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`;
+
+async function sendInvoicePdf(req, res, invoice, config) {
+  try {
+    const pdf = await renderInvoicePdf({ invoice, config, baseUrl: printBaseUrl(req, req.socket?.localPort || process.env.PORT || 5001) });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${pdfFileName(invoice.invoice_number)}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(pdf);
+  } catch (error) {
+    if (error instanceof PdfEngineError && error.code === 'PDF_ENGINE_UNAVAILABLE') {
+      // not an application error: the page falls back to the browser's own "Simpan sebagai PDF"
+      return res.status(503).json({ success: false, code: error.code, error: 'Mesin PDF (Chromium) belum tersedia di server. Gunakan Print Invoice lalu "Simpan sebagai PDF".' });
+    }
+    console.error('Invoice PDF error:', error);
+    res.status(500).json({ success: false, code: 'PDF_RENDER_FAILED', error: 'PDF invoice gagal dibuat. Coba lagi, atau gunakan Print Invoice.' });
+  }
+}
+
+// POST /api/invoices/pdf-preview { invoice, config }: the layout editor's "Download PDF" (a design that is not saved yet)
+router.post('/pdf-preview', async (req, res) => {
+  req.skipAudit = true; // nothing is stored
+  const { invoice, config } = req.body || {};
+  if (!invoice || typeof invoice !== 'object') return res.status(400).json({ success: false, error: 'Data invoice wajib diisi' });
+  return sendInvoicePdf(req, res, { ...invoice, id: 'preview' }, { ...invoiceDesign(true), ...(config && typeof config === 'object' ? config : {}) });
+});
+
+// GET /api/invoices/:id/pdf: the issued invoice as PDF. Staff: any logged-in role that can open invoices. A registrant
+// who is not logged in: only with the signed token of the checkout response (`order.invoice.pdfToken`).
+router.get('/:id/pdf', async (req, res) => {
+  const row = db.prepare('SELECT id FROM invoices WHERE (id = ? OR invoice_number = ?) AND deleted_at IS NULL').get(req.params.id, req.params.id);
+  const staff = Boolean(req.user);
+  if (!staff && !(row && pdfTokenValid(row.id, req.query.token))) {
+    return res.status(401).json({ success: false, error: 'Silakan login terlebih dahulu' });
+  }
+  const invoice = row ? buildInvoiceRow(row.id) : null;
+  if (!invoice) return res.status(404).json({ success: false, error: 'Invoice tidak ditemukan' });
+  return sendInvoicePdf(req, res, invoice, invoiceDesign(staff));
 });
 
 // ---------- Hapus Invoice, Tempat Sampah & Pulihkan (AGENTS.md §31) ----------

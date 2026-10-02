@@ -169,7 +169,14 @@ export async function printInvoiceElement(elementOrId = 'printable-invoice-a4') 
     })
   );
 
-  // Short delay for layout & font rendering
+  // The stylesheets copied into the frame are files on a built site: printing before they arrive gave a page of
+  // unstyled text. Wait until every linked stylesheet is loaded (at most 8 s), then for the fonts.
+  const links = Array.from(iframeDoc.querySelectorAll('link[rel="stylesheet"]'));
+  await Promise.race([
+    Promise.all(links.map(link => (link.sheet ? Promise.resolve() : new Promise(resolve => { link.addEventListener('load', resolve); link.addEventListener('error', resolve); })))),
+    new Promise(resolve => setTimeout(resolve, 8000))
+  ]);
+  try { await iframeDoc.fonts.ready; } catch (e) { /* older browser */ }
   await new Promise(r => setTimeout(r, 200));
 
   try {

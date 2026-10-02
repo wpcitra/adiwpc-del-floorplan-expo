@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* The invoice sheet uses a bundled font, so the preview, the print and the server's PDF are identical on every machine */
+@import "@fontsource-variable/inter";
 
 body {
   margin: 0;
@@ -116,5 +118,56 @@ code {
   [id^="printable-"] svg {
     visibility: visible !important;
     display: inline-block !important;
+  }
+}
+
+/* ---- Invoice sheet & print route (/print/invoice/:id), AGENTS.md §34 ---- */
+.invoice-sheet.font-sans {
+  font-family: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+/* table header repeated on every page; a row, the totals block and the signature block are never split */
+.invoice-sheet thead { display: table-header-group; }
+.invoice-sheet .invoice-row,
+.invoice-sheet .invoice-keep { break-inside: avoid; page-break-inside: avoid; }
+/* the footer line never stands alone on a last page: it stays with the signature block */
+.invoice-sheet .invoice-footer { break-before: avoid; page-break-before: avoid; break-inside: avoid; }
+
+html.print-route,
+html.print-route body { margin: 0; padding: 0; background: #ffffff; }
+html.print-route .invoice-print-wrap { display: block; }
+html.print-route #invoice-print-sheet { margin: 0 auto; }
+
+/* Page of the invoice: A4 with the sheet's own margins on EVERY page (also the 2nd page of a long invoice) */
+@page invoice { size: A4; margin: 12mm 14mm; }
+
+@media print {
+  /* the print route shows only the sheet: undo the single-page rules above (hidden body, fixed 297 mm, clipped) */
+  html.print-route,
+  html.print-route body {
+    width: auto !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  html.print-route body * { visibility: visible !important; }
+  html.print-route *,
+  html.print-route *::before,
+  html.print-route *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  /* Chromium prints a blurred box-shadow as a grey rectangle: the sheet's soft badge shadows are left out on paper */
+  html.print-route .invoice-sheet,
+  html.print-route .invoice-sheet * { box-shadow: none !important; }
+  html.print-route #invoice-print-sheet {
+    page: invoice;
+    width: auto !important;
+    max-width: none !important;
+    /* one page when the content fits: page height minus the page margins, with a little slack against rounding */
+    min-height: 272mm !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
   }
 }

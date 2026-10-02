@@ -91,6 +91,8 @@ const ACCESS_RULES = [
 
   // Invoices: finance owns billing, including the private booth discount (sales reads invoices only)
   { methods: ['GET'], path: /^\/invoices\/config$/, access: 'public' },
+  // Invoice PDF: staff, or a registrant with the signed token of the checkout response (checked in the handler)
+  { methods: ['GET'], path: /^\/invoices\/[^/]+\/pdf$/, access: 'public' },
   { methods: ['POST'], path: /^\/invoices\/sync-booth-discount$/, access: FINANCE },
   // Tempat Sampah Invoice (list, restore): Super Admin only. Deleting: Finance + Super Admin (shared/invoicePermissions.js)
   { methods: ['GET'], path: /^\/invoices\/trash$/, access: [] },
