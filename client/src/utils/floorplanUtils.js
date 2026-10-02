@@ -1623,6 +1623,9 @@ export function hydrateBoothObject(obj, rawObj = null, dbBooths = []) {
       obj.boothData.status = match.status || obj.boothData.status;
       obj.boothData.ownerName = match.owner_name !== undefined ? match.owner_name : (match.ownerName !== undefined ? match.ownerName : obj.boothData.ownerName);
       if (match.price !== undefined) obj.boothData.price = match.price;
+      // Harga mengikuti template (§32): the mode, and whether an invoice locks the price (runtime only)
+      if (match.price_mode) obj.boothData.priceMode = match.price_mode;
+      if (match.price_locked !== undefined) obj.boothData.priceLocked = Boolean(match.price_locked);
       if (match.category) obj.boothData.category = match.category;
       if (match.shape) obj.boothData.shape = match.shape;
       if (match.brand_category || match.brandCategory) obj.boothData.brandCategory = match.brand_category || match.brandCategory;
@@ -1677,6 +1680,7 @@ export function exportToPRDJson(canvas, eventInfo = {}, gridScale = DEFAULT_GRID
         brand_category: obj.boothData.brandCategory || '',
         shape: obj.boothData.shape || 'rectangle',
         price: obj.boothData.price,
+        priceMode: obj.boothData.priceMode,
         discount_type: obj.boothData.discountType || obj.boothData.discount_type || 'nominal',
         discount_value: obj.boothData.discountValue !== undefined ? obj.boothData.discountValue : (obj.boothData.discount_value || 0),
         discount_amount: obj.boothData.discountAmount !== undefined ? obj.boothData.discountAmount : (obj.boothData.discount_amount || 0),

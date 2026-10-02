@@ -12,6 +12,8 @@ import InvoiceDeleteModal from '../../components/admin/InvoiceDeleteModal';
 import InvoiceTrashModal from '../../components/admin/InvoiceTrashModal';
 import { collapseMergedRows } from '../../utils/mergeRows';
 import { canDeleteInvoice, canRestoreInvoice, invoiceBriefOf } from '../../utils/invoicePermissions';
+import TenantDeleteModal from '../../components/admin/TenantDeleteModal';
+import { canDeleteTenant, tenantRowIds } from '../../utils/tenantPermissions';
 
 export default function ExhibitorTable() {
   const [exhibitors, setExhibitors] = useState([]);
@@ -38,6 +40,13 @@ export default function ExhibitorTable() {
   const [deletePicker, setDeletePicker] = useState(null); // tenant row with several invoices: choose which one
   const [invoiceToDelete, setInvoiceToDelete] = useState(null); // brief of the invoice in the confirmation
   const [isInvoiceTrashOpen, setIsInvoiceTrashOpen] = useState(false);
+  // Hapus Tenant: Super Admin only (button, checkboxes and action bar are not rendered for other roles; server 403)
+  const canDeleteTenants = canDeleteTenant(user);
+  const [selectedTenantIds, setSelectedTenantIds] = useState(() => new Set());
+  const [tenantToDelete, setTenantToDelete] = useState(null); // one table row
+  const [bulkTenants, setBulkTenants] = useState(null); // rows of one project
+  const [undoToast, setUndoToast] = useState(null); // { message, ids } shown for 5 seconds
+  const undoTimerRef = useRef(null);
   const [wizardFor, setWizardFor] = useState(null); // { projectId, boothCode }
   const [editingInvoice, setEditingInvoice] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -111,7 +120,7 @@ export default function ExhibitorTable() {
       const list = Array.isArray(res) ? res : (res?.floorplans || res?.data || []);
       setFloorplans(list);
     });
-  }, []);
+  }, [reloadKey]); // booth counts ("x / 170 booth terisi") follow a deleted / restored tenant
 
   // All tenants of all (non-deleted) projects are loaded once and grouped Tahun -> Project on the client,
   // so every folder, badge and filter works on the same data as Manajemen Invoice / Studio / Live Floorplan.
@@ -325,6 +334,65 @@ export default function ExhibitorTable() {
     </div>
   ) : null;
 
+  // ---- Hapus Tenant (AGENTS.md §33) ----
+  const offerUndo = (message, ids) => {
+    clearTimeout(undoTimerRef.current);
+    setUndoToast({ message, ids });
+    undoTimerRef.current = setTimeout(() => setUndoToast(null), 5000);
+  };
+  useEffect(() => () => clearTimeout(undoTimerRef.current), []);
+
+  const forgetSelection = (rows) => setSelectedTenantIds(prev => {
+    const next = new Set(prev);
+    rows.forEach(r => next.delete(r.id));
+    return next;
+  });
+
+  // Optimistic: the rows leave the table at once; they come back when the server refuses
+  const deleteTenantRows = async (rows, request, undoMessage) => {
+    const before = exhibitors;
+    const gone = new Set(rows.map(r => r.id));
+    setExhibitors(prev => prev.filter(e => !gone.has(e.id)));
+    const res = await request();
+    if (!res?.success) {
+      setExhibitors(before);
+      showToast(`⚠️ ${res?.error || 'Gagal menghapus tenant'}`);
+      return { success: false, error: res?.error || 'Gagal menghapus tenant' };
+    }
+    forgetSelection(rows);
+    setTenantToDelete(null);
+    setBulkTenants(null);
+    setReloadKey(k => k + 1); // every count and total is recomputed from the server
+    offerUndo(undoMessage, res.deleted ? res.deleted.map(d => d.id) : [res.id]);
+    return { success: true };
+  };
+
+  const confirmDeleteTenant = ({ confirmBooth }) => {
+    const row = tenantToDelete;
+    const ids = tenantRowIds(row);
+    return deleteTenantRows([row], () => api.deleteTenant(ids[0], { confirmBooth, alsoIds: ids.slice(1) }), `Tenant ${row.company} dihapus`);
+  };
+
+  const confirmBulkDelete = ({ confirmText }) => {
+    const rows = bulkTenants;
+    const ids = rows.map(r => { const g = tenantRowIds(r); return g.length === 1 ? g[0] : g; });
+    return deleteTenantRows(rows, () => api.bulkDeleteTenants(ids, confirmText), `${rows.length} tenant dihapus`);
+  };
+
+  const undoTenantDelete = async () => {
+    const pending = undoToast;
+    clearTimeout(undoTimerRef.current);
+    setUndoToast(null);
+    if (!pending) return;
+    const failed = [];
+    for (const id of pending.ids) {
+      const res = await api.restoreTenant(id);
+      if (!res?.success) failed.push(res?.error || 'Gagal memulihkan tenant');
+    }
+    setReloadKey(k => k + 1);
+    showToast(failed.length ? `⚠️ ${failed[0]}${failed.length > 1 ? ` (+${failed.length - 1} lainnya)` : ''}` : '↩️ Penghapusan diurungkan, tenant kembali ke booth-nya');
+  };
+
   const briefOf = (inv, exh) => invoiceBriefOf(inv, { companyName: exh.company, boothCode: exh.booth });
   // One invoice: straight to the confirmation. Several (DP + Pelunasan...): a small list to choose from, never all at once.
   const askDeleteInvoice = (exh) => {
@@ -333,7 +401,8 @@ export default function ExhibitorTable() {
   };
 
   const renderActions = (exh) => (
-    <div className="flex items-center justify-end gap-1.5 flex-wrap">
+    <div className="flex items-start justify-end gap-1">
+    <div className="flex items-center justify-end gap-1.5 flex-wrap min-w-0">
       <button 
         type="button"
         onClick={() => handleOpenFacilityForm(exh)}
@@ -383,18 +452,55 @@ export default function ExhibitorTable() {
         <span className="text-[10px] text-slate-400">Belum ada invoice</span>
       )}
     </div>
+      {canDeleteTenants && (
+        <button type="button" onClick={() => setTenantToDelete(exh)} title="Hapus tenant" aria-label={`Hapus tenant ${exh.company} booth ${exh.booth}`}
+          className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer">
+          <Trash2 size={14} />
+        </button>
+      )}
+    </div>
   );
 
   // Level 3: tenant table of one project (cards on phones)
   const renderTenantTable = (project) => {
     const list = exhibitorsByProject.get(project.id) || [];
+    const picked = canDeleteTenants ? list.filter(e => selectedTenantIds.has(e.id)) : [];
+    const allPicked = list.length > 0 && picked.length === list.length;
+    const pickAll = (on) => setSelectedTenantIds(prev => {
+      const next = new Set(prev);
+      list.forEach(e => (on ? next.add(e.id) : next.delete(e.id)));
+      return next;
+    });
+    const pickOne = (exh) => setSelectedTenantIds(prev => {
+      const next = new Set(prev);
+      if (next.has(exh.id)) next.delete(exh.id); else next.add(exh.id);
+      return next;
+    });
     return (
       <>
+        {canDeleteTenants && picked.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 px-3.5 py-2 bg-rose-50 border-b border-rose-200 text-xs">
+            <span className="font-bold text-slate-900">{picked.length} tenant dipilih</span>
+            <button type="button" onClick={() => setBulkTenants(picked)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold cursor-pointer">
+              <Trash2 size={12} /> Hapus Terpilih
+            </button>
+            <button type="button" onClick={() => pickAll(false)} className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold cursor-pointer">
+              Batal pilih
+            </button>
+          </div>
+        )}
         {/* Desktop / tablet: table */}
         <div className="hidden md:block overflow-x-auto custom-scrollbar w-full">
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-slate-50/90 text-slate-700 font-bold text-[11px] uppercase tracking-wider border-b border-slate-200">
               <tr>
+                {canDeleteTenants && (
+                  <th className="pl-3.5 py-3 w-8">
+                    <input type="checkbox" checked={allPicked} onChange={(e) => pickAll(e.target.checked)}
+                      aria-label={`Pilih semua tenant ${project.title || ''}`} className="w-3.5 h-3.5 accent-rose-600 cursor-pointer align-middle" />
+                  </th>
+                )}
                 <th className="px-3.5 py-3 w-20">Booth</th>
                 <th className="px-3.5 py-3 min-w-[170px]">Nama Brand / Tenant</th>
                 <th className="px-3.5 py-3 w-36">Kategori Brand</th>
@@ -406,7 +512,13 @@ export default function ExhibitorTable() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {list.map((exh) => (
-                <tr key={exh.id} className="hover:bg-slate-50/60 transition-colors">
+                <tr key={exh.id} className={`transition-colors ${canDeleteTenants && selectedTenantIds.has(exh.id) ? 'bg-rose-50/50' : 'hover:bg-slate-50/60'}`}>
+                  {canDeleteTenants && (
+                    <td className="pl-3.5 py-3">
+                      <input type="checkbox" checked={selectedTenantIds.has(exh.id)} onChange={() => pickOne(exh)}
+                        aria-label={`Pilih tenant ${exh.company} booth ${exh.booth}`} className="w-3.5 h-3.5 accent-rose-600 cursor-pointer align-middle" />
+                    </td>
+                  )}
                   <td className="px-3.5 py-3">
                     <span className="font-mono font-semibold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 text-xs whitespace-nowrap"
                       title={exh.isMerged ? exh.mergedBooths.map(b => `${b.code} (${b.widthM}×${b.heightM} m)`).join(', ') : undefined}>
@@ -455,6 +567,10 @@ export default function ExhibitorTable() {
             <div key={exh.id} className="p-3 space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
+                  {canDeleteTenants && (
+                    <input type="checkbox" checked={selectedTenantIds.has(exh.id)} onChange={() => pickOne(exh)}
+                      aria-label={`Pilih tenant ${exh.company} booth ${exh.booth}`} className="w-3.5 h-3.5 mr-2 accent-rose-600 cursor-pointer align-middle" />
+                  )}
                   <span className="font-mono font-semibold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 text-[11px]">#{exh.booth || '-'}</span>
                   <div className="font-bold text-slate-900 text-sm mt-1.5 break-words">{exh.company}</div>
                   <div className="text-[11px] text-slate-500">PIC: {exh.pic || exh.company} • {exh.contact || '-'}</div>
@@ -779,6 +895,25 @@ export default function ExhibitorTable() {
         showToast={showToast}
         onRestored={() => setReloadKey(k => k + 1)}
       />
+
+      {/* Hapus Tenant: one row, or the selected rows of a project */}
+      <TenantDeleteModal
+        tenant={tenantToDelete}
+        tenants={bulkTenants}
+        statusLabel={statusLabel}
+        onClose={() => { setTenantToDelete(null); setBulkTenants(null); }}
+        onConfirm={bulkTenants ? confirmBulkDelete : confirmDeleteTenant}
+      />
+
+      {/* "Tenant ... dihapus" with Urungkan (5 seconds) */}
+      {undoToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white pl-4 pr-2 py-2 rounded-xl border border-slate-700 shadow-2xl flex items-center gap-3 text-xs animate-fadeIn backdrop-blur-md" role="status">
+          <span>{undoToast.message}</span>
+          <button type="button" onClick={undoTenantDelete} className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 font-bold text-amber-300 cursor-pointer">
+            Urungkan
+          </button>
+        </div>
+      )}
 
       {/* Generate Tenant Facility Modal (PDF & WA with Company Letterhead & Template Catalog) */}
       <GenerateTenantFacilityModal

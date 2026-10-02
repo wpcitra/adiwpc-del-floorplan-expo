@@ -25,6 +25,7 @@ import {
 } from '../../utils/boothSnap';
 import CanvasRuler from './CanvasRuler';
 import { COPY_PROPS, prepareCopy, nextBoothCode, boothCodeTokens, boothCodeTaken } from '../../utils/copyRules';
+import { initialPriceMode, templateFollowProps, studioCatalog } from '../../utils/templatePrice';
 
 import { safeSet, safeGetJson, safeRemove } from '../../utils/safeStorage';
 const CLIPBOARD_KEY = 'floorplan_canvas_clipboard';
@@ -35,6 +36,14 @@ const MAX_HISTORY_STEPS = 20;
 // Booth hover glow (editor-only state) and the shadow a booth has at rest
 const BOOTH_HOVER_SHADOW = { color: 'rgba(59, 130, 246, 0.45)', blur: 16, offsetX: 0, offsetY: 3 };
 const BOOTH_REST_SHADOW = { color: 'rgba(0,0,0,0.06)', blur: 6, offsetX: 0, offsetY: 2 };
+// Harga mengikuti template (AGENTS.md §32): a booth with price mode 'template' takes the template price of its size
+// (after a resize, a template change, "Reset ke Template"). Returns true when the booth changed.
+const followTemplatePrice = (booth) => {
+  const props = booth?.isBooth ? templateFollowProps(booth.boothData) : null;
+  if (!props) return false;
+  updateBoothAppearance(booth, props);
+  return true;
+};
 // Booth numbers in use on the canvas ("A-01+A-02" counts as both), optionally without one booth (AGENTS.md §30)
 const usedBoothCodes = (canvas, except = null) => new Set(
   canvas.getObjects().filter(o => o.isBooth && o !== except).flatMap(o => boothCodeTokens(o.boothData?.code))
@@ -495,6 +504,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         top: snapToGrid ? Math.round(targetY / gridScale) * gridScale : targetY,
         ownerName: params.ownerName || ''
       });
+      // From a template (its size at its price): follows the template; a quick-custom price is Harga Khusus
+      booth.boothData.priceMode = initialPriceMode(booth.boothData, studioCatalog());
 
       canvas.add(booth);
       canvas.bringObjectToFront(booth);
@@ -663,8 +674,17 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         newProps = rest;
       }
 
+      // A price typed by hand is Harga Khusus; "Reset ke Template" sends priceMode 'template' itself. A template applied
+      // to the booth (size + price together) follows the template when that price is the template price of the size.
+      if (active.isBooth && 'price' in newProps && !('priceMode' in newProps)) {
+        const sized = 'widthM' in newProps || 'heightM' in newProps;
+        newProps = { ...newProps, priceMode: sized ? initialPriceMode({ ...active.boothData, ...newProps }, studioCatalog()) : 'custom' };
+      }
+
       if (active.isBooth) {
         updateBoothAppearance(active, newProps);
+        // A new size (or "Reset ke Template") takes the template price of that size
+        if ('widthM' in newProps || 'heightM' in newProps || newProps.priceMode === 'template') followTemplatePrice(active);
         // "Arah Nama Tenant" of a merged booth applies to the whole group (one name is drawn for all of them)
         if ('nameDirection' in newProps) {
           const mergeGroup = (canvas.__mergeGroups || []).find(g => g.active && g.members.includes(active));
@@ -723,15 +743,52 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       if (!canvas) return;
       const activeObjects = canvas.getActiveObjects();
 
+      // "Terapkan Harga Sewa Massal" is a price typed by hand: Harga Khusus
+      const props = 'price' in newProps && !('priceMode' in newProps) ? { ...newProps, priceMode: 'custom' } : newProps;
       activeObjects.forEach(obj => {
         if (obj.isBooth) {
-          updateBoothAppearance(obj, newProps);
+          updateBoothAppearance(obj, props);
         }
       });
       canvas.requestRenderAll();
       notifyObjectsUpdate();
       handleSelectionRef.current?.();
       pushHistory();
+    },
+
+    // Prices changed by the server ("Samakan Semua Harga dengan Template", its undo): the same values on the open canvas
+    applyServerPrices: (changes = []) => {
+      const canvas = fabricRef.current;
+      if (!canvas || !changes.length) return 0;
+      const byCode = new Map(changes.map(c => [String(c.code || '').trim().toLowerCase(), c]));
+      let count = 0;
+      canvas.getObjects().forEach(obj => {
+        const c = obj.isBooth ? byCode.get(String(obj.boothData?.code || '').trim().toLowerCase()) : null;
+        if (!c) return;
+        updateBoothAppearance(obj, { price: c.price, priceMode: c.priceMode, discountAmount: c.discountAmount });
+        count++;
+      });
+      if (count) {
+        canvas.requestRenderAll();
+        notifyObjectsUpdate();
+        handleSelectionRef.current?.();
+        pushHistory();
+      }
+      return count;
+    },
+
+    // The Katalog Template changed: every booth that follows its template takes the new price. Returns how many changed.
+    refreshTemplatePrices: () => {
+      const canvas = fabricRef.current;
+      if (!canvas) return 0;
+      const count = canvas.getObjects().filter(followTemplatePrice).length;
+      if (count) {
+        canvas.requestRenderAll();
+        notifyObjectsUpdate();
+        handleSelectionRef.current?.();
+        pushHistory();
+      }
+      return count;
     },
 
     // Delete selected
@@ -1696,7 +1753,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           selectAfterTransform(rebuildDoorObject(canvas, target, { widthM }));
         }
       } else if (target && !target.isBackgroundBlueprint) {
+        const resized = Math.abs((target.scaleX || 1) - 1) > 0.001 || Math.abs((target.scaleY || 1) - 1) > 0.001;
         normalizeScaledObject(target, gridScale);
+        // A booth that follows its template takes the template price of its new size (a plain move changes nothing)
+        if (resized) followTemplatePrice(target);
       }
 
       // Booths: neat 0,01 m positions (no tiny gaps from decimals) and a warning when they end up overlapping
@@ -2227,6 +2287,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           top: dropY,
           ownerName: data.ownerName || ''
         });
+        newBooth.boothData.priceMode = initialPriceMode(newBooth.boothData, studioCatalog());
         if (snapToGrid) {
           newBooth.set({
             left: snapCoords(newBooth.left, gridScale, newBooth.originX, newBooth.width * newBooth.scaleX),

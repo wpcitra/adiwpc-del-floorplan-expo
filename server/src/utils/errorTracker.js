@@ -101,7 +101,8 @@ const AREA_RULES = [
   { re: /^\/api\/floorplan\/(active|events)$/, priority: 'KRITIS', feature: 'Live Floorplan & pemesanan booth' },
   // TINGGI
   { re: /^\/(api\/floorplan|admin\/floorplan)/, priority: 'TINGGI', feature: 'Floorplan Studio' },
-  { re: /^\/(api\/(orders|exhibitors)|admin\/exhibitors)/, priority: 'TINGGI', feature: 'Data Exhibitor' },
+  { re: /^\/api\/(template-prices|categories)/, priority: 'TINGGI', feature: 'Harga booth & katalog template' },
+  { re: /^\/(api\/(orders|exhibitors|tenants)|admin\/exhibitors)/, priority: 'TINGGI', feature: 'Data Exhibitor' },
   { re: /^\/(api\/stats|admin\/analytics)/, priority: 'TINGGI', feature: 'Dashboard' },
   // NORMAL (named for readability)
   { re: /^\/(api\/ops|admin\/ops)/, priority: 'NORMAL', feature: 'Denah Operasional' },

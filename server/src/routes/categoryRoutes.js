@@ -1,7 +1,30 @@
 import express from 'express';
 import db from '../db.js';
+import { followTemplateChange } from '../utils/templatePricing.js';
+import { writeAuditLog } from '../middleware/audit.js';
+import { clientIp } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Booths that follow the template (price_mode 'template', no invoice) take the new template price (AGENTS.md §32).
+// Returns what changed per project; the Studio applies the same prices to its open canvas.
+function followTemplates(req) {
+  try {
+    const followed = followTemplateChange(req.user);
+    followed.forEach(f => {
+      const fp = db.prepare('SELECT title FROM floorplans WHERE id = ?').get(f.floorplanId);
+      writeAuditLog({
+        user: req.user, action: 'Harga booth mengikuti perubahan template', category: 'Floorplan', target: `${fp?.title || ''} (${f.floorplanId})`,
+        summary: `${f.changes.length} booth · ${f.changes.slice(0, 12).map(c => `${c.code}: Rp ${c.oldPrice.toLocaleString('id-ID')} → Rp ${c.newPrice.toLocaleString('id-ID')}`).join('; ')}${f.changes.length > 12 ? '; …' : ''}`,
+        method: req.method, path: `/api/categories${req.path}`, statusCode: 200, ip: clientIp(req), details: { floorplanId: f.floorplanId, count: f.changes.length, changes: f.changes }
+      });
+    });
+    return followed.map(f => ({ floorplanId: f.floorplanId, changes: f.changes.map(c => ({ code: c.code, price: c.newPrice, priceMode: c.newMode, discountAmount: c.newDiscountAmount })) }));
+  } catch (e) {
+    console.error('Follow template change error:', e);
+    return [];
+  }
+}
 
 const DEFAULT_CATEGORIES = [
   { id: 'cat_standard', key: 'Standard', name: 'Standard (3x3m)', width_m: 3, height_m: 3, default_price: 5000000, color: '#3b82f6', border_color: '#1d4ed8', is_free: 0, description: 'Booth standar partisi 3x3m', sort_order: 1 },
@@ -102,6 +125,7 @@ router.post('/', (req, res) => {
     res.json({
       success: true,
       message: `Kategori "${name}" berhasil ditambahkan.`,
+      priceChanges: followTemplates(req),
       category: {
         id: created.id,
         key: created.key,
@@ -174,6 +198,7 @@ router.put('/:id', (req, res) => {
     res.json({
       success: true,
       message: `Kategori "${updated.name}" berhasil diperbarui.`,
+      priceChanges: followTemplates(req),
       category: {
         id: updated.id,
         key: updated.key,
@@ -212,7 +237,8 @@ router.delete('/:id', (req, res) => {
 
     res.json({
       success: true,
-      message: `Kategori "${cat.name}" berhasil dihapus.`
+      message: `Kategori "${cat.name}" berhasil dihapus.`,
+      priceChanges: followTemplates(req)
     });
   } catch (error) {
     console.error("Error deleting category:", error);
@@ -254,6 +280,7 @@ router.post('/reset', (req, res) => {
     res.json({
       success: true,
       message: 'Kategori & tier harga berhasil di-reset ke standar.',
+      priceChanges: followTemplates(req),
       categories
     });
   } catch (error) {

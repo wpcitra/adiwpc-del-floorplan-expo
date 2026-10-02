@@ -38,8 +38,7 @@ import {
   Shapes,
   Eye,
   EyeOff,
-  Unlock
-} from 'lucide-react';
+  Unlock, Scale } from 'lucide-react';
 import { BOOTH_CATEGORIES, BOOTH_SHAPES, VENUE_TEMPLATES, STATUS_CONFIG, updateBoothCategoriesRegistry } from '../../utils/floorplanUtils';
 import ShapePalette from './ShapePalette';
 import DoorSymbol from './DoorSymbol';
@@ -84,6 +83,8 @@ export default function ToolSidebar({
   onOpenInvoiceModal,
   onOpenInvoiceEditorModal,
   onOpenCategoryModal,
+  // "Samakan Semua Harga dengan Template": passed only for roles that may do it (not rendered otherwise)
+  onSyncTemplatePrices,
   objectsList = [], 
   onSelectObject, 
   onDeleteObject,
@@ -550,10 +551,8 @@ export default function ToolSidebar({
               </span>
               <button
                 type="button"
-                onClick={() => {
-                  const dp = BOOTH_CATEGORIES[selectedBooth.category]?.defaultPrice;
-                  if (dp) onUpdateProperty({ price: dp });
-                }}
+                onClick={() => onUpdateProperty({ priceMode: 'template' })}
+                title="Kembali mengikuti harga template ukuran booth ini"
                 className="text-[10px] text-blue-600 font-bold hover:underline"
               >
                 Reset Template
@@ -868,6 +867,17 @@ export default function ToolSidebar({
                   <span className="text-[10px] text-slate-400 font-medium">Klik / Drag</span>
                 </div>
               </div>
+              {onSyncTemplatePrices && (
+                <button
+                  type="button"
+                  onClick={onSyncTemplatePrices}
+                  className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 bg-white border border-blue-200 hover:bg-blue-50 text-blue-700 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
+                  title="Pratinjau dulu: bandingkan harga setiap booth dengan template ukurannya, lalu pilih yang diubah"
+                >
+                  <Scale size={12} />
+                  <span>Samakan Semua Harga dengan Template</span>
+                </button>
+              )}
 
               {/* Dynamic Catalog Cards from Master Tier Settings */}
               {catalogTiers.map((tier) => {

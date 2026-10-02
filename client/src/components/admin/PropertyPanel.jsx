@@ -59,6 +59,7 @@ import { BOOTH_CATEGORIES, BOOTH_SHAPES, STATUS_CONFIG } from '../../utils/floor
 import { api } from '../../services/api';
 import { NAME_DIRECTIONS, NAME_DIRECTION_LABELS, nameDirectionOf } from '../../utils/boothNameFit';
 import { nextBoothCode, boothCodeTaken } from '../../utils/copyRules';
+import { resolveTemplatePrice, studioCatalog } from '../../utils/templatePrice';
 
 export default function PropertyPanel({ 
   selectedObject, 
@@ -980,6 +981,9 @@ function BoothInspector({
   const [code, setCode] = useState(booth.code || '');
   // A number another booth already has stays in the field with a warning and is not applied to the booth
   const codeTaken = boothCodeTaken(code, otherBoothCodes);
+  // Harga mengikuti template (AGENTS.md §32): the template of this booth's size, and whether the booth follows it
+  const templateInfo = resolveTemplatePrice(booth, studioCatalog());
+  const isCustomPrice = booth.priceMode !== 'template';
   const [shape, setShape] = useState(booth.shape || 'rectangle');
   const [widthM, setWidthM] = useState(String(booth.widthM || 3));
   const [heightM, setHeightM] = useState(String(booth.heightM || 3));
@@ -1062,6 +1066,7 @@ function BoothInspector({
   const currentArea = ((parseFloat(widthM) || 3) * (parseFloat(heightM) || 3)).toFixed(1);
 
   const numPrice = parseInt(price, 10) || 0;
+  const templateDiff = templateInfo.status === 'match' ? numPrice - templateInfo.price : 0;
   const numDiscVal = parseFloat(discountValue) || 0;
   const calculatedDiscountAmount = boothDiscountAmount(numPrice, discountType, discountValue);
   const netFinalPrice = Math.max(0, numPrice - calculatedDiscountAmount);
@@ -1532,22 +1537,26 @@ function BoothInspector({
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <label className="font-semibold text-slate-700 uppercase tracking-wider text-[11px]">
-              Harga Sewa (IDR)
+              Harga Sewa
             </label>
-            <button
-              type="button"
-              onClick={() => {
-                const defaultP = BOOTH_CATEGORIES[booth.category]?.defaultPrice;
-                if (defaultP) {
-                  setPrice(String(defaultP));
-                  onUpdateProperty({ price: defaultP });
-                }
-              }}
-              className="text-[10px] text-blue-600 hover:text-blue-800 font-semibold hover:underline cursor-pointer"
-              title="Reset ke harga standar template"
-            >
-              Reset ke Template
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-md border font-bold whitespace-nowrap ${isCustomPrice ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-emerald-50 text-emerald-700 border-emerald-300'}`}>
+                {isCustomPrice ? 'Harga Khusus' : 'Ikut Template'}
+              </span>
+              {templateInfo.status === 'match' && (isCustomPrice || templateInfo.price !== (parseInt(price, 10) || 0)) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPrice(String(templateInfo.price));
+                    onUpdateProperty({ price: templateInfo.price, priceMode: 'template' });
+                  }}
+                  className="text-[10px] text-blue-600 hover:text-blue-800 font-semibold hover:underline cursor-pointer whitespace-nowrap"
+                  title={`Kembali mengikuti harga template ukuran ${templateInfo.label}`}
+                >
+                  Reset ke Template
+                </button>
+              )}
+            </div>
           </div>
           <div className="relative">
             <span className="absolute left-3 top-2 text-slate-400 font-medium">Rp</span>
@@ -1577,11 +1586,22 @@ function BoothInspector({
               <span>Terbaca:</span>
               <b className="font-mono text-slate-700">Rp {(parseInt(price, 10) || 0).toLocaleString('id-ID')}</b>
             </div>
-            {BOOTH_CATEGORIES[booth.category] && (
-              <div className="flex justify-between items-center text-[10px] text-slate-400">
-                <span>Template:</span>
-                <span>Rp {(BOOTH_CATEGORIES[booth.category]?.defaultPrice || 0).toLocaleString('id-ID')}</span>
+            <div className="flex justify-between items-center text-[10px] text-slate-400 gap-2">
+              <span>Template {templateInfo.label}:</span>
+              <span className="text-right">
+                {templateInfo.status === 'match' && `Rp ${templateInfo.price.toLocaleString('id-ID')}`}
+                {templateInfo.status === 'none' && 'tidak ada template ukuran ini'}
+                {templateInfo.status === 'conflict' && `konflik: ${templateInfo.templates.map(t => `${t.name} Rp ${t.price.toLocaleString('id-ID')}`).join(' / ')}`}
+              </span>
+            </div>
+            {templateInfo.status === 'match' && templateDiff !== 0 && (
+              <div className={`flex justify-between items-center text-[10px] font-semibold ${templateDiff > 0 ? 'text-amber-700' : 'text-rose-600'}`}>
+                <span>Selisih dari template:</span>
+                <span>{templateDiff > 0 ? '+' : '−'}Rp {Math.abs(templateDiff).toLocaleString('id-ID')}</span>
               </div>
+            )}
+            {booth.priceLocked && (
+              <div className="text-[10px] text-slate-500">Booth ini sudah punya invoice: harganya tidak ikut berubah saat template diubah.</div>
             )}
           </div>
         </div>

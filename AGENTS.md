@@ -517,3 +517,47 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Audit**: "Hapus invoice" / "Pulihkan invoice" (category `Invoice`, `req.skipAudit`) with user, role, number, amount, paid amount, status and reason in `summary` / `details_json`.
 - **Migration**: the columns are added by `db.js` at every start (local and Railway), like every other schema change; there is no separate migration command and no new environment variable.
 - Tests: `server/test/hapus-invoice.test.js`.
+
+---
+
+## 32. Harga Booth Mengikuti Katalog Template Lock (`shared/templatePrice.js`, `utils/templatePricing.js`, `templatePriceRoutes.js`, `TemplatePriceSyncModal.jsx`)
+- **One matching function**: `resolveTemplatePrice(booth, catalog)` in `shared/templatePrice.js` (server and Studio). A booth is matched to a template of the Katalog Template (`booth_categories`, the project's own rows plus `project_id = 'global'`) by SIZE only, never by name or colour.
+  - `sizeKeyOf` normalizes: letter case, spaces, the unit "m", decimals (3.0 = 3) and orientation (2x3 = 3x2). 3,3 m is not 3 m.
+  - Result `match` (one price), `none` (no template of that size; free tiers are not price templates), `conflict` (several templates of that size, also 2x3 next to 3x2, with DIFFERENT prices: nothing is chosen).
+  - Auto-merge group (`resolveGroupTemplatePrices`): the total size when the group is a rectangle, shared between the members by area; otherwise each member's own template. A share is stored as Harga Khusus.
+- **`booths.price_mode` / `boothData.priceMode`**: `template` (follows the catalog) or `custom` (Harga Khusus). The stored `booths.price` stays the value every other feature reads.
+  - New booth: `initialPriceMode()` = `template` only when its price IS the template price of its size. Typing a price (also "Terapkan Harga Sewa Massal") = `custom`; "Reset ke Template" = `template`; a new size of a `template` booth takes the template price of that size (`followTemplatePrice` in `CanvasEditor.jsx`).
+  - `POST /floorplan/save` is the authority: a `template` booth without invoice is saved with the template price whatever the canvas sent; a page that sends no mode keeps the stored one (a changed price = `custom`). The percentage discount follows the price, the nominal one stays.
+  - A template added / changed / removed (`/categories`): `followTemplateChange()` re-prices every `template` booth without invoice in every project (audit "Harga booth mengikuti perubahan template"); the open Studio does the same on its canvas (`refreshTemplatePrices`).
+  - Migration (`db.js`, every start, only rows without a mode): same price as the template = `template`, anything else = `custom`. No price changes at migration.
+- **Locked by invoice**: a booth with a live contract invoice (`lockedBoothCodes`: Menunggu Bayar, DP, Lunas) is never re-priced automatically and its invoices are never rewritten by this feature (`price_locked` on staff booth rows, `boothData.priceLocked` at runtime, never stored). Changing it means deleting / re-issuing the invoice.
+- **"Samakan Semua Harga dengan Template"** (button in the Katalog Template header of the Studio; `/api/template-prices/:floorplanId/preview | apply | undo`):
+  - The preview saves nothing and groups the booths: `change`, `same`, `custom` (not ticked by default), `none`, `conflict`, `locked`. The Studio saves pending edits before opening it.
+  - `apply { codes }` changes only `change` / `custom` booths, in ONE transaction (booths table + `canvas_fabric_json`), sets them to `template`, and stores the batch in `price_sync_batches` (old -> new price per booth).
+  - `undo` restores the latest batch only, for booths that still have the batch's price and no invoice.
+  - Access: `canSyncTemplatePrices` = `superadmin`, `finance`; Operasional and Sales get 403 and never see the button. (Finance has no Studio page, so in the Studio only the Super Admin sees it.)
+  - Audit (category `Floorplan`): "Samakan harga booth dengan template" / "Batalkan samakan harga booth" with project, count and old -> new price per booth.
+- Never add a second size-matching logic and never write a template price to a booth outside these paths.
+- Tests: `server/test/harga-template.test.js`.
+
+---
+
+## 33. Hapus Tenant & Urungkan Lock (`shared/tenantPermissions.js`, `utils/tenantDelete.js`, `tenantRoutes.js`, `TenantDeleteModal.jsx`)
+- **Super Admin only.** `canDeleteTenant(user)` (`users.role === 'superadmin'`) is the one rule for the page and the server. Data Exhibitor does not render the delete button, the checkboxes or the action bar for other roles; every `/api/tenants/*` endpoint answers 403 for them (handler check + `ACCESS_RULES`).
+- **What a tenant is.** There is no tenant table: a tenant of a project is its bookings (`orders`) plus the booths it holds. A table row's `id` is a booking id (or the booth id for a tenant set in the Studio); `tenantOfRow(id)` resolves it to { project, brand, booth numbers }. A merged row "A-01+A-02" has one id per booth (`tenantRowIds`).
+- **API** (all audited, category `Exhibitor`, with user, time, project, booth, brand, bill and payment status):
+  - `GET /api/tenants/:id/summary` what the confirmation shows (PIC, category, bill, payment status, invoices, facility form).
+  - `DELETE /api/tenants/:id { confirmBooth, alsoIds }` one row. A tenant with a payment or an issued invoice needs the booth number typed exactly (`sameBoothNumber`, 400 `CONFIRM_BOOTH`).
+  - `POST /api/tenants/bulk-delete { ids, confirmText }` ONE transaction, all or nothing; "HAPUS" is required when any tenant has a payment / invoice (400 `CONFIRM_REQUIRED`).
+  - `POST /api/tenants/:id/restore` ("Urungkan"; the id is the deleted row id or the deletion record) and `GET /api/tenants/trash`.
+- **Soft delete in one transaction** (`planTenantDelete` + `executeTenantDelete`, nothing is hard deleted):
+  - bookings: `orders.deleted_at` / `deleted_by`;
+  - invoices: unpaid -> the invoice trash (§31); with a payment -> kept as `CANCELED` with the note "Dibatalkan – tenant dihapus" (bookkeeping, refund); a contract shared with booths that stay -> only this booth leaves it (`removeBoothFromInvoice`);
+  - booths the tenant holds: Available, no tenant data, no private discount, auto-merge splits by itself, the price follows its rule again (`template` booths take the template price, §32); the saved canvas is updated (`applyBoothChangesToCanvas`), so the Studio, the Live Floorplan and Denah Operasional show the booth as Available;
+  - facility requests: `facility_requests.deleted_at` (the list hides them);
+  - a booth that meanwhile belongs to another tenant is never touched; the same brand in another project is never touched;
+  - the deletion is stored in `deleted_tenants` (snapshot for the restore).
+- **Restore** brings bookings, booths, invoices (also the canceled paid ones, to their previous status) and facility requests back. It is refused (409 `BOOTH_TAKEN`) when a booth is no longer Available and empty.
+- **Page** (`ExhibitorTable.jsx`): ghost Trash2 button at the far right of AKSI ("Hapus tenant"), checkboxes + "pilih semua" per project, action bar "[n] tenant dipilih / Hapus Terpilih / Batal pilih", `TenantDeleteModal` (single and bulk; "Batal" has the initial focus), optimistic removal with rollback and an error toast, then a reload of the rows and booth counts, and the toast "Tenant ... dihapus" with "Urungkan" for 5 seconds.
+- **Migration** (`db.js`, every start): table `deleted_tenants`, `orders.deleted_by`, `facility_requests.deleted_at` / `deleted_by`.
+- Tests: `server/test/hapus-tenant.test.js`.

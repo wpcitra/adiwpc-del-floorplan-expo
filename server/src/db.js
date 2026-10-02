@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { hashPassword, verifyPassword } from './utils/password.js';
 import { exhibitorIdFor } from './utils/exhibitorIdentity.js';
+import { initialPriceMode } from '../../shared/templatePrice.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -692,6 +693,79 @@ try {
       AND floorplan_id IN (SELECT id FROM floorplans WHERE deleted_at IS NULL)
   `);
 } catch (e) {}
+
+// Harga booth mengikuti Katalog Template (AGENTS.md §32): booths.price_mode 'template' | 'custom', and the batches
+// of "Samakan Semua Harga dengan Template" (old -> new price per booth; the last one can be undone).
+try { db.exec('ALTER TABLE booths ADD COLUMN price_mode TEXT'); } catch (e) {}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS price_sync_batches (
+    id TEXT PRIMARY KEY,
+    floorplan_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'sync',
+    user_id TEXT,
+    user_name TEXT,
+    user_role TEXT,
+    changes_json TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    undone_at DATETIME,
+    undone_by TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_price_sync_batches_fp ON price_sync_batches (floorplan_id, created_at);
+`);
+try {
+  // Booths from before this column: 'template' only when the price already IS the template price of the booth's
+  // size, otherwise 'custom'. No price changes here, so nothing changes silently when this runs.
+  const pending = db.prepare('SELECT id, floorplan_id, price, width_m, height_m FROM booths WHERE price_mode IS NULL').all();
+  if (pending.length) {
+    const catalog = db.prepare('SELECT * FROM booth_categories').all();
+    const setMode = db.prepare('UPDATE booths SET price_mode = ? WHERE id = ?');
+    db.transaction(() => {
+      pending.forEach(b => {
+        const own = catalog.filter(c => !c.project_id || c.project_id === 'global' || c.project_id === b.floorplan_id);
+        setMode.run(initialPriceMode(b, own), b.id);
+      });
+    })();
+  }
+} catch (e) {
+  console.error('price_mode backfill failed:', e);
+}
+
+// Hapus Tenant (AGENTS.md §33): one row per deletion (what was removed, so the Super Admin can restore it), and
+// facility requests of a deleted tenant are archived instead of removed.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS deleted_tenants (
+    id TEXT PRIMARY KEY,
+    floorplan_id TEXT NOT NULL,
+    company_name TEXT NOT NULL,
+    pic_name TEXT,
+    phone TEXT,
+    email TEXT,
+    brand_category TEXT,
+    scope TEXT NOT NULL DEFAULT 'tenant',
+    booth_codes TEXT NOT NULL DEFAULT '',
+    total_amount REAL DEFAULT 0,
+    paid_amount REAL DEFAULT 0,
+    snapshot_json TEXT NOT NULL,
+    tenant_ref TEXT,
+    payment_status TEXT,
+    delete_reason TEXT,
+    deleted_by TEXT,
+    deleted_by_role TEXT,
+    deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    restored_at DATETIME,
+    restored_by TEXT,
+    restore_note TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_deleted_tenants_fp ON deleted_tenants (floorplan_id, deleted_at);
+`);
+for (const col of [
+  'ALTER TABLE facility_requests ADD COLUMN deleted_at DATETIME',
+  'ALTER TABLE facility_requests ADD COLUMN deleted_by TEXT',
+  // who archived a booking (orders are the tenant records of a project; orders.deleted_at already exists)
+  'ALTER TABLE orders ADD COLUMN deleted_by TEXT'
+]) {
+  try { db.exec(col); } catch (e) {}
+}
 
 // Public link per published floorplan: /live/<public_slug> (several floorplans can be live at once)
 try {

@@ -209,7 +209,8 @@ router.get('/requests', (req, res) => {
   try {
     const { formId, status, projectId, search } = req.query;
 
-    let query = 'SELECT * FROM facility_requests WHERE 1=1';
+    // requests of a deleted tenant are archived (Hapus Tenant, AGENTS.md §33)
+    let query = 'SELECT * FROM facility_requests WHERE deleted_at IS NULL';
     const params = [];
 
     if (formId) {

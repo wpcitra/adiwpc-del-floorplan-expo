@@ -14,7 +14,7 @@ export const COPY_PROPS = [
 export const BOOTH_TENANT_FIELDS = [
   'ownerName', 'owner_name', 'brandCategory', 'brand_category', 'exhibitorId', 'exhibitor_id', 'picName', 'pic_name',
   'email', 'phone', 'registeredBy', 'registrationSource', 'orderId', 'invoiceId', 'invoiceNumber', 'paymentStatus',
-  'paidAmount', 'discountType', 'discountValue', 'discountAmount', 'discountReason', 'mergeSeparate', 'isMerged', 'mergedFrom'
+  'paidAmount', 'discountType', 'discountValue', 'discountAmount', 'discountReason', 'mergeSeparate', 'isMerged', 'mergedFrom', 'priceLocked'
 ];
 
 export { boothCodeTokens, boothCodeTaken, duplicateBoothCodes } from '../../../shared/boothCodes.js';

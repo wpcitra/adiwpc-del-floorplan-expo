@@ -97,6 +97,12 @@ const ACCESS_RULES = [
   { methods: ['POST'], path: /^\/invoices\/[^/]+\/restore$/, access: [] },
   { methods: WRITE, path: /^\/invoices(\/.*)?$/, access: FINANCE },
 
+  // Hapus Tenant & Urungkan: Super Admin only (shared/tenantPermissions.js)
+  { methods: ['GET', ...WRITE], path: /^\/tenants(\/.*)?$/, access: [] },
+
+  // "Samakan Semua Harga dengan Template": Super Admin and Finance (Operasional: 403)
+  { methods: ['GET', ...WRITE], path: /^\/template-prices(\/.*)?$/, access: FINANCE },
+
   // Master data read by the public booking form; edited by the Super Admin only (Studio tiers & brand categories)
   { methods: ['GET'], path: /^\/(categories|brand-categories|payment-methods)$/, access: 'public' },
   { methods: WRITE, path: /^\/(categories|brand-categories)(\/.*)?$/, access: OPERATIONS },

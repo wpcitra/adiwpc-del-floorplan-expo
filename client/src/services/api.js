@@ -496,6 +496,53 @@ export const api = {
     return { success: false, error: 'Koneksi server gagal' };
   },
 
+  // 17a. Hapus Tenant (Super Admin, AGENTS.md §33): summary for the confirmation, delete, bulk delete, undo
+  async fetchTenantSummary(id, alsoIds = []) {
+    try {
+      const query = alsoIds.length ? `?alsoIds=${encodeURIComponent(alsoIds.join(','))}` : '';
+      const res = await apiFetch(`${API_BASE_URL}/tenants/${encodeURIComponent(id)}/summary${query}`);
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Koneksi server gagal' };
+    }
+  },
+
+  async deleteTenant(id, { confirmBooth = '', alsoIds = [] } = {}) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/tenants/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmBooth, alsoIds })
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Koneksi server gagal. Tenant belum dihapus.' };
+    }
+  },
+
+  // `ids`: one entry per table row (an id, or the ids of a merged row). One transaction: all or nothing
+  async bulkDeleteTenants(ids, confirmText = '') {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/tenants/bulk-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, confirmText })
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Koneksi server gagal. Tidak ada tenant yang dihapus.' };
+    }
+  },
+
+  async restoreTenant(id) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/tenants/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Koneksi server gagal. Tenant belum dipulihkan.' };
+    }
+  },
+
   // 17b. Tempat Sampah Invoice (Super Admin): deleted invoices and restore
   async fetchInvoiceTrash() {
     try {
@@ -582,6 +629,38 @@ export const api = {
       console.warn("Failed to fetch categories from server:", e);
     }
     return null;
+  },
+
+  // 20b. "Samakan Semua Harga dengan Template" (AGENTS.md §32): preview (nothing saved), apply, undo of the last batch
+  async fetchTemplatePricePreview(floorplanId) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/template-prices/${encodeURIComponent(floorplanId)}/preview`);
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Koneksi server gagal' };
+    }
+  },
+
+  async applyTemplatePrices(floorplanId, codes) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/template-prices/${encodeURIComponent(floorplanId)}/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ codes })
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Koneksi server gagal. Tidak ada harga yang diubah.' };
+    }
+  },
+
+  async undoTemplatePrices(floorplanId) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/template-prices/${encodeURIComponent(floorplanId)}/undo`, { method: 'POST' });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Koneksi server gagal' };
+    }
   },
 
   // 21. Create New Booth Category Tier

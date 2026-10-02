@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../db.js';
-import { getContract, recalcContract } from '../utils/contractBilling.js';
+import { getContract, recalcContract, invoiceCodeTokens } from '../utils/contractBilling.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
 import { notifyIfBoothsChanged } from '../utils/opsLayer.js';
 import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
@@ -8,12 +8,20 @@ import { computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
 import { publicFloorplanPayload } from '../utils/publicData.js';
 import { externalizeImages } from '../utils/uploads.js';
 import { duplicateBoothCodes, duplicateBoothCodeMessage } from '../../../shared/boothCodes.js';
+import { buildTemplateIndex, resolveTemplatePrice, initialPriceMode, priceModeOf, discountAmountOf } from '../../../shared/templatePrice.js';
+import { catalogFor, lockedBoothCodes } from '../utils/templatePricing.js';
 
 const router = express.Router();
 
 // Booth row for staff (Studio, Dashboard): includes the tenant biodata filled at registration (PIC, email, phone,
 // brand category, source) and the private discount, so hydrateBoothObject shows the tenant as complete.
 // The public view only receives PUBLIC_BOOTH_ROW_FIELDS (utils/publicData.js, AGENTS.md §20).
+// Marks the booths whose price is locked by a live invoice (the Studio never re-prices them from the template, §32)
+const withPriceLock = (floorplanId) => {
+  const locks = lockedBoothCodes(floorplanId);
+  return (b) => ({ ...b, price_locked: invoiceCodeTokens(b.code).some(t => locks.has(t.toLowerCase())) });
+};
+
 function boothRowDto(b) {
   return {
     id: b.id,
@@ -35,6 +43,9 @@ function boothRowDto(b) {
     discount_value: b.discount_value ?? 0,
     discount_amount: b.discount_amount ?? 0,
     discount_reason: b.discount_reason || '',
+    // Harga mengikuti template (§32): the booth's mode, and whether an invoice locks its price (set by the caller)
+    price_mode: b.price_mode || 'custom',
+    price_locked: Boolean(b.price_locked),
     // Auto-merge (AGENTS.md §18): exhibitor identity (opaque ID, not the email) and the display switch
     exhibitor_id: b.exhibitor_id || '',
     merge_separate: b.merge_separate ? 1 : 0,
@@ -66,6 +77,7 @@ function extractBoothsFromFabricJson(objects) {
         brand_category: o.boothData.brandCategory || o.boothData.brand_category || '',
         shape: o.boothData.shape || 'rectangle',
         price: o.boothData.price || 5000000,
+        priceMode: o.boothData.priceMode,
         status: o.boothData.status || 'available',
         owner_name: o.boothData.ownerName || '',
         widthM: o.boothData.widthM || 3,
@@ -369,7 +381,7 @@ router.get('/active', (req, res) => {
     // Get all booths belonging to this floorplan
     const booths = db.prepare(`
       SELECT * FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL
-    `).all(floorplan.id).map(boothRowDto);
+    `).all(floorplan.id).map(withPriceLock(floorplan.id)).map(boothRowDto);
 
     // Get venue items
     const venueItems = db.prepare(`
@@ -877,7 +889,7 @@ router.get('/:id', (req, res) => {
 
     const booths = db.prepare(`
       SELECT * FROM booths WHERE floorplan_id = ?
-    `).all(floorplan.id).map(boothRowDto);
+    `).all(floorplan.id).map(withPriceLock(floorplan.id)).map(boothRowDto);
 
     const venueItems = db.prepare(`
       SELECT * FROM venue_items WHERE floorplan_id = ?
@@ -1492,16 +1504,53 @@ router.post('/save', (req, res) => {
       }
 
       // 2. Sync booths table (price / discount before this save: changed booths get their contract recomputed)
-      const pricingBefore = new Map(db.prepare('SELECT code, price, discount_amount FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL').all(floorplanId)
+      const pricingBefore = new Map(db.prepare('SELECT code, price, discount_amount, price_mode FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL').all(floorplanId)
         .map(r => [String(r.code || '').trim().toLowerCase(), r]));
       const repriced = [];
+
+      // Harga mengikuti template (AGENTS.md §32). The mode comes from the editor; an older page that sends none keeps
+      // the stored mode (a changed price = Harga Khusus). A booth that follows the template and has no invoice always
+      // gets the template price of its size, whatever the canvas sent; its percentage discount follows the price.
+      const templateIndex = buildTemplateIndex(catalogFor(floorplanId));
+      const priceLocks = lockedBoothCodes(floorplanId);
+      const followed = new Map();
+      resolvedBooths.forEach(b => {
+        const codeKey = String(b.booth_number || b.code || '').trim().toLowerCase();
+        const before = pricingBefore.get(codeKey);
+        const size = { widthM: b.dimensions_meters?.width || b.widthM || 3, heightM: b.dimensions_meters?.height || b.heightM || 3 };
+        const sentPrice = Number(b.price || 5000000) || 0;
+        let mode = priceModeOf(b.priceMode) || priceModeOf(b.price_mode);
+        if (!mode) mode = before ? (Number(before.price) !== sentPrice ? 'custom' : priceModeOf(before.price_mode)) : null;
+        if (!mode) mode = initialPriceMode({ ...size, price: sentPrice }, templateIndex);
+        b.price_mode = mode;
+        if (mode !== 'template' || invoiceCodeTokens(codeKey).some(t => priceLocks.has(t))) return;
+        const tpl = resolveTemplatePrice(size, templateIndex);
+        if (tpl.status !== 'match' || tpl.price === sentPrice) return;
+        b.price = tpl.price;
+        const type = b.discount_type || b.discountType || 'nominal';
+        const value = b.discount_value !== undefined ? b.discount_value : (b.discountValue !== undefined ? b.discountValue : 0);
+        b.discount_amount = discountAmountOf(tpl.price, type, value);
+        b.discountAmount = b.discount_amount;
+        followed.set(codeKey, { price: tpl.price, discountAmount: b.discount_amount });
+      });
+      if (fabricJson && Array.isArray(fabricJson.objects)) {
+        const modeOf = new Map(resolvedBooths.map(b => [String(b.booth_number || b.code || '').trim().toLowerCase(), b.price_mode]));
+        fabricJson.objects.forEach(o => {
+          if (!o?.isBooth || !o.boothData) return;
+          const key = String(o.boothData.code || o.boothData.booth_number || '').trim().toLowerCase();
+          if (modeOf.has(key)) o.boothData.priceMode = modeOf.get(key);
+          if (followed.has(key)) Object.assign(o.boothData, followed.get(key));
+          delete o.boothData.priceLocked; // runtime flag of the Studio, never stored
+        });
+        db.prepare('UPDATE floorplans SET canvas_fabric_json = ? WHERE id = ?').run(JSON.stringify(fabricJson), floorplanId);
+      }
       db.prepare('DELETE FROM booths WHERE floorplan_id = ?').run(floorplanId);
 
       const insertBooth = db.prepare(`
         INSERT OR REPLACE INTO booths (
           id, floorplan_id, code, category, brand_category, shape, price, status, owner_name, pic_name, email, phone, registration_source, registered_by, width_m, height_m, facilities_json, coordinates_json, discount_type, discount_value, discount_amount, discount_reason,
-          exhibitor_id, merge_separate
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          exhibitor_id, merge_separate, price_mode
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const usedBoothIds = new Set();
@@ -1540,7 +1589,8 @@ router.post('/save', (req, res) => {
           b.discount_amount !== undefined ? b.discount_amount : (b.discountAmount !== undefined ? b.discountAmount : 0),
           b.discount_reason || b.discountReason || '',
           ['sold', 'reserved', 'booked'].includes(String(b.status || '').toLowerCase()) ? (b.exhibitor_id || '') : '',
-          b.merge_separate ? 1 : 0
+          b.merge_separate ? 1 : 0,
+          b.price_mode || 'custom'
         );
 
         // Price / private discount changed in the Studio: the booth's contract is recomputed after the loop

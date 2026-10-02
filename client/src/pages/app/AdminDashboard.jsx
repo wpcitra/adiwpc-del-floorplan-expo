@@ -25,6 +25,8 @@ import { exportToPRDJson, DEFAULT_GRID_SCALE, updateBoothCategoriesRegistry, upd
 import { generatePresetFloorplanData } from '../../utils/presetLayouts';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import TemplatePriceSyncModal from '../../components/admin/TemplatePriceSyncModal';
+import { canSyncTemplatePrices } from '../../utils/templatePrice';
 import { canEditFloorplan, canRegisterTenant } from '../../utils/roles';
 import { resolveAnchors } from '../../utils/opsLayer';
 import { refreshMergeRendering } from '../../utils/boothMerge';
@@ -195,8 +197,20 @@ export default function AdminDashboard() {
 
   const handleCategoriesUpdated = (cats) => {
     updateBoothCategoriesRegistry(cats);
+    // Booths that follow their template take the new template price (the server did the same in the database, §32)
+    const followed = readOnlyStudio ? 0 : editorRef.current?.refreshTemplatePrices() || 0;
+    if (followed) showToast(`💰 ${followed} booth mengikuti harga template yang baru`);
     setCategoriesVersion(v => v + 1);
     setPropertyTick(t => t + 1);
+  };
+
+  // "Samakan Semua Harga dengan Template": the preview compares what is SAVED, so pending edits are saved first
+  const [isPriceSyncOpen, setIsPriceSyncOpen] = useState(false);
+  const openPriceSync = async () => {
+    if (!currentFloorplanId) return showToast('⚠️ Simpan denah ini dulu sebelum menyamakan harga');
+    const saved = await handleSaveDraft(false, { silent: true });
+    if (saved?.success === false) return;
+    setIsPriceSyncOpen(true);
   };
 
   // Admin open booking with options (register or edit)
@@ -1192,6 +1206,7 @@ export default function AdminDashboard() {
         {/* Left Toolbar & Shape Catalog */}
         {!isPreviewMode && (
           <ToolSidebar
+            onSyncTemplatePrices={canSyncTemplatePrices(user) && !readOnlyStudio ? openPriceSync : undefined}
             onAddBooth={(params) => {
               editorRef.current?.addBooth(params);
               showToast(`🎪 Booth ${params.category || 'Standar'} (${params.widthM || 3}x${params.heightM || 3}m) berhasil ditambahkan ke denah!`);
@@ -1451,6 +1466,20 @@ export default function AdminDashboard() {
       )}
 
       {/* Modals */}
+      {canSyncTemplatePrices(user) && !readOnlyStudio && (
+        <TemplatePriceSyncModal
+          isOpen={isPriceSyncOpen}
+          floorplanId={currentFloorplanId}
+          floorplanTitle={currentFloorplanTitle}
+          onClose={() => setIsPriceSyncOpen(false)}
+          showToast={showToast}
+          onPricesChanged={(changes) => {
+            editorRef.current?.applyServerPrices(changes);
+            setPropertyTick(t => t + 1);
+          }}
+        />
+      )}
+
       <CategoryTierModal
         isOpen={isCategoryModalOpen}
         onClose={() => setIsCategoryModalOpen(false)}
