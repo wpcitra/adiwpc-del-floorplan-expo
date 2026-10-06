@@ -1283,6 +1283,8 @@ export default function AdminDashboard() {
               setActiveBookingBooth(boothData);
             }}
             readOnlyNotice={readOnlyStudio}
+            // "Cari tenant / booth": every role of the Studio except Keuangan (AGENTS.md §36)
+            boothSearch={user?.role !== 'finance'}
             onBoothAction={salesActions ? (boothData, anchor) => setActionBooth({ booth: boothData, anchor }) : undefined}
             highlightBoothCode={actionBooth?.booth?.code || null}
             onStateLoaded={(canvas) => {

@@ -24,6 +24,7 @@ import {
   elementSnapTargets, movingGeometry, snapLineEnds, snapPoint
 } from '../../utils/boothSnap';
 import CanvasRuler from './CanvasRuler';
+import BoothSearch from './BoothSearch';
 import { COPY_PROPS, prepareCopy, nextBoothCode, boothCodeTokens, boothCodeTaken } from '../../utils/copyRules';
 import { initialPriceMode, templateFollowProps, studioCatalog } from '../../utils/templatePrice';
 
@@ -43,6 +44,14 @@ const followTemplatePrice = (booth) => {
   if (!props) return false;
   updateBoothAppearance(booth, props);
   return true;
+};
+// Where a booth is on the screen (page coordinates), so a pop up opens beside it instead of on top of it
+const boothScreenRect = (canvas, booth) => {
+  const el = canvas.upperCanvasEl?.getBoundingClientRect() || { left: 0, top: 0 };
+  const pts = booth.getCoords().map(c => fabric.util.transformPoint(c, canvas.viewportTransform));
+  const xs = pts.map(c => c.x + el.left);
+  const ys = pts.map(c => c.y + el.top);
+  return { left: Math.min(...xs), right: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys) };
 };
 // Booth numbers in use on the canvas ("A-01+A-02" counts as both), optionally without one booth (AGENTS.md §30)
 const usedBoothCodes = (canvas, except = null) => new Set(
@@ -69,6 +78,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   // screen); `highlightBoothCode` outlines the booth whose pop up is open
   onBoothAction,
   highlightBoothCode = null,
+  // "Cari tenant / booth" over the canvas (AGENTS.md §36); `onBoothFound(obj)` opens the found booth on pages whose
+  // booths are not selectable (Denah Operasional). Without it: the Sales pop up, or the booth is selected.
+  boothSearch = false,
+  onBoothFound,
   onHistoryChange,
   onOpenBookingForBooth,
   onOpenInvoiceForBooth,
@@ -121,6 +134,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const isPreviewModeRef = useRef(isPreviewMode);
   const onBoothActionRef = useRef(onBoothAction);
   const highlightBoothCodeRef = useRef(highlightBoothCode);
+  const searchFlashRef = useRef(null); // { obj, until }: booth found with "Cari tenant / booth"
   useEffect(() => { onBoothActionRef.current = onBoothAction; }, [onBoothAction]);
   useEffect(() => {
     highlightBoothCodeRef.current = highlightBoothCode;
@@ -1409,14 +1423,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
           if (onBoothActionRef.current) {
             const pt = evt?.touches?.[0] || evt?.changedTouches?.[0] || evt || {};
             // where the booth is on the screen, so the pop up opens beside it instead of on top of it
-            const el = canvas.upperCanvasEl?.getBoundingClientRect() || { left: 0, top: 0 };
-            const pts = boothObj.getCoords().map(c => fabric.util.transformPoint(c, canvas.viewportTransform));
-            const xs = pts.map(c => c.x + el.left);
-            const ys = pts.map(c => c.y + el.top);
-            onBoothActionRef.current(boothObj.boothData, {
-              x: pt.clientX ?? 0, y: pt.clientY ?? 0,
-              rect: { left: Math.min(...xs), right: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys) }
-            });
+            onBoothActionRef.current(boothObj.boothData, { x: pt.clientX ?? 0, y: pt.clientY ?? 0, rect: boothScreenRect(canvas, boothObj) });
           } else {
             onOpenBookingForBooth?.(boothObj.boothData);
           }
@@ -1797,24 +1804,31 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       }
     });
 
-    // Read-only Studio: outline the booth whose action pop up is open (never painted into exports)
+    // Outline the booth whose Sales pop up is open, and the booth just found with "Cari tenant / booth"
+    // (never painted into exports)
     canvas.on('after:render', ({ ctx }) => {
+      if (ctx && ctx !== canvas.contextContainer) return;
       const code = highlightBoothCodeRef.current;
-      if (!code || (ctx && ctx !== canvas.contextContainer)) return;
-      const target = canvas.getObjects().find(o => o.boothData && (o.boothData.code || o.boothData.booth_number) === code);
-      if (!target) return;
+      const found = searchFlashRef.current && searchFlashRef.current.until > Date.now() ? searchFlashRef.current.obj : null;
+      const targets = [
+        code ? canvas.getObjects().find(o => o.boothData && (o.boothData.code || o.boothData.booth_number) === code) : null,
+        found && found.canvas === canvas ? found : null
+      ].filter(Boolean);
+      if (!targets.length) return;
       const context = ctx || canvas.getContext();
       const vpt = canvas.viewportTransform;
-      const pts = target.getCoords().map(p => fabric.util.transformPoint(p, vpt));
       context.save();
       context.strokeStyle = '#4f46e5';
       context.lineWidth = 3;
       context.shadowColor = 'rgba(79, 70, 229, 0.55)';
       context.shadowBlur = 12;
-      context.beginPath();
-      pts.forEach((p, i) => (i ? context.lineTo(p.x, p.y) : context.moveTo(p.x, p.y)));
-      context.closePath();
-      context.stroke();
+      new Set(targets).forEach(target => {
+        const pts = target.getCoords().map(p => fabric.util.transformPoint(p, vpt));
+        context.beginPath();
+        pts.forEach((p, i) => (i ? context.lineTo(p.x, p.y) : context.moveTo(p.x, p.y)));
+        context.closePath();
+        context.stroke();
+      });
       context.restore();
     });
 
@@ -2363,6 +2377,31 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   // Calculate 1 meter box size in screen pixels
   const boxPixelSize = gridScale * (zoomLevel || 1);
 
+  // "Cari tenant / booth": centre the booth (zoomed in enough to read it), outline it for a moment, then open it
+  // the way a click does: the Sales pop up, the page's own handler, or the Property Inspector (booth selected)
+  const focusFoundBooth = (obj) => {
+    const canvas = fabricRef.current;
+    if (!canvas || !obj?.canvas) return;
+    const c = obj.getCenterPoint();
+    const size = Math.max(obj.getScaledWidth(), obj.getScaledHeight()) || 60;
+    const zoom = Math.min(3, Math.max(canvas.getZoom(), 140 / size));
+    const vpt = [zoom, 0, 0, zoom, canvas.width / 2 - c.x * zoom, canvas.height / 2 - c.y * zoom];
+    canvas.setViewportTransform(vpt);
+    onZoomChange?.(zoom);
+    setViewportTransform([...vpt]);
+    searchFlashRef.current = { obj, until: Date.now() + 2400 };
+    setTimeout(() => fabricRef.current?.requestRenderAll(), 2450);
+    if (onBoothActionRef.current) {
+      onBoothActionRef.current(obj.boothData, { x: 0, y: 0, rect: boothScreenRect(canvas, obj) });
+    } else if (onBoothFound) {
+      onBoothFound(obj);
+    } else if (!isPreviewModeRef.current && obj.selectable !== false) {
+      canvas.setActiveObject(obj);
+      handleSelectionRef.current?.();
+    }
+    canvas.requestRenderAll();
+  };
+
   return (
     <div 
       ref={containerRef} 
@@ -2414,6 +2453,13 @@ const CanvasEditor = forwardRef(function CanvasEditor({
         gridScale={gridScale}
       />
 
+      {boothSearch && (
+        <BoothSearch
+          getBooths={() => (fabricRef.current?.getObjects() || []).filter(o => o.isBooth && o.boothData && o.visible !== false)}
+          onPick={focusFoundBooth}
+        />
+      )}
+
       {/* Real-time Dimension Guide Pill */}
       {shapeResizeBadge && (
         <div
@@ -2457,12 +2503,12 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       {/* Tenant Preview Mode Overlay */}
       {isPreviewMode && (
         readOnlyNotice ? (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 w-max max-w-[92%] bg-slate-900 text-white px-4 py-1.5 rounded-2xl shadow-lg text-xs font-semibold flex items-center gap-2 z-20">
+          <div className={`absolute ${boothSearch ? 'top-[4.5rem]' : 'top-4'} left-1/2 -translate-x-1/2 w-max max-w-[92%] bg-slate-900 text-white px-4 py-1.5 rounded-2xl shadow-lg text-xs font-semibold flex items-center gap-2 z-20`}>
             <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
             {onBoothAction ? 'Mode Sales: klik booth untuk booking, buat invoice, atau beri diskon.' : 'Denah hanya bisa dilihat.'}
           </div>
         ) : (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-emerald-600 text-white px-4 py-1.5 rounded-full shadow-lg text-xs font-semibold flex items-center gap-2 animate-bounce z-20">
+          <div className={`absolute ${boothSearch ? 'top-[4.5rem]' : 'top-4'} left-1/2 -translate-x-1/2 bg-emerald-600 text-white px-4 py-1.5 rounded-full shadow-lg text-xs font-semibold flex items-center gap-2 animate-bounce z-20`}>
             <span className="w-2 h-2 rounded-full bg-white animate-ping" />
             Mode Simulasi Pengunjung / Exhibitor (Live Floorplan Preview)
           </div>

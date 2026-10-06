@@ -588,3 +588,12 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **No blank canvas** (`loadObjectsIntoCanvas`): never call `canvas.clear()` before `loadFromJSON`; the old drawing stays until the new objects, their images and the published operational elements are ready, then everything is swapped and painted once (`renderOnAddRemove = false`, one `renderAll()`).
   - The view is fitted only the first time a floorplan is shown (`fittedFloorplanRef`); a refresh keeps the visitor's `viewportTransform`.
 - Tests: `server/test/live-version.test.js`. Browser check: idle = one small request per 5 s; a booking made elsewhere appears within ~5 s with no frame where the canvas is empty.
+
+---
+
+## 36. Cari Tenant / Booth Lock (`BoothSearch.jsx`, `utils/boothSearch.js`, `CanvasEditor.jsx`)
+- **Where.** A search box at the top left of the canvas of the Floorplan Studio and Denah Operasional (`CanvasEditor` prop `boothSearch`). Rendered for every role that opens those pages except Keuangan (`boothSearch={user?.role !== 'finance'}`; Keuangan has no Studio page today, the check keeps it so if that changes). The Live Floorplan keeps its own "Cari Booth".
+- **Matching** (`searchBooths`, client only, on the booths of the open canvas): tenant name (`boothData.ownerName`) or booth number, letter case and a leading "#" ignored, a merged number "B-01+B-02" found by either part. Order: exact number, number prefix ("A-1" never finds "A-01"), tenant word prefix, then substring. At most 8 results; each shows the status colour, number, tenant (or "Belum ada tenant") and status.
+- **Picking a result** (click, or arrows + Enter; Esc clears): `focusFoundBooth()` centres the booth, zooms in to at least ~140 px (max 3x), outlines it for 2.4 s (`searchFlashRef`, drawn in `after:render`, never exported), then opens it like a click: the Sales pop up (`onBoothAction`), the page's own handler (`onBoothFound`, Denah Operasional's inspector), or selects it (Property Inspector).
+- The Sales / preview notice moves down (`top-[4.5rem]`) when the search box is shown, so they never overlap.
+- Tests: `server/test/booth-search.test.js`.

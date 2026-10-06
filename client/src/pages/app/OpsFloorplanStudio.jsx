@@ -685,6 +685,13 @@ export default function OpsFloorplanStudio() {
           <CanvasEditor
             ref={editorRef}
             onWarning={(msg) => { if (!/pilar/i.test(msg)) showToast(msg); }}
+            // "Cari tenant / booth" (every role except Keuangan, AGENTS.md §36): opens the booth in the inspector
+            boothSearch={user?.role !== 'finance'}
+            onBoothFound={(obj) => {
+              setInspected(obj);
+              overlayRef.current.inspected = obj;
+              editorRef.current?.getCanvas()?.requestRenderAll();
+            }}
             onSelectionChange={handleSelectionChange}
             onObjectsUpdate={(objs) => setOpsObjects(objs.filter(o => o.isOpsItem))}
             onStateLoaded={applyLayerState}
