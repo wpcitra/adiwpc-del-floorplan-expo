@@ -25,8 +25,8 @@ export const PAGE_ACCESS = {
 
 // Who may edit a floorplan in the Studio (draw, move, price, save, publish). Sales sees it read-only.
 export const canEditFloorplan = (role) => role === 'superadmin' || role === 'operations';
-// Who may register / change the tenant of a booth (and its status). Operations edits the floorplan but never does this.
-export const canRegisterTenant = (role) => role === 'superadmin' || role === 'sales';
+// Who may register / change the tenant of a booth, its status and private discount (Property Inspector of the Studio)
+export const canRegisterTenant = (role) => role === 'superadmin' || role === 'sales' || role === 'operations';
 
 export const canAccessPage = (role, page) => Boolean(role && PAGE_ACCESS[page]?.includes(role));
 

@@ -73,12 +73,11 @@ const ACCESS_RULES = [
   { methods: ['POST'], path: /^\/floorplan\/permanent-delete$/, access: [] },
   { methods: ['DELETE'], path: /^\/floorplan\/presets\/[^/]+$/, access: [] },
   // Editing a floorplan (save, publish, presets, merge display...): Super Admin and Operations. Sales only views the
-  // Studio and registers tenants (POST /orders/checkout below); Operations edits but never registers a tenant.
+  // Studio and registers tenants (POST /orders/checkout below); Operations does both (every Property Inspector feature).
   { methods: WRITE, path: /^\/floorplan(\/.*)?$/, access: OPERATIONS },
 
   // Public booking checkout (staff bookings are recognised via the session) & returning-client lookup
-  { methods: ['POST'], path: /^\/(orders|exhibitors)\/checkout$/, access: 'public', denyRoles: OPERATIONS,
-    denyMessage: 'Role Operasional tidak dapat mendaftarkan tenant / brand.' },
+  { methods: ['POST'], path: /^\/(orders|exhibitors)\/checkout$/, access: 'public' },
   { methods: ['GET'], path: /^\/(orders|exhibitors)\/check-client$/, access: 'public' },
 
   // Uploaded images: served to everyone (the Live Floorplan shows the blueprint); stored by roles that edit a floorplan
@@ -93,7 +92,8 @@ const ACCESS_RULES = [
   { methods: ['GET'], path: /^\/invoices\/config$/, access: 'public' },
   // Invoice PDF: staff, or a registrant with the signed token of the checkout response (checked in the handler)
   { methods: ['GET'], path: /^\/invoices\/[^/]+\/pdf$/, access: 'public' },
-  { methods: ['POST'], path: /^\/invoices\/sync-booth-discount$/, access: FINANCE },
+  // "Simpan Diskon" of the Property Inspector: Finance, and Operations in the Studio
+  { methods: ['POST'], path: /^\/invoices\/sync-booth-discount$/, access: [...FINANCE, ...OPERATIONS] },
   // Tempat Sampah Invoice (list, restore): Super Admin only. Deleting: Finance + Super Admin (shared/invoicePermissions.js)
   { methods: ['GET'], path: /^\/invoices\/trash$/, access: [] },
   { methods: ['POST'], path: /^\/invoices\/[^/]+\/restore$/, access: [] },
@@ -135,10 +135,12 @@ const ACCESS_RULES = [
   { methods: ['GET', ...WRITE], path: /^\/(users|audit-logs)(\/.*)?$/, access: [] }
 ];
 
-// Operations: Denah Operasional, plus the Studio (floorplan, tiers, brand categories) as an editor. Never tenant
-// registration, orders, invoices or users.
+// Operations: Denah Operasional, plus the Studio (floorplan, tiers, brand categories) as an editor, with every
+// Property Inspector feature: tenant registration / biodata / release and the private booth discount. Never the
+// invoice, exhibitor, stats, settings or user pages.
 const OPERATIONS_AREA = [
   /^\/ops(\/.*)?$/, /^\/floorplan(\/.*)?$/, /^\/(categories|brand-categories)(\/.*)?$/, /^\/uploads(\/.*)?$/,
+  /^\/orders\/(checkout|check-client|registered-clients|update-tenant|detach-tenant)$/, /^\/invoices\/sync-booth-discount$/,
   /^\/notifications(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/
 ];
 // Developer: only the Pusat Maintenance (never tenant, price, invoice or user data)

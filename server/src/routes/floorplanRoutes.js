@@ -1513,33 +1513,6 @@ router.post('/save', (req, res) => {
         });
       }
 
-      // Role Operasional edits the layout (also sizes, numbers, prices) but never registers or changes a tenant:
-      // tenant, status and private discount of every booth stay exactly as stored; a new booth starts Available.
-      if (req.user?.role === 'operations') {
-        const stored = db.prepare('SELECT * FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL').all(floorplanId);
-        const storedFor = (code, id) => stored.find(r => String(r.code || '').trim().toLowerCase() === String(code || '').trim().toLowerCase())
-          || (id ? stored.find(r => r.id === id || String(r.id).endsWith(`_${id}`)) : null) || null;
-        const tenantOf = (row) => ({
-          status: row?.status || 'available', ownerName: row?.owner_name || '', brandCategory: row?.brand_category || '',
-          picName: row?.pic_name || '', email: row?.email || '', phone: row?.phone || '',
-          registrationSource: row?.registration_source || '', registeredBy: row?.registered_by || '', exhibitorId: row?.exhibitor_id || '',
-          discountType: row?.discount_type || 'nominal', discountValue: row?.discount_value || 0,
-          discountAmount: row?.discount_amount || 0, discountReason: row?.discount_reason || ''
-        });
-        resolvedBooths.forEach(b => {
-          const t = tenantOf(storedFor(b.booth_number || b.code, b.id));
-          Object.assign(b, t, {
-            owner_name: t.ownerName, brand_category: t.brandCategory, pic_name: t.picName, registration_source: t.registrationSource,
-            registered_by: t.registeredBy, exhibitor_id: t.exhibitorId, discount_type: t.discountType, discount_value: t.discountValue,
-            discount_amount: t.discountAmount, discount_reason: t.discountReason
-          });
-        });
-        (fabricJson?.objects || []).forEach(o => {
-          if (!(o?.isBooth || o?.boothData) || !o.boothData) return;
-          Object.assign(o.boothData, tenantOf(storedFor(o.boothData.code || o.boothData.booth_number, o.boothData.id)));
-        });
-      }
-
       // 2. Sync booths table (price / discount before this save: changed booths get their contract recomputed)
       const pricingBefore = new Map(db.prepare('SELECT code, price, discount_amount, price_mode FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL').all(floorplanId)
         .map(r => [String(r.code || '').trim().toLowerCase(), r]));
