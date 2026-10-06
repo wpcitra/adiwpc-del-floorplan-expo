@@ -134,7 +134,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   const isPreviewModeRef = useRef(isPreviewMode);
   const onBoothActionRef = useRef(onBoothAction);
   const highlightBoothCodeRef = useRef(highlightBoothCode);
-  const searchFlashRef = useRef(null); // { obj, until }: booth found with "Cari tenant / booth"
+  const searchFlashRef = useRef(null);
+  const searchableBoothsRef = useRef(null);
+  const focusFoundBoothRef = useRef(null); // { obj, until }: booth found with "Cari tenant / booth"
   useEffect(() => { onBoothActionRef.current = onBoothAction; }, [onBoothAction]);
   useEffect(() => {
     highlightBoothCodeRef.current = highlightBoothCode;
@@ -446,6 +448,10 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       notifyObjectsUpdate();
       pushHistory();
     },
+
+    // "Cari tenant / booth" in the page header (Floorplan Studio): the booths to search and the focus of a result
+    getSearchableBooths: () => searchableBoothsRef.current?.() || [],
+    focusBooth: (obj) => focusFoundBoothRef.current?.(obj),
 
     // Centre the view on a scene point (e.g. "Perubahan dari Sales" item)
     focusPoint: (x, y, zoom) => {
@@ -2377,6 +2383,8 @@ const CanvasEditor = forwardRef(function CanvasEditor({
   // Calculate 1 meter box size in screen pixels
   const boxPixelSize = gridScale * (zoomLevel || 1);
 
+  const searchableBooths = () => (fabricRef.current?.getObjects() || []).filter(o => o.isBooth && o.boothData && o.visible !== false);
+
   // "Cari tenant / booth": centre the booth (zoomed in enough to read it), outline it for a moment, then open it
   // the way a click does: the Sales pop up, the page's own handler, or the Property Inspector (booth selected)
   const focusFoundBooth = (obj) => {
@@ -2401,6 +2409,9 @@ const CanvasEditor = forwardRef(function CanvasEditor({
     }
     canvas.requestRenderAll();
   };
+
+  searchableBoothsRef.current = searchableBooths;
+  focusFoundBoothRef.current = focusFoundBooth;
 
   return (
     <div 
@@ -2454,10 +2465,7 @@ const CanvasEditor = forwardRef(function CanvasEditor({
       />
 
       {boothSearch && (
-        <BoothSearch
-          getBooths={() => (fabricRef.current?.getObjects() || []).filter(o => o.isBooth && o.boothData && o.visible !== false)}
-          onPick={focusFoundBooth}
-        />
+        <BoothSearch className="!absolute top-8 left-9 z-30 w-[min(280px,calc(100%-3rem))]" getBooths={searchableBooths} onPick={focusFoundBooth} />
       )}
 
       {/* Real-time Dimension Guide Pill */}

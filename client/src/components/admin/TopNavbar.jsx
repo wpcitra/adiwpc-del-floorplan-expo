@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import BoothSearch from './BoothSearch';
 import { 
   LayoutDashboard, 
   Download, 
@@ -59,7 +60,9 @@ export default function TopNavbar({
   // Denah Operasional: read-only overlay toggle (Admin & Sales) and switch to the operations mode (Admin)
   opsLayerVisible = false,
   onToggleOpsLayer,
-  onOpenOpsMode
+  onOpenOpsMode,
+  // "Cari tenant / booth" ({ getBooths, onPick }); null = not shown (Keuangan)
+  boothSearch = null
 }) {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState(currentFloorplanTitle || '');
@@ -256,13 +259,13 @@ export default function TopNavbar({
 
       {/* 1.5 Middle Section: Project Switcher */}
       {allEvents && allEvents.length > 1 && (
-        <div className="hidden md:flex items-center gap-2 mx-2 min-w-0">
-          <div className="flex items-center gap-1.5 bg-slate-800/90 border border-slate-700/80 rounded-xl px-2.5 py-1 shrink-0 shadow-2xs">
+        <div className="hidden md:flex items-center gap-2 mx-2 min-w-0 shrink">
+          <div className="flex items-center gap-1.5 bg-slate-800/90 border border-slate-700/80 rounded-xl px-2.5 py-1 min-w-0 shadow-2xs">
             <Building2 size={13} className="text-blue-400 shrink-0" />
             <select
               value={currentEvent?.id || ''}
               onChange={(e) => onSelectEvent && onSelectEvent(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-200 focus:outline-none cursor-pointer pr-1 max-w-[150px] truncate"
+              className="bg-transparent text-xs font-bold text-slate-200 focus:outline-none cursor-pointer pr-1 min-w-0 max-w-[150px] truncate"
               title="Pilih Project Event"
             >
               {allEvents.map((evt) => (
@@ -273,6 +276,11 @@ export default function TopNavbar({
             </select>
           </div>
         </div>
+      )}
+
+      {/* 1.6 Cari tenant / nomor booth (AGENTS.md §36): shrinks before the action buttons do */}
+      {boothSearch && (
+        <BoothSearch tone="dark" className="mx-2 w-44 xl:w-56 shrink-0" getBooths={boothSearch.getBooths} onPick={boothSearch.onPick} />
       )}
 
       {/* 2. Right Section: Action Controls */}
@@ -286,7 +294,7 @@ export default function TopNavbar({
           title="Buka Katalog Template Denah & Pilih Denah yang Ingin Di-publish"
         >
           <FolderKanban size={13} />
-          <span>Template</span>
+          <span className="hidden 2xl:inline">Template</span>
         </button>
 
         {/* Category & Tier Manager Button */}
@@ -300,7 +308,7 @@ export default function TopNavbar({
           title="Pengaturan Kategori, Ukuran Standar & Tier Harga Booth"
         >
           <Tag size={13} />
-          <span>Tier Harga</span>
+          <span className="hidden 2xl:inline">Tier Harga</span>
         </button>
 
         {/* Save as Preset Button */}
@@ -311,7 +319,7 @@ export default function TopNavbar({
           title="Simpan denah kanvas saat ini sebagai Preset Layout baru"
         >
           <LayoutTemplate size={13} />
-          <span>Jadikan Preset</span>
+          <span className="hidden 2xl:inline">Jadikan Preset</span>
         </button>
 
 
@@ -328,7 +336,7 @@ export default function TopNavbar({
           title="Unggah Gambar / PDF Denah Gedung"
         >
           <ImageIcon size={13} className={hasBlueprint ? 'text-indigo-400' : 'text-slate-400'} />
-          <span>Blueprint</span>
+          <span className="hidden 2xl:inline">Blueprint</span>
           {hasBlueprint && <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>}
         </button>
 
@@ -397,7 +405,7 @@ export default function TopNavbar({
             aria-pressed={opsLayerVisible}
           >
             <Layers size={13} />
-            <span className="hidden xl:inline">Lapisan Ops</span>
+            <span className="hidden 2xl:inline">Lapisan Ops</span>
           </button>
         )}
         {onOpenOpsMode && (
@@ -408,7 +416,7 @@ export default function TopNavbar({
             title="Buka Denah Operasional untuk denah ini"
           >
             <HardHat size={13} />
-            <span className="hidden xl:inline">Denah Operasional</span>
+            <span className="hidden 2xl:inline">Denah Operasional</span>
           </button>
         )}
 

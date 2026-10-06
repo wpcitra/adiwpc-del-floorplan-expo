@@ -1193,6 +1193,11 @@ export default function AdminDashboard() {
         isPreviewMode={isPreviewMode}
         readOnly={readOnlyStudio}
         onTogglePreviewMode={() => setIsPreviewMode(!isPreviewMode)}
+        // "Cari tenant / booth" in the header: every role of the Studio except Keuangan (AGENTS.md §36)
+        boothSearch={user?.role !== 'finance' ? {
+          getBooths: () => editorRef.current?.getSearchableBooths() || [],
+          onPick: (obj) => editorRef.current?.focusBooth(obj)
+        } : null}
         opsLayerVisible={showOpsLayer}
         onToggleOpsLayer={() => {
           setShowOpsLayer(v => !v);
@@ -1283,8 +1288,6 @@ export default function AdminDashboard() {
               setActiveBookingBooth(boothData);
             }}
             readOnlyNotice={readOnlyStudio}
-            // "Cari tenant / booth": every role of the Studio except Keuangan (AGENTS.md §36)
-            boothSearch={user?.role !== 'finance'}
             onBoothAction={salesActions ? (boothData, anchor) => setActionBooth({ booth: boothData, anchor }) : undefined}
             highlightBoothCode={actionBooth?.booth?.code || null}
             onStateLoaded={(canvas) => {
