@@ -597,3 +597,14 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Picking a result** (click, or arrows + Enter; Esc clears): `focusFoundBooth()` centres the booth, zooms in to at least ~140 px (max 3x), outlines it for 2.4 s (`searchFlashRef`, drawn in `after:render`, never exported), then opens it like a click: the Sales pop up (`onBoothAction`), the page's own handler (`onBoothFound`, Denah Operasional's inspector), or selects it (Property Inspector).
 - On a canvas that shows the search box (Denah Operasional) the preview notice moves down (`top-[4.5rem]`), so they never overlap.
 - Tests: `server/test/booth-search.test.js`.
+
+---
+
+## 37. Status Booth dari Property Inspector Lock (`floorplanRoutes.js` `/:id/booth-status`, `utils/boothStatus.js`, `PropertyPanel.jsx`)
+- **Why.** `POST /floorplan/save` restores the status of a booked booth from its booking / invoice contract on every save (stale editor saves must never erase a live booking). The status buttons only changed the canvas, so Reserved → Sold (or back) of a booth with a tenant came back after the autosave / a refresh. Never "fix" this by letting the canvas status win in the save route.
+- **Booth with a tenant** (`boothData.ownerName`): the button calls `POST /api/floorplan/:id/booth-status { boothCode, status }`; the editor applies the status the server returns.
+  - Sold / Reserved go through `applyBoothStatusToContract()` (shared with the Dashboard's `PATCH /stats/booth/:id/status`): Sold = live contract invoices PAID + orders PAID; Reserved = a paid balance invoice reopened, a paid order back to `PENDING`. Canceled orders are never revived. Then `syncPaymentStatusFromInvoices()` and the canvas (`applyBoothChangesToCanvas`).
+  - A booth with live invoices needs `confirmPayment` (409 `CONFIRM_PAYMENT`, shown in the Inspector with "Ya, ubah ke …" / "Batal"); only Finance / Super Admin may change it (403 `STATUS_FOLLOWS_INVOICE` for Operations). A booking without invoice: Super Admin and Operations.
+  - Available opens "Lepas Tenant"; Maintenance is refused until the tenant is released (409 `DETACH_TENANT_FIRST`).
+- **Booth without tenant**: Available ↔ Maintenance stay a canvas change (the save stores it); a booth not saved yet (404 `BOOTH_NOT_SAVED`) is changed on the canvas only.
+- Tests: `server/test/status-booth.test.js`.

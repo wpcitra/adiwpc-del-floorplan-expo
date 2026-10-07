@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../db.js';
-import { getContract, invoiceCodeTokens, removeBoothFromInvoice } from '../utils/contractBilling.js';
+import { applyBoothStatusToContract } from '../utils/boothStatus.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
 import { getExhibitorsData } from './orderRoutes.js';
 import { invoiceTaxView, paidTaxOf } from '../../../shared/invoiceTax.js';
@@ -320,50 +320,8 @@ router.patch('/booth/:id/status', (req, res) => {
 
     db.prepare(`UPDATE booths SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
-    // Sync the booth CONTRACT invoices (DP + Pelunasan / Penuh) of this floorplan; add-on invoices are not touched
-    const statusWarnings = [];
-    if (status !== undefined || owner_name !== undefined) {
-      const contract = getContract(booth.floorplan_id, booth.code, booth.id);
-      const live = contract.invoices.filter(inv => String(inv.payment_status).toUpperCase() !== 'CANCELED');
-      const setInvoice = db.prepare(`
-        UPDATE invoices SET payment_status = ?, paid_amount = ?, remaining_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-      `);
-
-      if (status === 'sold') {
-        live.forEach(inv => setInvoice.run('PAID', inv.total_amount, 0, inv.id));
-      } else if (status === 'available') {
-        // Unmerge (AGENTS.md §18): a multi-booth contract only loses this booth; its own contracts are canceled
-        live.forEach(inv => {
-          const shared = invoiceCodeTokens(inv.booth_code).length > 1 && String(inv.booth_code).trim().toLowerCase() !== String(booth.code).trim().toLowerCase();
-          if (shared) {
-            const { warning } = removeBoothFromInvoice(inv, booth.code, 'booth dikembalikan ke Available');
-            if (warning) statusWarnings.push(warning);
-          } else {
-            setInvoice.run('CANCELED', inv.paid_amount || 0, 0, inv.id);
-          }
-        });
-        db.prepare("UPDATE booths SET exhibitor_id = '', merge_separate = 0 WHERE id = ?").run(booth.id);
-      } else if (status === 'reserved' && contract.status === 'PAID') {
-        // Back from "Lunas": reopen the balance invoice, a paid DP stays paid
-        const balance = live.find(inv => (inv.invoice_kind || 'full') !== 'dp');
-        if (balance) setInvoice.run('UNPAID', 0, balance.total_amount, balance.id);
-      }
-
-      if (owner_name !== undefined) {
-        live.forEach(inv => db.prepare('UPDATE invoices SET company_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(owner_name, inv.id));
-      }
-
-      const orderPaymentStatus = status === 'sold' ? 'PAID' : status === 'available' ? 'CANCELED' : null;
-      db.prepare(`
-        UPDATE orders
-        SET ${orderPaymentStatus ? 'payment_status = ?,' : ''} company_name = COALESCE(?, company_name)
-        WHERE floorplan_id = ? AND deleted_at IS NULL AND ((? != '' AND booth_id = ?) OR LOWER(TRIM(booth_code)) = LOWER(TRIM(?)))
-      `).run(
-        ...(orderPaymentStatus ? [orderPaymentStatus] : []),
-        owner_name !== undefined ? owner_name : null,
-        booth.floorplan_id, booth.id, booth.id, booth.code
-      );
-    }
+    // Sync the booth CONTRACT invoices (DP + Pelunasan / Penuh) and orders of this floorplan; add-on invoices are not touched
+    const statusWarnings = (status !== undefined || owner_name !== undefined) ? applyBoothStatusToContract(booth, status, owner_name) : [];
 
     // Also sync canvas JSON if floorplan exists
     if (booth.floorplan_id) {

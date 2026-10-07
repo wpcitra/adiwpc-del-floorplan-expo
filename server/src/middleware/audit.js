@@ -72,6 +72,12 @@ const AUDIT_RULES = [
     describe: (req, m) => ({ target: `${floorplanTitle(m[1]) || ''} (${m[1]})` }) },
   { method: 'POST', path: /^\/floorplan\/([^/]+)\/merge-display$/, category: 'Booth', action: 'Atur tampilan booth gabungan',
     describe: (req, m) => ({ target: `Booth ${(req.body.boothCodes || []).join('+')} — ${floorplanTitle(m[1]) || m[1]}`, summary: req.body.separate ? 'Tampilkan Terpisah' : 'Gabungkan Kembali' }) },
+  { method: 'POST', path: /^\/floorplan\/([^/]+)\/booth-status$/, category: 'Booth', action: 'Ubah status booth',
+    before: (m, req) => boothBefore({ body: { ...req.body, floorplanId: m[1] } }),
+    describe: (req, m, before) => ({
+      target: `Booth ${req.body.boothCode || '-'} — ${floorplanTitle(m[1]) || m[1]}`,
+      summary: `${before?.status || '?'}${before?.owner_name ? ` (${before.owner_name})` : ''} → ${req.body.status || '?'}`
+    }) },
   { method: 'POST', path: /^\/floorplan\/([^/]+)\/unpublish$/, category: 'Floorplan', action: 'Hentikan publikasi denah',
     describe: (req, m) => ({ target: `${floorplanTitle(m[1]) || ''} (${m[1]})` }) },
   { method: 'POST', path: /^\/floorplan\/([^/]+)\/duplicate$/, category: 'Floorplan', action: 'Duplikat denah',

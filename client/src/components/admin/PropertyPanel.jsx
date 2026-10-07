@@ -1014,6 +1014,9 @@ function BoothInspector({
   const [isSelectClientModalOpen, setIsSelectClientModalOpen] = useState(false);
   const [isDetachConfirmOpen, setIsDetachConfirmOpen] = useState(false);
   const [statusValidationError, setStatusValidationError] = useState(null);
+  // { message, confirmStatus? }: why a status was not applied, or the payment confirmation of a booth with invoices
+  const [statusNotice, setStatusNotice] = useState(null);
+  const [isSavingStatus, setIsSavingStatus] = useState(false);
   const [discountValidationError, setDiscountValidationError] = useState(null);
 
   useEffect(() => {
@@ -1062,6 +1065,8 @@ function BoothInspector({
     propertyTick
   ]);
 
+  useEffect(() => { setStatusNotice(null); }, [booth.id, booth.code]);
+
   const statusCfg = STATUS_CONFIG[booth.status] || STATUS_CONFIG.available;
   const currentArea = ((parseFloat(widthM) || 3) * (parseFloat(heightM) || 3)).toFixed(1);
 
@@ -1101,9 +1106,21 @@ function BoothInspector({
   const [isSavingDiscount, setIsSavingDiscount] = useState(false);
   const [saveDiscountStatus, setSaveDiscountStatus] = useState(null); // 'success' | 'error' | null
 
-  const handleStatusChange = (newStatus) => {
+  const handleStatusChange = async (newStatus, extra = {}) => {
     if (tenantLocked) return; // the booth status follows the tenant / payment: not changed by Operations
     setStatusValidationError(null);
+    setStatusNotice(null);
+    if (newStatus === booth.status) return;
+    // A booked booth: Available = "Lepas Tenant" (cancels the booking / invoice), Maintenance only once it is empty
+    const booked = (booth.status === 'reserved' || booth.status === 'sold') && Boolean(booth.ownerName?.trim());
+    if (booked && newStatus === 'available') {
+      setIsDetachConfirmOpen(true);
+      return;
+    }
+    if (booked && newStatus === 'maintenance') {
+      setStatusNotice({ message: `Booth ini masih punya tenant (${booth.ownerName}). Lepas tenant dulu sebelum menjadikannya Maintenance.` });
+      return;
+    }
     if (newStatus === 'reserved' || newStatus === 'sold') {
       if (!isTenantComplete) {
         const missing = [];
@@ -1116,6 +1133,26 @@ function BoothInspector({
           targetStatus: newStatus,
           missingFields: missing
         });
+        return;
+      }
+    }
+
+    // Reserved / Sold of a tenant: the booking / invoice contract decides the status on every save, so the server
+    // changes it there (Sold = paid, Reserved = not paid). Only changing the canvas came back after a refresh.
+    if (booth.ownerName?.trim()) {
+      setIsSavingStatus(true);
+      const r = await api.setBoothStatus(booth.floorplan_id || booth.floorplanId || currentFloorplanId, code || booth.code, newStatus, extra);
+      setIsSavingStatus(false);
+      if (r.code === 'CONFIRM_PAYMENT') {
+        setStatusNotice({ message: r.error, confirmStatus: newStatus });
+        return;
+      }
+      if (r.code !== 'BOOTH_NOT_SAVED') { // a booth not saved yet has no booking: the canvas is all there is
+        if (!r.success) {
+          setStatusNotice({ message: r.error });
+          return;
+        }
+        onUpdateProperty({ status: r.booth.status });
         return;
       }
     }
@@ -1710,6 +1747,35 @@ function BoothInspector({
             </div>
           )}
 
+          {statusNotice && (
+            <div role="alert" className="mb-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-snug animate-fadeIn">
+              <div className="flex items-start gap-2">
+                <AlertCircle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <p>{statusNotice.message}</p>
+                  {statusNotice.confirmStatus && (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleStatusChange(statusNotice.confirmStatus, { confirmPayment: true })}
+                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg cursor-pointer"
+                      >
+                        Ya, ubah ke {STATUS_CONFIG[statusNotice.confirmStatus]?.label}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStatusNotice(null)}
+                        className="px-2.5 py-1 bg-white border border-amber-300 text-amber-900 font-semibold rounded-lg cursor-pointer"
+                      >
+                        Batal
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-2">
             {Object.entries(STATUS_CONFIG).map(([key, val]) => {
               const isSelected = booth.status === key;
@@ -1718,7 +1784,7 @@ function BoothInspector({
                   key={key}
                   type="button"
                   onClick={() => handleStatusChange(key)}
-                  disabled={tenantLocked}
+                  disabled={tenantLocked || isSavingStatus}
                   title={tenantLocked ? 'Status booth mengikuti tenant & pembayaran (diubah oleh Sales / Keuangan)' : undefined}
                   className={`px-2.5 py-2 rounded-lg border text-xs font-semibold flex items-center justify-between transition-all cursor-pointer ${
                     isSelected ? 'ring-2 ring-blue-500 shadow-sm' : 'opacity-70 hover:opacity-100'

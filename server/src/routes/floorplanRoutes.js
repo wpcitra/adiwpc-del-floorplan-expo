@@ -2,8 +2,9 @@ import express from 'express';
 import crypto from 'crypto';
 import db from '../db.js';
 import { getContract, recalcContract, invoiceCodeTokens } from '../utils/contractBilling.js';
-import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
-import { notifyIfBoothsChanged } from '../utils/opsLayer.js';
+import { syncPaymentStatusFromInvoices, applyBoothChangesToCanvas } from '../utils/syncPaymentStatus.js';
+import { applyBoothStatusToContract } from '../utils/boothStatus.js';
+import { notifyIfBoothsChanged, notifyOpsOfSalesChange } from '../utils/opsLayer.js';
 import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
 import { computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
 import { publicFloorplanPayload } from '../utils/publicData.js';
@@ -1055,6 +1056,65 @@ router.post('/:id/merge-display', (req, res) => {
     const { groups } = computeFloorplanMergeGroups(id, { onlyActive: false });
     res.json({ success: true, separate, groups });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/floorplan/:id/booth-status { boothCode, status } - status button of the Studio's Property Inspector.
+// A booked booth's status follows its booking / invoice contract, which POST /save restores on every save; so the
+// change is written to the contract (Sold = paid, Reserved = not paid) instead of only the canvas (AGENTS.md §37).
+const BOOTH_STATUSES = ['available', 'reserved', 'sold', 'maintenance'];
+router.post('/:id/booth-status', (req, res) => {
+  try {
+    const { id } = req.params;
+    const status = String(req.body?.status || '').toLowerCase();
+    if (!BOOTH_STATUSES.includes(status)) return res.status(400).json({ success: false, error: 'Status booth tidak dikenal' });
+    const booth = db.prepare('SELECT * FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL AND LOWER(TRIM(code)) = LOWER(TRIM(?))')
+      .get(id, String(req.body?.boothCode || ''));
+    if (!booth) return res.status(404).json({ success: false, code: 'BOOTH_NOT_SAVED', error: 'Booth belum tersimpan di server' });
+
+    const liveInvoices = getContract(id, booth.code, booth.id).invoices.filter(inv => String(inv.payment_status).toUpperCase() !== 'CANCELED');
+    const booked = liveInvoices.length > 0 || Boolean(db.prepare(`
+      SELECT 1 FROM orders WHERE floorplan_id = ? AND deleted_at IS NULL AND UPPER(COALESCE(payment_status, '')) != 'CANCELED'
+        AND ((? != '' AND booth_id = ?) OR LOWER(TRIM(booth_code)) = LOWER(TRIM(?))) LIMIT 1
+    `).get(id, booth.id, booth.id, booth.code));
+
+    let warnings = [];
+    if (booked) {
+      if (status === 'available' || status === 'maintenance') {
+        return res.status(409).json({ success: false, code: 'DETACH_TENANT_FIRST', error: `Booth ${booth.code} masih punya tenant (${booth.owner_name || '-'}). Gunakan "Lepas Tenant" untuk mengosongkannya.` });
+      }
+      // Marking an invoice paid / unpaid is billing: Finance and the Super Admin only (Operations edits the Studio)
+      if (liveInvoices.length && !['superadmin', 'finance'].includes(req.user?.role)) {
+        return res.status(403).json({ success: false, code: 'STATUS_FOLLOWS_INVOICE', error: `Status booth ${booth.code} mengikuti pembayaran invoice; diubah oleh Keuangan / Super Admin.` });
+      }
+      if (liveInvoices.length && status !== booth.status && !req.body?.confirmPayment) {
+        const list = liveInvoices.map(inv => inv.invoice_number).join(', ');
+        return res.status(409).json({
+          success: false, code: 'CONFIRM_PAYMENT', requireConfirmation: true,
+          error: status === 'sold'
+            ? `Booth ${booth.code} punya invoice ${list}. Mengubah ke Sold akan mencatat invoice tersebut sebagai LUNAS.`
+            : `Booth ${booth.code} punya invoice ${list}. Mengubah ke Reserved akan membuka kembali tagihan yang belum dibayar.`
+        });
+      }
+      db.transaction(() => {
+        db.prepare('UPDATE booths SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, booth.id);
+        warnings = applyBoothStatusToContract(booth, status);
+      })();
+      syncPaymentStatusFromInvoices();
+    } else {
+      if ((status === 'reserved' || status === 'sold') && !String(booth.owner_name || '').trim()) {
+        return res.status(409).json({ success: false, code: 'NEED_TENANT', error: `Booth ${booth.code} belum punya tenant.` });
+      }
+      db.prepare('UPDATE booths SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, booth.id);
+    }
+
+    const fresh = db.prepare('SELECT code, status, owner_name, exhibitor_id FROM booths WHERE id = ?').get(booth.id);
+    applyBoothChangesToCanvas(id, [{ code: fresh.code, id: booth.id, boothStatus: fresh.status, ownerName: fresh.owner_name || '', exhibitorId: fresh.exhibitor_id || '' }]);
+    if (fresh.status !== booth.status) notifyOpsOfSalesChange(id, 1, req.user?.name || '');
+    res.json({ success: true, warnings, booth: { code: fresh.code, status: fresh.status, ownerName: fresh.owner_name || '' } });
+  } catch (error) {
+    console.error('Booth status error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

@@ -365,6 +365,23 @@ export const api = {
     return { success: false, error: 'Gagal menghubungi server' };
   },
 
+  // 10.2 Status button of the Studio's Property Inspector: a booked booth's status is written to its booking / invoice
+  // contract on the server, so it survives the next save and a refresh (AGENTS.md §37)
+  async setBoothStatus(floorplanId, boothCode, status, extra = {}) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/floorplan/${encodeURIComponent(floorplanId)}/booth-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ boothCode, status, ...extra })
+      });
+      const json = await res.json().catch(() => ({}));
+      return { ...json, success: res.ok && json.success !== false, error: json.error || (res.ok ? '' : `Status booth gagal disimpan (HTTP ${res.status})`) };
+    } catch (e) {
+      console.error('Failed to set booth status:', e);
+      return { success: false, error: 'Gagal menghubungi server' };
+    }
+  },
+
   // 11. Reseed database with dummy data
   async reseedDatabase() {
     try {
