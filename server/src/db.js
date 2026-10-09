@@ -1264,4 +1264,21 @@ try {
   console.error('Merapikan nomor booth gagal:', error);
 }
 
+// Compact the database (AGENTS.md §43): images once stored as base64 were moved to files (§28) but SQLite keeps the
+// freed pages, so the file (and every backup copy of it) stayed ~4x larger than its data on a small Railway Volume.
+// At start, when more than a quarter of the file is free pages, VACUUM rewrites it (atomic) and the WAL is truncated.
+try {
+  const pages = db.pragma('page_count', { simple: true });
+  const free = db.pragma('freelist_count', { simple: true });
+  const pageSize = db.pragma('page_size', { simple: true });
+  if (pages > 0 && free / pages > 0.25 && free * pageSize > 2 * 1024 * 1024) {
+    const before = fs.statSync(dbPath).size;
+    db.exec('VACUUM');
+    db.pragma('wal_checkpoint(TRUNCATE)');
+    console.log(`🗜️  Database dipadatkan: ${Math.round(before / 1048576)} MB → ${Math.round(fs.statSync(dbPath).size / 1048576 * 10) / 10} MB.`);
+  }
+} catch (error) {
+  console.error('Memadatkan database gagal:', error);
+}
+
 export default db;

@@ -31,7 +31,7 @@ import { migrateEmbeddedImages } from './utils/uploads.js';
 import { createBackup } from './utils/backup.js';
 import { authenticate, enforceAccessPolicy, stampActorIdentity } from './middleware/auth.js';
 import { auditTrail } from './middleware/audit.js';
-import { readBackupStatus, startBackupSchedule } from './utils/backup.js';
+import { readBackupStatus, startBackupSchedule, compactOldBackups } from './utils/backup.js';
 import { appVersion } from './utils/appVersion.js';
 import { removeDemoDataIfUntouched } from './utils/demoCleanup.js';
 import { storageKind } from './db.js';
@@ -150,6 +150,8 @@ const httpServer = createServer(app);
 attachChatSocket(httpServer, corsDelegate);
 httpServer.listen(PORT, '0.0.0.0', () => {
   startBackupSchedule();
+  // Full-size backups of before AGENTS.md §43 are rewritten compact, in the background
+  setTimeout(() => compactOldBackups().catch(error => console.error('Memadatkan backup gagal:', error)), 1000);
   console.log(`🚀 Floorplan Backend API Server is running on port ${PORT}`);
   console.log(`📊 Database connected: server/data/floorplan.db`);
   // Production starts clean: an empty database is NOT filled with demo data (demo: `node server/src/seed.js`, local only).

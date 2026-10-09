@@ -2,8 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import db, { dataDir } from '../db.js';
 
-// Database backups (AGENTS.md §21): consistent online copies made with SQLite's backup API (safe while the server
-// runs), verified with PRAGMA integrity_check. Kinds:
+// Database backups (AGENTS.md §21, §43): consistent online copies made with VACUUM INTO (safe while the server runs,
+// and compact: free pages are not copied), verified with PRAGMA integrity_check. Kinds:
 //   daily       made by the server once a day (kept BACKUP_KEEP_DAILY days, default 14)
 //   pre-deploy  / pre-migration / manual   kept BACKUP_KEEP_OTHER days (default 90)
 export const backupDir = process.env.BACKUP_DIR ? path.resolve(process.env.BACKUP_DIR) : path.join(dataDir, 'backups');
@@ -22,6 +22,9 @@ function writeStatus(entry) {
   if (entry.ok) status.lastSuccess = entry;
   fs.writeFileSync(statusFile(), JSON.stringify(status, null, 2));
 }
+
+// A backup opened for its check can leave "-shm" / "-wal" files next to it; they belong to no open connection
+const removeSidecars = (file) => ['-shm', '-wal'].forEach(ext => fs.rmSync(`${file}${ext}`, { force: true }));
 
 async function verify(file) {
   const { default: Database } = await import('better-sqlite3');
@@ -42,8 +45,9 @@ export async function createBackup(kind = 'manual', note = '') {
   const file = path.join(backupDir, `${kind}_${stamp()}.db`);
   const started = Date.now();
   try {
-    await db.backup(file);
+    db.prepare('VACUUM INTO ?').run(file);
     const check = await verify(file);
+    removeSidecars(file);
     if (check.integrity !== 'ok') throw new Error(`integrity_check: ${check.integrity}`);
     const entry = { ok: true, kind, note, file: path.basename(file), sizeBytes: fs.statSync(file).size, ...check, at: new Date().toISOString(), durationMs: Date.now() - started };
     writeStatus(entry);
@@ -51,6 +55,7 @@ export async function createBackup(kind = 'manual', note = '') {
     return entry;
   } catch (error) {
     try { fs.unlinkSync(file); } catch (e) {}
+    removeSidecars(file);
     const entry = { ok: false, kind, note, error: error.message, at: new Date().toISOString() };
     writeStatus(entry);
     return entry;
@@ -73,8 +78,43 @@ export function pruneBackups() {
     const age = now - new Date(b.mtime).getTime();
     if ((b.kind === 'daily' && age > keepDaily) || (b.kind !== 'daily' && age > keepOther)) {
       try { fs.unlinkSync(path.join(backupDir, b.file)); } catch (e) {}
+      removeSidecars(path.join(backupDir, b.file));
     }
   });
+}
+
+// Older backups were full-size copies (free pages included, ~4x their data): each is rewritten compact in the
+// background, checked with integrity_check, and keeps its date (so retention does not change). Content is unchanged.
+export async function compactOldBackups() {
+  const { default: Database } = await import('better-sqlite3');
+  let saved = 0;
+  for (const b of listBackups()) {
+    const file = path.join(backupDir, b.file);
+    const tmp = `${file}.compact.tmp`;
+    try {
+      const src = new Database(file, { readonly: true });
+      const bloated = src.pragma('freelist_count', { simple: true }) / Math.max(1, src.pragma('page_count', { simple: true })) > 0.25;
+      if (bloated) src.prepare('VACUUM INTO ?').run(tmp);
+      src.close();
+      removeSidecars(file);
+      if (!bloated) continue;
+      const copy = new Database(tmp, { readonly: true });
+      const ok = copy.pragma('integrity_check', { simple: true }) === 'ok';
+      copy.close();
+      removeSidecars(tmp);
+      if (!ok) { fs.rmSync(tmp, { force: true }); continue; }
+      const before = fs.statSync(file).size;
+      fs.utimesSync(tmp, b.mtime, b.mtime);
+      fs.renameSync(tmp, file);
+      saved += before - fs.statSync(file).size;
+    } catch (error) {
+      fs.rmSync(tmp, { force: true });
+      console.error(`Memadatkan backup ${b.file} gagal:`, error);
+    }
+    await new Promise(r => setImmediate(r)); // one file at a time, between requests
+  }
+  if (saved > 0) console.log(`🗜️  Backup lama dipadatkan: ${Math.round(saved / 1048576)} MB dibebaskan.`);
+  return saved;
 }
 
 // Daily backup while the server runs: one at start-up when the last one is older than 24 h, then every 24 h

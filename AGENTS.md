@@ -656,3 +656,12 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Screen.** An absolutely positioned `<img>` (210 × 297 mm, `z-index: -1`, sheet `isolation: isolate`) behind the content.
 - **Print / PDF (one template, §34).** The letterhead must cover the whole paper on every page: `@page invoice { margin: 0 }` (a style inside the sheet) and a `position: fixed` `<img>` (repeated on each printed page). `KopFrame` wraps the content in a table whose empty head / foot rows (12 mm, repeated by Chromium on every page) give each page its margins. Chromium only repeats such rows while they are < 1/4 of the page, and clips fixed elements to the page area when the page has margins: keep this structure. It is an `<img>`, not a CSS background, so the print page waits for it before the PDF is made.
 - Tests: `server/test/kop-surat.test.js`. Browser check: a server PDF with a letterhead has it on every page and the invoice over it.
+
+---
+
+## 43. Volume Padat Lock (`db.js` VACUUM at start, `utils/backup.js` `VACUUM INTO`, `compactOldBackups`)
+- **Why.** The Railway Volume (434 MB) was 90% full: the database file was 30 MB but 76% free pages (base64 images moved to files, §28, leave freed pages behind), and every backup copied the whole file (12 × 30 MB). With 14 daily backups the Volume would always fill.
+- **Database.** At start, when free pages are > 25% of the file (and > 2 MB), `db.js` runs `VACUUM` (atomic) and `wal_checkpoint(TRUNCATE)`, logged "Database dipadatkan".
+- **Backups.** `createBackup()` writes `VACUUM INTO` (a consistent, compact copy, safe while the server runs), verifies it (`integrity_check`), and removes the `-shm` / `-wal` files the check leaves; `pruneBackups()` removes them with the backup. Never go back to `db.backup()` (it copies free pages).
+- **Old backups.** `compactOldBackups()` (1 s after start, background, one file at a time) rewrites each bloated backup with `VACUUM INTO`, checks it, keeps its date (retention unchanged) and replaces it. Content never changes; nothing is deleted.
+- Tests: `server/test/volume-padat.test.js`.
