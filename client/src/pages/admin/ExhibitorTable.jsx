@@ -328,7 +328,7 @@ export default function ExhibitorTable() {
 
   // Contract issued before the booth was re-priced / merged (e.g. invoice for A-04 on booth A-04+A-05)
   const renderMismatch = (exh) => exh.contractMismatch ? (
-    <div className="mt-1 flex items-start gap-1 text-[10px] leading-snug text-rose-600 font-sans font-medium min-w-[160px] max-w-[220px]" title="Periksa invoice booth ini di Manajemen Invoice">
+    <div className="mt-1 flex items-start gap-1 text-[10px] leading-snug text-rose-600 font-sans font-medium min-w-[128px] max-w-[200px]" title="Periksa invoice booth ini di Manajemen Invoice">
       <AlertTriangle size={11} className="shrink-0 mt-0.5" />
       <span>Nilai kontrak berbeda dari harga booth saat ini (Rp {(exh.boothValue || 0).toLocaleString('id-ID')})</span>
     </div>
@@ -410,7 +410,7 @@ export default function ExhibitorTable() {
         title="Buat Dokumen PDF Formulir Permintaan Fasilitas Tenant Ini (Kop Surat Resmi & WA)"
       >
         <FileText size={12} className="text-slate-600" />
-        <span>Form Fasilitas</span>
+        <span>Fasilitas</span>
       </button>
       {/* The invoices Finance issued in Manajemen Invoice: open, print or download (also for Sales) */}
       {exh.invoices?.length > 0 ? (
@@ -426,7 +426,7 @@ export default function ExhibitorTable() {
                 : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50';
             return (
               <button key={inv.id} type="button" onClick={() => openInvoice(inv.id)}
-                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-semibold transition-colors cursor-pointer ${tone}`}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${tone}`}
                 title={`${kindLabel} ${inv.invoiceNumber} • Rp ${Number(inv.totalAmount).toLocaleString('id-ID')} • ${paid ? 'Lunas' : 'Belum lunas'} — buka, cetak atau unduh PDF`}>
                 <Download size={10} />
                 <span>{kindLabel} {inv.invoiceNumber}</span>
@@ -496,30 +496,30 @@ export default function ExhibitorTable() {
             <thead className="bg-slate-50/90 text-slate-700 font-bold text-[11px] uppercase tracking-wider border-b border-slate-200">
               <tr>
                 {canDeleteTenants && (
-                  <th className="pl-3.5 py-3 w-8">
+                  <th className="pl-3 py-3 w-8">
                     <input type="checkbox" checked={allPicked} onChange={(e) => pickAll(e.target.checked)}
                       aria-label={`Pilih semua tenant ${project.title || ''}`} className="w-3.5 h-3.5 accent-rose-600 cursor-pointer align-middle" />
                   </th>
                 )}
-                <th className="px-3.5 py-3 w-20">Booth</th>
-                <th className="px-3.5 py-3 min-w-[170px]">Nama Brand / Tenant</th>
-                <th className="px-3.5 py-3 w-36">Kategori Brand</th>
-                <th className="px-3.5 py-3 w-32">Total Tagihan</th>
-                <th className="px-3.5 py-3 w-36">Status</th>
-                <th className="px-3.5 py-3 min-w-[130px]">Kontak / PIC</th>
-                <th className="px-3.5 py-3 text-right min-w-[240px]">Aksi</th>
+                <th className="px-3 py-3 w-20">Booth</th>
+                <th className="px-3 py-3 min-w-[170px]">Nama Brand / Tenant</th>
+                <th className="px-3 py-3 w-36">Kategori Brand</th>
+                <th className="px-3 py-3 w-32">Total Tagihan</th>
+                <th className="px-3 py-3 w-28">Status</th>
+                <th className="px-3 py-3 min-w-[130px]">Kontak / PIC</th>
+                <th className="sticky right-0 z-[1] bg-slate-50 px-3 py-3 text-right min-w-[210px] shadow-[-10px_0_12px_-12px_rgba(15,23,42,0.35)]">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {list.map((exh) => (
-                <tr key={exh.id} className={`transition-colors ${canDeleteTenants && selectedTenantIds.has(exh.id) ? 'bg-rose-50/50' : 'hover:bg-slate-50/60'}`}>
+                <tr key={exh.id} className={`group transition-colors ${canDeleteTenants && selectedTenantIds.has(exh.id) ? 'bg-rose-50/50' : 'hover:bg-slate-50/60'}`}>
                   {canDeleteTenants && (
-                    <td className="pl-3.5 py-3">
+                    <td className="pl-3 py-3">
                       <input type="checkbox" checked={selectedTenantIds.has(exh.id)} onChange={() => pickOne(exh)}
                         aria-label={`Pilih tenant ${exh.company} booth ${exh.booth}`} className="w-3.5 h-3.5 accent-rose-600 cursor-pointer align-middle" />
                     </td>
                   )}
-                  <td className="px-3.5 py-3">
+                  <td className="px-3 py-3">
                     <span className="font-mono font-semibold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 text-xs whitespace-nowrap"
                       title={exh.isMerged ? exh.mergedBooths.map(b => `${b.code} (${b.widthM}×${b.heightM} m)`).join(', ') : undefined}>
                       #{exh.booth || '-'}
@@ -528,33 +528,33 @@ export default function ExhibitorTable() {
                       <div className="text-[10px] text-indigo-600 font-semibold mt-1">🔗 Gabungan {exh.mergedBooths.length} booth • {exh.areaSqm} m²{exh.mergedStatusLabel ? ` • ${exh.mergedStatusLabel}` : ''}</div>
                     )}
                   </td>
-                  <td className="px-3.5 py-3">
-                    <div className="font-bold text-slate-900 text-xs truncate max-w-[200px]" title={exh.company}>{exh.company}</div>
-                    <div className="text-[11px] text-slate-500 mt-0.5 truncate max-w-[200px]">
+                  <td className="px-3 py-3">
+                    <div className="font-bold text-slate-900 text-xs truncate max-w-[180px]" title={exh.company}>{exh.company}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5 truncate max-w-[180px]">
                       PIC: <span className="font-medium text-slate-700">{exh.pic || exh.company}</span> • {exh.date || '-'}
                     </div>
                   </td>
-                  <td className="px-3.5 py-3">
+                  <td className="px-3 py-3">
                     {exh.brandCategory ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
-                        <Tag size={10} /> {exh.brandCategory}
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap max-w-[115px]" title={exh.brandCategory}>
+                        <Tag size={10} className="shrink-0" /> <span className="truncate">{exh.brandCategory}</span>
                       </span>
                     ) : (
                       <span className="text-slate-400 text-[10px] italic bg-slate-100 px-2 py-0.5 rounded">Belum Diatur</span>
                     )}
                   </td>
-                  <td className="px-3.5 py-3 text-slate-900 font-mono font-bold text-xs">
+                  <td className="px-3 py-3 text-slate-900 font-mono font-bold text-xs">
                     Rp {(exh.price || 0).toLocaleString('id-ID')}
                     {renderMismatch(exh)}
                   </td>
-                  <td className="px-3.5 py-3">{renderStatusBadge(exh)}</td>
-                  <td className="px-3.5 py-3 text-slate-600 text-xs">
-                    <div className="font-semibold text-slate-800 text-xs truncate max-w-[140px]">{exh.contact || '-'}</div>
+                  <td className="px-3 py-3">{renderStatusBadge(exh)}</td>
+                  <td className="px-3 py-3 text-slate-600 text-xs">
+                    <div className="font-semibold text-slate-800 text-xs truncate max-w-[120px]" title={exh.contact || undefined}>{exh.contact || '-'}</div>
                     {exh.email && exh.email !== '-' && (
-                      <div className="text-[10px] text-slate-400 truncate max-w-[140px]" title={exh.email}>{exh.email}</div>
+                      <div className="text-[10px] text-slate-400 truncate max-w-[120px]" title={exh.email}>{exh.email}</div>
                     )}
                   </td>
-                  <td className="px-3.5 py-3 text-right">{renderActions(exh)}</td>
+                  <td className={`sticky right-0 z-[1] px-3 py-3 text-right shadow-[-10px_0_12px_-12px_rgba(15,23,42,0.35)] transition-colors ${canDeleteTenants && selectedTenantIds.has(exh.id) ? 'bg-rose-50' : 'bg-white group-hover:bg-slate-50'}`}>{renderActions(exh)}</td>
                 </tr>
               ))}
             </tbody>
@@ -595,7 +595,7 @@ export default function ExhibitorTable() {
   const selectedProjectInfo = projectsList.find(p => p.id === selectedProject);
 
   return (
-    <div className="p-4 sm:p-6 md:p-8 max-w-7xl mx-auto w-full animate-fadeIn">
+    <div className="p-4 sm:p-6 md:p-8 max-w-screen-2xl mx-auto w-full animate-fadeIn">
       {/* Header & Controls */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between mb-5 gap-4">
         <div>
