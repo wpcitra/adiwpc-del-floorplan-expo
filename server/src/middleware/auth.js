@@ -26,10 +26,10 @@ const readBearer = (req) => {
 
 // Resolves req.user from the bearer token when present. Never rejects on its own:
 // access decisions are made by `enforceAccessPolicy` so public endpoints keep working.
-export function authenticate(req, res, next) {
-  const token = readBearer(req);
-  if (!token) return next();
-
+// The user of a session token, or null (unknown, expired or deactivated: the session is removed).
+// Shared by the API and the chat socket (AGENTS.md §38), so both accept exactly the same logins.
+export function userFromToken(token) {
+  if (!token) return null;
   const tokenHash = hashToken(token);
   const row = db.prepare(`
     SELECT s.token_hash, s.expires_at, u.id, u.name, u.email, u.role, u.is_active
@@ -39,13 +39,24 @@ export function authenticate(req, res, next) {
 
   if (!row || !row.is_active || new Date(row.expires_at) < new Date()) {
     if (row) db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash);
-    req.authError = 'Sesi login sudah berakhir, silakan login kembali';
-    return next();
+    return null;
   }
 
   db.prepare('UPDATE sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = ?').run(tokenHash);
-  req.user = { id: row.id, name: row.name, email: row.email, role: row.role };
-  req.sessionTokenHash = tokenHash;
+  return { user: { id: row.id, name: row.name, email: row.email, role: row.role }, tokenHash };
+}
+
+export function authenticate(req, res, next) {
+  const token = readBearer(req);
+  if (!token) return next();
+
+  const session = userFromToken(token);
+  if (!session) {
+    req.authError = 'Sesi login sudah berakhir, silakan login kembali';
+    return next();
+  }
+  req.user = session.user;
+  req.sessionTokenHash = session.tokenHash;
   next();
 }
 
@@ -129,6 +140,8 @@ const ACCESS_RULES = [
 
   // In-app notifications of the logged-in user
   { methods: ['GET', 'POST'], path: /^\/notifications(\/.*)?$/, access: 'staff' },
+  // Chat antar staf (AGENTS.md §38): every logged-in staff member; groups are managed by the Super Admin (handler)
+  { methods: ['GET', ...WRITE], path: /^\/chat(\/.*)?$/, access: 'staff' },
 
   // User management & audit trail
   { methods: ['GET'], path: /^\/users\/roles$/, access: 'staff' },
@@ -141,10 +154,10 @@ const ACCESS_RULES = [
 const OPERATIONS_AREA = [
   /^\/ops(\/.*)?$/, /^\/floorplan(\/.*)?$/, /^\/(categories|brand-categories)(\/.*)?$/, /^\/uploads(\/.*)?$/,
   /^\/orders\/(checkout|check-client|registered-clients|update-tenant|detach-tenant)$/, /^\/invoices\/sync-booth-discount$/,
-  /^\/notifications(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/
+  /^\/notifications(\/.*)?$/, /^\/chat(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/
 ];
 // Developer: only the Pusat Maintenance (never tenant, price, invoice or user data)
-const DEVELOPER_AREA = [/^\/maintenance(\/.*)?$/, /^\/notifications(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/];
+const DEVELOPER_AREA = [/^\/maintenance(\/.*)?$/, /^\/notifications(\/.*)?$/, /^\/chat(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/];
 // Roles limited to their own area; on public endpoints they are treated as anonymous visitors
 const RESTRICTED_AREAS = {
   operations: { area: OPERATIONS_AREA, error: 'Role Operasional hanya dapat mengakses Studio dan Denah Operasional' },

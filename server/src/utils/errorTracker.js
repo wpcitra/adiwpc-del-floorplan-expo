@@ -106,6 +106,7 @@ const AREA_RULES = [
   { re: /^\/(api\/stats|admin\/analytics)/, priority: 'TINGGI', feature: 'Dashboard' },
   // NORMAL (named for readability)
   { re: /^\/(api\/ops|admin\/ops)/, priority: 'NORMAL', feature: 'Denah Operasional' },
+  { re: /^\/api\/chat/, priority: 'NORMAL', feature: 'Chat staf' },
   { re: /^\/(api\/facilities|admin\/facilities|facility-request)/, priority: 'NORMAL', feature: 'Fasilitas tambahan' },
   { re: /^\/(api\/users|admin\/users)/, priority: 'NORMAL', feature: 'Manajemen user' },
   { re: /^\/(api\/audit-logs|admin\/audit)/, priority: 'NORMAL', feature: 'Audit' },

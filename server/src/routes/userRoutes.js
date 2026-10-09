@@ -2,6 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import { hashPassword } from '../utils/password.js';
 import { revokeUserSessions } from '../middleware/auth.js';
+import { disconnectUser } from '../utils/chatSocket.js';
 
 const router = express.Router();
 
@@ -148,6 +149,7 @@ router.put('/:id', (req, res) => {
     const deactivated = isActive !== undefined && !isActive && existing.is_active;
     if ((roleChanged || deactivated || password) && req.user?.id !== id) {
       revokeUserSessions(id);
+      disconnectUser(id);
     }
 
     const user = toUserDto(db.prepare('SELECT * FROM users WHERE id = ?').get(id));

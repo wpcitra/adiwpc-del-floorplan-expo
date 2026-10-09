@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Map, Users, Settings, ArrowLeft, FileText, PackagePlus, UserCog, ScrollText, LogOut, KeyRound, X, HardHat, Activity } from 'lucide-react';
 import NotificationBell from './NotificationBell';
+import ChatDock from '../chat/ChatDock';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
 import { canAccessPage, ROLE_LABELS } from '../../utils/roles';
@@ -138,6 +139,7 @@ export default function AdminLayout() {
         {/* Bottom Utility Navigation with Captions */}
         <div className="mt-auto flex flex-col gap-2 w-full px-1.5">
           {visibleUtility.map(item => <NavItem key={item.page} item={item} />)}
+          <ChatDock />
           <NotificationBell />
           <NavLink
             to="/"

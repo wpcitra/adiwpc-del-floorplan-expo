@@ -1,4 +1,5 @@
 import express from 'express';
+import { createServer } from 'http';
 import cors from 'cors';
 import compression from 'compression';
 import path from 'path';
@@ -24,6 +25,8 @@ import maintenanceRoutes, { reportRouter as errorReportRoutes } from './routes/m
 import agentRoutes from './routes/agentRoutes.js';
 import boothActionRoutes from './routes/boothActionRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
+import chatRoutes from './routes/chatRoutes.js';
+import { attachChatSocket } from './utils/chatSocket.js';
 import { migrateEmbeddedImages } from './utils/uploads.js';
 import { createBackup } from './utils/backup.js';
 import { authenticate, enforceAccessPolicy, stampActorIdentity } from './middleware/auth.js';
@@ -53,14 +56,16 @@ const isSameSite = (origin, req) => {
   try { return new URL(origin).host === (req.headers['x-forwarded-host'] || req.headers.host); } catch (e) { return false; }
 };
 
-app.use(cors((req, callback) => {
+// Same rule for the API and the chat socket (AGENTS.md §38)
+const corsDelegate = (req, callback) => {
   const origin = req.headers.origin;
   callback(null, {
     origin: !origin || isLocalOrigin(origin) || allowedOrigins.includes(origin) || isSameSite(origin, req),
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
   });
-}));
+};
+app.use(cors(corsDelegate));
 
 // gzip every response (AGENTS.md §39): a floorplan is ~3 MB of JSON, ~30x smaller compressed; Railway bills egress
 app.use(compression());
@@ -114,6 +119,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/audit-logs', auditRoutes);
 app.use('/api/ops', opsRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/chat', chatRoutes);
 app.use('/api/errors', errorReportRoutes);
 app.use('/api/maintenance/agent', agentRoutes);
 app.use('/api/maintenance', maintenanceRoutes);
@@ -139,7 +145,10 @@ if (fs.existsSync(clientDist)) {
 }
 
 // Start Server
-app.listen(PORT, '0.0.0.0', () => {
+// One HTTP server for the API, the website and the chat socket (socket.io needs the server, not app.listen)
+const httpServer = createServer(app);
+attachChatSocket(httpServer, corsDelegate);
+httpServer.listen(PORT, '0.0.0.0', () => {
   startBackupSchedule();
   console.log(`🚀 Floorplan Backend API Server is running on port ${PORT}`);
   console.log(`📊 Database connected: server/data/floorplan.db`);

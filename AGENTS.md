@@ -612,6 +612,16 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 
 ---
 
+## 38. Chat Antar Staf Lock (`chatRoutes.js`, `utils/chatSocket.js`, `components/chat/*`)
+- **Who.** Every staff role chats (`/chat` is `staff` in `ACCESS_RULES` and part of `OPERATIONS_AREA` / `DEVELOPER_AREA`). Private: only the members of a conversation read or write it, the Super Admin included (403). A direct chat is one conversation per pair (`chat_conversations.direct_key` = sorted "idA|idB"). Groups are created, renamed and changed by the **Super Admin only** (handler check, 403 for others); a removed member loses access to the group.
+- **Transport.** Every write goes through REST (`POST /chat/direct`, `/chat/conversations/:id/messages`, `/read`, `/chat/groups…`), so login, access policy and validation stay in one place. socket.io (same HTTP server, `attachChatSocket(httpServer, corsDelegate)`, same CORS rule as the API) only pushes `chat:message`, `chat:receipt`, `chat:conversation` to the rooms `user:<id>` of the members. The socket logs in with the session token (`userFromToken`, shared with `authenticate`); deactivation / role change / password reset calls `disconnectUser`. A client that reconnects reloads the list and the open conversation, so nothing is missed.
+- **Ticks.** `chat_members.last_delivered_id` (a member's page received it: socket online at send time, or the list was opened) and `last_read_id` (`POST …/read`). Own message: ✓ sent, ✓✓ delivered, blue ✓✓ read — in a group only when every active member is there (`tickOf`). Unread = messages after `last_read_id` from others; the rail badge and the tab title show the total.
+- **Privacy.** Message text never reaches the audit log (the chat routes set `req.skipAudit`; `auditTrail` keeps no request details for `/chat/*`, not even for a 403) nor error reports. Only group management is audited (category `Chat`).
+- **Attachments are references.** A message stores `{ type: 'booth', floorplanId, boothCode }` or `{ type: 'invoice', invoiceId }`, never the data. The sender must be allowed to open it (booth: all roles but Developer; invoice: Super Admin, Finance, Sales). `GET /chat/attachment` resolves the card with the READER's rights: without access only `{ allowed: false }`. A booth card opens the Studio at `?templateId=…&booth=…` (`AdminDashboard` focuses it); an invoice card opens `InvoiceA4View`.
+- **Limits.** Text max 4.000 characters, group name max 80, 50 messages per page. An inactive account cannot receive new direct messages (409 `USER_INACTIVE`).
+- **UI.** `ChatDock` (rail button above Notifikasi on every admin page + panel beside the rail: list | conversation; on a phone one at a time), `ChatThread`, `ChatPeoplePicker` (Chat Baru, Grup Baru, Atur Grup), `ChatAttachment`, state in `useChat`.
+- Tests: `server/test/chat.test.js`.
+
 ## 39. Hemat Egress Lock (`index.js` `compression`, `floorplanRoutes.js` `/:id/booth-version`, `AdminDashboard.jsx`)
 - **Why.** Railway bills egress, and it was 94% of the bill: the Studio downloaded the whole floorplan (~3.4 MB of JSON, uncompressed) every 3 seconds, also in a hidden tab (≈68 MB per minute per open Studio).
 - **gzip.** `app.use(compression())` compresses every response (a floorplan ~3.4 MB → ~110 KB). Never remove it, and never add a route that streams large JSON around it.

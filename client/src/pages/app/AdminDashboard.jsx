@@ -594,6 +594,24 @@ export default function AdminDashboard() {
     setTimeout(loadInitialFloorplan, 120);
   }, [targetTemplateId]);
 
+  // A booth link from the chat (?booth=A-01, AGENTS.md §38): focus that booth once its floorplan is on the canvas
+  const boothParam = searchParams.get('booth');
+  useEffect(() => {
+    if (!boothParam || (targetTemplateId && currentFloorplanId !== targetTemplateId)) return undefined;
+    const code = boothParam.trim().toLowerCase();
+    let tries = 0;
+    const timer = setInterval(() => {
+      const found = isInitialLoadedRef.current && (editorRef.current?.getSearchableBooths() || [])
+        .find(o => String(o.boothData.code || '').trim().toLowerCase() === code);
+      if (!found && ++tries < 20) return;
+      clearInterval(timer);
+      if (found) editorRef.current.focusBooth(found);
+      else showToast(`Booth ${boothParam} tidak ditemukan di denah ini`);
+      setSearchParams(prev => { const next = new URLSearchParams(prev); next.delete('booth'); return next; }, { replace: true });
+    }, 250);
+    return () => clearInterval(timer);
+  }, [boothParam, currentFloorplanId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Load a specific template by ID
   const handleLoadTemplate = async (templateId) => {
     try {
