@@ -621,6 +621,15 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 
 ---
 
+## 40. Angka Dashboard & Nomor Booth Bersih Lock (`statsRoutes.js`, `SalesCharts.jsx`, `shared/boothCodes.js` `cleanBoothCode`)
+- **Uang masuk is not "lunas".** `totalRevenue` = all money received (PAID invoices + paid part of PARTIAL). The dashboard card is "Uang Masuk (Diterima)" with the split `paidInFullAmount` / `paidInFullInvoices` (PAID, not a DP invoice) and `downPaymentAmount` / `downPaymentInvoices` (a paid DP invoice or a PARTIAL one).
+- **Booked but not billed.** `unbilledBooths` = Reserved / Sold booths without any live contract invoice (`getContractInvoices`, canceled ones ignored), with `unbilledCount` / `unbilledValue` (price − private discount). Their value is in no invoice total: the "Sisa Tagihan" card says it counts issued invoices only and adds "+ n booth booking belum ditagih"; the dashboard lists them ("Lihat Daftar"), Sold ones called out (no payment recorded).
+- **"Nilai Booth Tersedia"** = `availableValue` (Available, non-Free booths), not potential − received − remaining.
+- The year view aggregates the project list and has none of these fields: the cards fall back to the old wording there.
+- **Booth numbers are stored clean**: `cleanBoothCode` (no outer / repeated spaces, "A-01 + A-02" → "A-01+A-02") on `POST /floorplan/save` (canvas + booth list) and on blur of "Nomor / Kode Booth". `db.js` cleans old data once (booths, orders, invoices incl. item `boothCode`, saved canvases) after `VACUUM INTO backups/pre-migration_nomor-booth_*.db`; a booth whose clean number is taken in its floorplan is left as it is.
+- The shared event title ("Kanvas Baru", §13) is not shown on the project cards of Manajemen Invoice / Data Exhibitor (`ProjectYearFolderSelector`).
+- Tests: `server/test/dashboard-angka.test.js`.
+
 ## 41. Live Floorplan Cepat Lock (`LiveFloorplan.jsx`, `App.jsx`, `index.js` static cache, `utils/uploads.js` WebP)
 - **Why.** The Live page took ~3.5 s (first visit) on Railway in San Francisco: 780 KB of JavaScript (the whole admin app), five data requests one after another, a 949 KB PNG blueprint, and a flash of "Belum Ada Event Aktif" while loading.
 - **Requests in parallel.** `loadFloorplan()` starts events + invoice config together with the floorplan request; as soon as the floorplan data is in, `prefetchCanvasExtras()` starts the published operational elements and the canvas images (same `crossOrigin` as Fabric, so the cached copy is reused). `loadObjectsIntoCanvas` uses the prefetched operational elements only when they are for that floorplan and < 10 s old. Never chain these requests again.

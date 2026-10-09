@@ -58,7 +58,7 @@ import { isLibraryElement, isShapeElement } from '../../utils/elementLibrary';
 import { BOOTH_CATEGORIES, BOOTH_SHAPES, STATUS_CONFIG } from '../../utils/floorplanUtils';
 import { api } from '../../services/api';
 import { NAME_DIRECTIONS, NAME_DIRECTION_LABELS, nameDirectionOf } from '../../utils/boothNameFit';
-import { nextBoothCode, boothCodeTaken } from '../../utils/copyRules';
+import { nextBoothCode, boothCodeTaken, cleanBoothCode } from '../../utils/copyRules';
 import { resolveTemplatePrice, studioCatalog } from '../../utils/templatePrice';
 
 export default function PropertyPanel({ 
@@ -1355,7 +1355,12 @@ function BoothInspector({
                 setCode(val);
                 if (!boothCodeTaken(val, otherBoothCodes)) onUpdateProperty({ code: val });
               }}
-              onBlur={() => { if (codeTaken) setCode(booth.code || ''); }}
+              onBlur={() => {
+                if (codeTaken) { setCode(booth.code || ''); return; }
+                // Stored without outer / repeated spaces (AGENTS.md §40)
+                const clean = cleanBoothCode(code);
+                if (clean && clean !== code) { setCode(clean); onUpdateProperty({ code: clean }); }
+              }}
               aria-invalid={codeTaken}
               className={`flex-1 px-3 py-1.5 bg-slate-50 border rounded-lg font-bold text-slate-800 text-sm focus:outline-none focus:ring-1 ${codeTaken ? 'border-rose-400 focus:ring-rose-500' : 'border-slate-200 focus:ring-blue-500'}`}
             />
