@@ -81,6 +81,9 @@ export default function InvoiceEditorModal({
 }) {
   const [config, setConfig] = useState(DEFAULT_INVOICE_CONFIG);
   const [activeTab, setActiveTab] = useState('theme'); // 'theme' | 'header' | 'company' | 'client' | 'table' | 'payment' | 'signature'
+  // Kop surat upload state (hooks stay above the early return below)
+  const [kopBusy, setKopBusy] = useState(false);
+  const [kopNotice, setKopNotice] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [previewZoom, setPreviewZoom] = useState(70); // percentage
@@ -181,6 +184,34 @@ export default function InvoiceEditorModal({
     } finally {
       setIsSaving(false);
     }
+  };
+
+  // Kop surat (AGENTS.md §42): an A4 image behind the whole invoice; stored as a file, the layout keeps its URL
+  const handleLetterheadUpload = (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+      setKopNotice('Pilih gambar PNG, JPG atau WEBP. Kop dalam PDF: ekspor dulu menjadi gambar.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const dataUrl = ev.target.result;
+      setKopBusy(true);
+      setKopNotice('');
+      const img = new Image();
+      img.onload = () => {
+        const ratio = img.naturalHeight / img.naturalWidth;
+        if (Math.abs(ratio - 297 / 210) > 0.05) setKopNotice(`Ukuran gambar ${img.naturalWidth} × ${img.naturalHeight} px bukan rasio A4 (210 × 297): gambar akan ditarik menyesuaikan kertas.`);
+        else if (img.naturalWidth < 1240) setKopNotice(`Resolusi ${img.naturalWidth} px agak rendah untuk cetak; disarankan minimal 1240 px lebar (150 dpi).`);
+      };
+      img.src = dataUrl;
+      const res = await api.uploadImage(dataUrl);
+      handleChange('letterheadUrl', res?.url || dataUrl);
+      setKopBusy(false);
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleLogoUpload = (e) => {
@@ -506,6 +537,39 @@ export default function InvoiceEditorModal({
                       );
                     })}
                   </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-800 space-y-4">
+                  <h4 className="font-bold text-white text-xs uppercase tracking-wider">
+                    Kop Surat (Background)
+                  </h4>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Gambar kop satu lembar A4 dipasang sebagai latar seluruh invoice (juga di setiap halaman saat dicetak / PDF). Isi invoice tampil di atasnya seperti biasa.
+                  </p>
+
+                  <div className="flex items-start gap-3">
+                    <div className="w-[70px] h-[99px] shrink-0 rounded-md border border-slate-700 bg-slate-950 overflow-hidden flex items-center justify-center">
+                      {config.letterheadUrl
+                        ? <img src={config.letterheadUrl} alt="Kop surat" className="w-full h-full object-fill" />
+                        : <span className="text-[10px] text-slate-500 text-center px-1">Belum ada kop</span>}
+                    </div>
+                    <div className="space-y-2 min-w-0">
+                      <label className={`inline-flex items-center gap-2 px-3 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 rounded-lg transition-colors font-medium ${kopBusy ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}>
+                        <Upload size={14} />
+                        <span>{kopBusy ? 'Mengunggah…' : (config.letterheadUrl ? 'Ganti Kop Surat' : 'Upload Kop Surat')}</span>
+                        <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleLetterheadUpload} disabled={kopBusy} className="hidden" />
+                      </label>
+                      {config.letterheadUrl && (
+                        <button type="button" onClick={() => { handleChange('letterheadUrl', ''); setKopNotice(''); }}
+                          className="block text-[11px] text-red-400 hover:text-red-300 underline cursor-pointer">
+                          Hapus Kop Surat
+                        </button>
+                      )}
+                      <p className="text-[10px] text-slate-500">PNG / JPG / WEBP, rasio A4, maks. 15 MB.</p>
+                    </div>
+                  </div>
+                  {kopNotice && <p className="text-[11px] text-amber-300 leading-relaxed">{kopNotice}</p>}
+
                 </div>
 
                 <div className="pt-3 border-t border-slate-800 space-y-4">

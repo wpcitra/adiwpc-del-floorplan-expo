@@ -76,6 +76,9 @@ export const DEFAULT_INVOICE_CONFIG = {
   logoSize: 44, // px height
   logoText: 'FLOORPLAN STUDIO INDONESIA',
   logoTagline: 'Official Event Management & Exhibition Services',
+
+  // Kop surat: an uploaded A4 letterhead behind the whole invoice, on every printed page (AGENTS.md §42)
+  letterheadUrl: '',
   
   // Organizer / Company Contact Details
   companyName: 'PT Wahyu Promo Citra',

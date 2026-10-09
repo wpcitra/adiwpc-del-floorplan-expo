@@ -26,6 +26,25 @@ import { api } from '../../services/api';
 import { invoiceTaxView, allocate } from '../../utils/invoiceTax';
 import InvoiceTotals from './InvoiceTotals';
 
+// Kop surat (AGENTS.md §42), printed: the letterhead must cover the whole paper, so the page margin is 0 and these
+// empty head / foot rows (repeated on every page) give the content the usual 12 mm margins on each page.
+function KopFrame({ kop, printMode, children }) {
+  if (!kop || !printMode) return children;
+  return (
+    <table className="w-full border-collapse">
+      <thead><tr><td style={{ height: '12mm', padding: 0 }} /></tr></thead>
+      <tfoot><tr><td style={{ height: '12mm', padding: 0 }} /></tr></tfoot>
+      <tbody>
+        <tr>
+          <td style={{ padding: '0 14mm' }}>
+            <div className="flex flex-col justify-between" style={{ minHeight: '272mm' }}>{children}</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  );
+}
+
 export default function InvoiceA4View({
   invoice,
   config: propConfig = null,
@@ -212,6 +231,8 @@ export default function InvoiceA4View({
   };
 
   const primaryColor = cfg.primaryColor || '#4f46e5';
+  // Kop surat: the uploaded A4 letterhead behind the whole invoice; the invoice is drawn over it as usual
+  const kop = cfg.letterheadUrl ? { url: cfg.letterheadUrl } : null;
   const secondaryColor = cfg.secondaryColor || '#0f172a';
   const accentColor = cfg.accentColor || '#10b981';
 
@@ -378,9 +399,23 @@ export default function InvoiceA4View({
           width: '210mm',
           minHeight: '297mm',
           maxWidth: '210mm',
-          padding: '12mm 14mm'
+          // printed with a letterhead the margins come from KopFrame (0 on screen too, so it lays out like paper)
+          padding: kop && printMode ? 0 : '12mm 14mm',
+          isolation: 'isolate' // the letterhead (z-index -1) sits above the white sheet and below the content
         }}
       >
+        {kop && (
+          // An <img>, not a CSS background: the print page waits for every image before the PDF is made (§34)
+          <img
+            src={kop.url}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none select-none"
+            style={{ position: printMode ? 'fixed' : 'absolute', top: 0, left: 0, width: '210mm', height: '297mm', objectFit: 'fill', zIndex: -1 }}
+          />
+        )}
+        {kop && printMode && <style>{'@page invoice { size: A4; margin: 0; }'}</style>}
+        <KopFrame kop={kop} printMode={printMode}>
         {/* TOP WATERMARK IF ENABLED */}
         {cfg.showWatermark && isPaid && (
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none select-none opacity-[0.06] rotate-[-25deg] text-emerald-800 font-black text-8xl tracking-widest border-8 border-emerald-800 p-8 rounded-3xl">
@@ -879,6 +914,7 @@ export default function InvoiceA4View({
             {cfg.footerNotes}
           </div>
         )}
+        </KopFrame>
       </div>
     </div>
   );

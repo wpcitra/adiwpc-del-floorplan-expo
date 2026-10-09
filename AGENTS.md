@@ -648,3 +648,11 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Browser cache.** `/assets/*` (hashed names) `public, max-age=31536000, immutable`; `index.html` and every app route `no-cache`.
 - **WebP.** A PNG upload ≥ 64 KB gets a lossless WebP copy (`cwebp -lossless`, same pixels) next to it (`<name>.png.webp`, made in the background on upload or on the first request, kept only when smaller); `GET /api/uploads/<name>.png` sends it to browsers whose `Accept` has `image/webp` (`Vary: Accept`). URLs and the database never change. `railpack.json` installs `webp`; without `cwebp` the PNG is served as before. `DATA_DIR/uploads` keeps the copies (they can be regenerated).
 - Tests: `server/test/live-cepat.test.js`.
+
+---
+
+## 42. Kop Surat Invoice Lock (`InvoiceA4View.jsx` `KopFrame`, `InvoiceEditorModal.jsx`, config `letterheadUrl`)
+- **What.** Desain Layout Invoice > Logo & Posisi > "Kop Surat (Background)": upload / replace / remove one A4 image (PNG, JPG, WEBP). It is the background of the whole sheet; the invoice is drawn over it exactly as without it (same layout, same 12 × 14 mm margins). Stored as a file through `api.uploadImage` (§28); the layout keeps `letterheadUrl`. It is public like the logo (the registrant's PDF shows it), unlike the signature.
+- **Screen.** An absolutely positioned `<img>` (210 × 297 mm, `z-index: -1`, sheet `isolation: isolate`) behind the content.
+- **Print / PDF (one template, §34).** The letterhead must cover the whole paper on every page: `@page invoice { margin: 0 }` (a style inside the sheet) and a `position: fixed` `<img>` (repeated on each printed page). `KopFrame` wraps the content in a table whose empty head / foot rows (12 mm, repeated by Chromium on every page) give each page its margins. Chromium only repeats such rows while they are < 1/4 of the page, and clips fixed elements to the page area when the page has margins: keep this structure. It is an `<img>`, not a CSS background, so the print page waits for it before the PDF is made.
+- Tests: `server/test/kop-surat.test.js`. Browser check: a server PDF with a letterhead has it on every page and the invoice over it.
