@@ -104,6 +104,17 @@ export const api = {
     return [];
   },
 
+  // Studio sync (AGENTS.md §39): a tiny fingerprint of the booths' status / tenant; null when it cannot be read
+  async fetchBoothVersion(id) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/floorplan/${encodeURIComponent(id)}/booth-version`, { cache: 'no-store' });
+      const json = res.ok ? await res.json() : null;
+      return json?.success ? json.version : null;
+    } catch (e) {
+      return null;
+    }
+  },
+
   // 3. Fetch specific floorplan by ID
   async fetchFloorplanById(id, params = {}) {
     try {

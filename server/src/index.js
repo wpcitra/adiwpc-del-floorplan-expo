@@ -1,6 +1,7 @@
 import express from 'express';
 import { createServer } from 'http';
 import cors from 'cors';
+import compression from 'compression';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -65,6 +66,9 @@ const corsDelegate = (req, callback) => {
   });
 };
 app.use(cors(corsDelegate));
+
+// gzip every response (AGENTS.md §39): a floorplan is ~3 MB of JSON, ~30x smaller compressed; Railway bills egress
+app.use(compression());
 
 // Body parser with high limit for blueprints and canvas data
 app.use(express.json({ limit: '50mb' }));

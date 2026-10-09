@@ -35,6 +35,7 @@ import { refreshMergeRendering } from '../../utils/boothMerge';
 // Custom Fabric properties persisted with the canvas (see AGENTS.md §1)
 const CANVAS_SERIALIZE_PROPS = ['isBooth', 'boothData', 'isVenueItem', 'venueData', 'isCustomGroup', 'isBackgroundBlueprint', 'blueprintData', 'strokeUniform', 'noScaleCache', 'id', 'name', 'src', 'isLocked', 'isBasicShape', 'shapeType'];
 const AUTOSAVE_DELAY_MS = 2500;
+const BOOTH_SYNC_MS = 5000; // booth fingerprint check (AGENTS.md §39)
 const AUTOSAVE_PREF_KEY = 'studio_autosave_enabled';
 
 const OPS_OVERLAY_PREF_KEY = 'studio_show_ops_layer';
@@ -1012,7 +1013,9 @@ export default function AdminDashboard() {
     };
   }, [allCanvasObjects, propertyTick, blueprintData, autoSaveEnabled, currentFloorplanTitle, currentFloorplanVenue, showCaptions, autoMerge, boothCornerPct]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Live background sync: fetch incoming booth status updates (e.g. online bookings) from SQLite
+  // Live background sync: incoming booth status updates (e.g. online bookings). A tiny booth fingerprint is checked
+  // every 5 s while the tab is visible; the whole floorplan (~3 MB) is fetched only when it changed (AGENTS.md §39).
+  const boothVersionRef = useRef({ id: null, version: null });
   useEffect(() => {
     const syncBoothsFromDb = async () => {
       if (!isInitialLoadedRef.current || saveStatus === 'saving') return;
@@ -1066,13 +1069,28 @@ export default function AdminDashboard() {
             setAllCanvasObjects([...canvas.getObjects()]);
           }
         }
+        return Boolean(fpData);
       } catch (err) {
         console.warn("Error live syncing booths in Admin:", err);
       }
     };
 
-    const interval = setInterval(syncBoothsFromDb, 3000);
-    return () => clearInterval(interval);
+    const check = async () => {
+      if (document.hidden || !isInitialLoadedRef.current || saveStatus === 'saving' || !currentFloorplanId) return;
+      const version = await api.fetchBoothVersion(currentFloorplanId);
+      if (!version) return;
+      const known = boothVersionRef.current;
+      // Just opened: the canvas came from the server a moment ago, this fingerprint is its baseline
+      if (known.id !== currentFloorplanId) { boothVersionRef.current = { id: currentFloorplanId, version }; return; }
+      if (known.version === version) return;
+      // Changed: apply it (skipped while a booth is selected, then retried on the next check)
+      if (await syncBoothsFromDb()) boothVersionRef.current = { id: currentFloorplanId, version };
+    };
+
+    const interval = setInterval(check, BOOTH_SYNC_MS);
+    const onVisible = () => { if (!document.hidden) check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(interval); document.removeEventListener('visibilitychange', onVisible); };
   }, [saveStatus, currentFloorplanId]);
 
   const handleUpdateFloorplanTitle = (newTitle) => {

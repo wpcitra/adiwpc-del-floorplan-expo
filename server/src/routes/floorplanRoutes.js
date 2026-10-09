@@ -291,6 +291,25 @@ router.get('/list', (req, res) => {
 });
 
 // GET /api/floorplan/active - Fetch current active/published floorplan with sibling halls
+// GET /api/floorplan/:id/booth-version : a small fingerprint of the booth fields the Studio syncs from the database
+// (status, tenant, exhibitor, "Tampilkan Terpisah"), for drafts too. The Studio polls THIS and fetches the whole
+// floorplan only when it changes (AGENTS.md §39). Positions and prices are not part of it: the Studio's own edits
+// never trigger a download.
+router.get('/:id/booth-version', (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const fp = db.prepare('SELECT id FROM floorplans WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
+    if (!fp) return res.status(404).json({ success: false, error: 'Denah tidak ditemukan' });
+    const hash = crypto.createHash('sha1');
+    db.prepare('SELECT code, status, owner_name, exhibitor_id, merge_separate FROM booths WHERE floorplan_id = ? AND deleted_at IS NULL ORDER BY code')
+      .all(fp.id).forEach(b => hash.update(JSON.stringify(b)));
+    res.json({ success: true, id: fp.id, version: hash.digest('hex') });
+  } catch (error) {
+    console.error('Booth version error:', error);
+    res.status(500).json({ success: false, error: 'Gagal memeriksa versi booth' });
+  }
+});
+
 // GET /api/floorplan/live-version?slug=|id= : a small fingerprint of what the Live Floorplan shows (AGENTS.md §35).
 // The public page polls THIS in the background and loads the floorplan again only when the fingerprint changes.
 // Computed from the stored data (never from the aliased public payload), so it is the same on every server instance.

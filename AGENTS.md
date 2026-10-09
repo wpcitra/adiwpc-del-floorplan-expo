@@ -621,3 +621,10 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Limits.** Text max 4.000 characters, group name max 80, 50 messages per page. An inactive account cannot receive new direct messages (409 `USER_INACTIVE`).
 - **UI.** `ChatDock` (rail button above Notifikasi on every admin page + panel beside the rail: list | conversation; on a phone one at a time), `ChatThread`, `ChatPeoplePicker` (Chat Baru, Grup Baru, Atur Grup), `ChatAttachment`, state in `useChat`.
 - Tests: `server/test/chat.test.js`.
+
+## 39. Hemat Egress Lock (`index.js` `compression`, `floorplanRoutes.js` `/:id/booth-version`, `AdminDashboard.jsx`)
+- **Why.** Railway bills egress, and it was 94% of the bill: the Studio downloaded the whole floorplan (~3.4 MB of JSON, uncompressed) every 3 seconds, also in a hidden tab (≈68 MB per minute per open Studio).
+- **gzip.** `app.use(compression())` compresses every response (a floorplan ~3.4 MB → ~110 KB). Never remove it, and never add a route that streams large JSON around it.
+- **Studio sync.** `GET /api/floorplan/:id/booth-version` (staff; drafts too) = a sha1 of the booth fields the Studio syncs (`code, status, owner_name, exhibitor_id, merge_separate`). The Studio checks it every `BOOTH_SYNC_MS` (5 s), only while the tab is visible and on `visibilitychange`; the first answer after opening is the baseline; the whole floorplan is fetched (and merged by `syncBoothsFromDb`) only when it changed, and the version is kept only once that sync ran (a selected booth postpones it). Positions and prices are not in the fingerprint, so the Studio's own edits never trigger a download.
+- **Never poll a full floorplan / list on a timer again.** Poll a small fingerprint (like `/live-version`, §35) and fetch the data when it changes; stop while `document.hidden`.
+- Tests: `server/test/hemat-egress.test.js`. Browser check: an idle Studio = one ~200-byte request per 5 s; a booking made elsewhere appears within ~5 s.
