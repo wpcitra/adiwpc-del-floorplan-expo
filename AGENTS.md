@@ -609,3 +609,12 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
   - Available opens "Lepas Tenant"; Maintenance is refused until the tenant is released (409 `DETACH_TENANT_FIRST`).
 - **Booth without tenant**: Available ↔ Maintenance stay a canvas change (the save stores it); a booth not saved yet (404 `BOOTH_NOT_SAVED`) is changed on the canvas only.
 - Tests: `server/test/status-booth.test.js`.
+
+---
+
+## 39. Hemat Egress Lock (`index.js` `compression`, `floorplanRoutes.js` `/:id/booth-version`, `AdminDashboard.jsx`)
+- **Why.** Railway bills egress, and it was 94% of the bill: the Studio downloaded the whole floorplan (~3.4 MB of JSON, uncompressed) every 3 seconds, also in a hidden tab (≈68 MB per minute per open Studio).
+- **gzip.** `app.use(compression())` compresses every response (a floorplan ~3.4 MB → ~110 KB). Never remove it, and never add a route that streams large JSON around it.
+- **Studio sync.** `GET /api/floorplan/:id/booth-version` (staff; drafts too) = a sha1 of the booth fields the Studio syncs (`code, status, owner_name, exhibitor_id, merge_separate`). The Studio checks it every `BOOTH_SYNC_MS` (5 s), only while the tab is visible and on `visibilitychange`; the first answer after opening is the baseline; the whole floorplan is fetched (and merged by `syncBoothsFromDb`) only when it changed, and the version is kept only once that sync ran (a selected booth postpones it). Positions and prices are not in the fingerprint, so the Studio's own edits never trigger a download.
+- **Never poll a full floorplan / list on a timer again.** Poll a small fingerprint (like `/live-version`, §35) and fetch the data when it changes; stop while `document.hidden`.
+- Tests: `server/test/hemat-egress.test.js`. Browser check: an idle Studio = one ~200-byte request per 5 s; a booking made elsewhere appears within ~5 s.
