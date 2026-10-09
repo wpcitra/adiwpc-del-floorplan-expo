@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import * as fabric from 'fabric';
-import BookingModal from '../../components/public/BookingModal';
-import CartDrawer from '../../components/public/CartDrawer';
+// Loaded when a visitor opens them (with the invoice view inside the booking form): not part of the first page load
+const BookingModal = lazy(() => import('../../components/public/BookingModal'));
+const CartDrawer = lazy(() => import('../../components/public/CartDrawer'));
 import { 
   ShoppingCart, 
   ZoomIn, 
@@ -21,7 +22,8 @@ import {
   Tag,
   ArrowRight,
   LayoutGrid,
-  FileText
+  FileText,
+  Loader2
 } from 'lucide-react';
 import { STATUS_CONFIG, hydrateBoothObject, getProportionalBoothTypography, applyBoothCorners, layoutTenantName } from '../../utils/floorplanUtils';
 import { exportFloorplanToPdf } from '../../utils/floorplanPdfExport';
@@ -127,6 +129,7 @@ export default function LiveFloorplan() {
   const [isDismissedEmptyBanner, setIsDismissedEmptyBanner] = useState(false);
   const [linkNotFound, setLinkNotFound] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [canvasReady, setCanvasReady] = useState(false); // false until the first floorplan is painted
 
   const [activeFpTitle, setActiveFpTitle] = useState('');
   const [activeFpVenue, setActiveFpVenue] = useState('');
@@ -302,19 +305,31 @@ export default function LiveFloorplan() {
   }, [availableCategories, categoryFilter]);
 
   // 1. Fetch saved / published data from SQLite server & local storage
+  // Published operational elements and canvas images (the blueprint) are requested as soon as the floorplan data is
+  // in, in parallel; loadObjectsIntoCanvas then finds them ready instead of starting them one after another.
+  const opsPrefetchRef = useRef(null);
+  const prefetchCanvasExtras = useCallback((fp) => {
+    if (!fp?.id) return;
+    opsPrefetchRef.current = { id: fp.id, at: Date.now(), promise: api.fetchPublicOpsElements(fp.id).catch(() => []) };
+    let json = fp.canvas_fabric_json;
+    if (typeof json === 'string') { try { json = JSON.parse(json); } catch (e) { json = null; } }
+    (json?.objects || []).forEach(o => {
+      if (!o?.src || typeof o.src !== 'string' || o.src.startsWith('data:')) return;
+      const img = new Image();
+      if (o.crossOrigin) img.crossOrigin = o.crossOrigin; // same request mode as Fabric, so the cached copy is reused
+      img.src = o.src;
+    });
+  }, []);
+
   const loadFloorplan = useCallback(async (forcedTemplateId = null, options = {}) => {
     const isForce = Boolean(options?.force);
     try {
       const searchParams = new URLSearchParams(window.location.search);
       const templateId = forcedTemplateId || searchParams.get('templateId') || searchParams.get('project') || searchParams.get('hallId');
       
-      // Also fetch all events for project switcher
-      try {
-        const evts = await api.fetchEvents(PUBLIC_VIEW);
-        if (evts && evts.length > 0) {
-          setAllEvents(evts);
-        }
-      } catch (e) {}
+      // Requested together with the floorplan, not one after another (AGENTS.md §41): every request is a round trip
+      const eventsPromise = api.fetchEvents(PUBLIC_VIEW).catch(() => []);
+      const configPromise = api.fetchInvoiceConfig().catch(() => null);
 
       let activeFp = null;
       let parentEvt = null;
@@ -351,21 +366,23 @@ export default function LiveFloorplan() {
         if (data?.halls) halls = data.halls;
       }
 
+      // Start the blueprint image and the published operational elements now, while the rest is processed
+      prefetchCanvasExtras(activeFp);
+
+      const evts = await eventsPromise;
+      if (!slug && evts?.length > 0) setAllEvents(evts);
       if (parentEvt) setCurrentEvent(parentEvt);
       if (halls && halls.length > 0) setSiblingHalls(halls);
       else if (activeFp?.event_id && !slug) {
-        try {
-          const evts = await api.fetchEvents(PUBLIC_VIEW);
-          const matched = evts.find(e => e.id === activeFp.event_id);
-          if (matched) {
-            setCurrentEvent(matched);
-            if (matched.halls) setSiblingHalls(matched.halls);
-          }
-        } catch (e) {}
+        const matched = (evts || []).find(e => e.id === activeFp.event_id);
+        if (matched) {
+          setCurrentEvent(matched);
+          if (matched.halls) setSiblingHalls(matched.halls);
+        }
       }
 
       try {
-        const cfg = await api.fetchInvoiceConfig();
+        const cfg = await configPromise;
         if (cfg) {
           setSystemConfig({
             isPublicBookingActive: cfg.isPublicBookingActive !== false,
@@ -646,7 +663,11 @@ export default function LiveFloorplan() {
     // Operational elements published to visitors are fetched before the swap, so they do not pop in afterwards
     let opsRaws = [];
     try {
-      if (liveFpIdRef.current) opsRaws = (await api.fetchPublicOpsElements(liveFpIdRef.current)).map(e => e.object).filter(Boolean);
+      const fpId = liveFpIdRef.current;
+      const pre = opsPrefetchRef.current;
+      const prefetched = pre?.id === fpId && Date.now() - pre.at < 10000 ? pre.promise : null; // never an old copy
+      opsPrefetchRef.current = null;
+      if (fpId) opsRaws = (await (prefetched || api.fetchPublicOpsElements(fpId))).map(e => e.object).filter(Boolean);
     } catch (e) { opsRaws = []; }
     const opsObjs = opsRaws.length ? await fabric.util.enlivenObjects(opsRaws).catch(() => []) : [];
     if (loadSeq !== liveLoadSeqRef.current || fabricRef.current !== canvas) return;
@@ -1220,6 +1241,7 @@ export default function LiveFloorplan() {
         fitToScreen();
       }
       canvas.renderAll();
+      setCanvasReady(true);
   }, [fitToScreen]);
 
   // 3. Initialize Interactive Canvas once on mount
@@ -2022,7 +2044,7 @@ export default function LiveFloorplan() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight truncate max-w-[240px] sm:max-w-md">
-                    {eventTitle}
+                    {isLoading && !activeFpTitle ? <span className="block h-4 w-52 max-w-full rounded bg-slate-200 animate-pulse" aria-label="Memuat" /> : eventTitle}
                   </h2>
                   {allEvents && allEvents.length > 1 && (
                     <select
@@ -2044,7 +2066,7 @@ export default function LiveFloorplan() {
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5 truncate">
-                  <MapPin size={12} className="text-indigo-600 shrink-0" /> <span className="truncate">{eventVenue}</span>
+                  <MapPin size={12} className="text-indigo-600 shrink-0" /> <span className="truncate">{isLoading && !activeFpTitle ? 'Memuat…' : eventVenue}</span>
                 </p>
               </div>
             </div>
@@ -2176,6 +2198,14 @@ export default function LiveFloorplan() {
 
       {/* Main Canvas Viewport with #F8FAFC Background */}
       <div className="flex-1 relative overflow-hidden bg-[#F8FAFC]" ref={containerRef}>
+        {/* Until the first floorplan is painted: a loading note instead of an empty canvas (AGENTS.md §41) */}
+        {!canvasReady && !linkNotFound && !isEmptyFloorplan && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none" role="status">
+            <span className="flex items-center gap-2.5 rounded-full bg-white/95 border border-slate-200 px-4 py-2 shadow-[0_4px_16px_-6px_rgba(15,23,42,0.2)] text-xs font-semibold text-slate-600">
+              <Loader2 size={14} className="animate-spin text-indigo-600" /> Memuat denah…
+            </span>
+          </div>
+        )}
         {/* Subtle Luxury Architectural Grid on #F8FAFC */}
         <div 
           className="absolute inset-0 pointer-events-none opacity-40"
@@ -2580,6 +2610,7 @@ export default function LiveFloorplan() {
 
       {/* Booth Detail, Form Registrasi, dan Payment Modal */}
       {showBookingModal && (bookingModalBooths.length > 0 || selectedBooths.length > 0) && (
+        <Suspense fallback={null}>
         <BookingModal 
           booths={bookingModalBooths.length > 0 ? bookingModalBooths : selectedBooths}
           projectId={activeFpId || floorplanData?.id || new URLSearchParams(window.location.search).get('templateId') || new URLSearchParams(window.location.search).get('project') || 'FP-2026-001'}
@@ -2591,6 +2622,7 @@ export default function LiveFloorplan() {
           }} 
           onSuccessBooking={handleSuccessBooking}
         />
+        </Suspense>
       )}
 
       {/* Merged booth detail (click on a merged booth) */}
@@ -2630,6 +2662,7 @@ export default function LiveFloorplan() {
 
       {/* Cart Drawer */}
       {isCartOpen && (
+        <Suspense fallback={null}>
         <CartDrawer 
           cart={cart} 
           onClose={() => setIsCartOpen(false)} 
@@ -2640,6 +2673,7 @@ export default function LiveFloorplan() {
             setShowBookingModal(true);
           }}
         />
+        </Suspense>
       )}
     </div>
   );

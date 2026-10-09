@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.railpack.com",
   "deploy": {
-    "aptPackages": ["chromium", "fonts-liberation", "fonts-dejavu-core"]
+    "aptPackages": ["chromium", "fonts-liberation", "fonts-dejavu-core", "webp"]
   }
 }

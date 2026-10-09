@@ -1,30 +1,38 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import AdminLayout from './components/layout/AdminLayout';
 import PublicLayout from './components/layout/PublicLayout';
-import AdminDashboard from './pages/app/AdminDashboard';
-import OpsFloorplanStudio from './pages/app/OpsFloorplanStudio';
-import SalesCharts from './pages/admin/SalesCharts';
-import ExhibitorTable from './pages/admin/ExhibitorTable';
-import InvoicePage from './pages/admin/InvoicePage';
-import SettingsPage from './pages/admin/SettingsPage';
-import FacilityRequestsPage from './pages/admin/FacilityRequestsPage';
-import UserManagementPage from './pages/admin/UserManagementPage';
 import LiveFloorplan from './pages/public/LiveFloorplan';
-import PublicFacilityRequestPage from './pages/public/PublicFacilityRequestPage';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { AuthProvider } from './context/AuthContext';
 import RequireAuth, { RoleHomeRedirect } from './components/auth/RequireAuth';
-import LoginPage from './pages/auth/LoginPage';
-import AuditLogPage from './pages/admin/AuditLogPage';
-import MaintenancePage from './pages/admin/MaintenancePage';
-import InvoicePrintPage from './pages/print/InvoicePrintPage';
+
+// The Live Floorplan is what visitors open: it is in the main bundle. Every other page is its own file, loaded when it
+// is opened, so a visitor never downloads the Studio, the invoices or the charts (AGENTS.md §41).
+const AdminLayout = lazy(() => import('./components/layout/AdminLayout'));
+const AdminDashboard = lazy(() => import('./pages/app/AdminDashboard'));
+const OpsFloorplanStudio = lazy(() => import('./pages/app/OpsFloorplanStudio'));
+const SalesCharts = lazy(() => import('./pages/admin/SalesCharts'));
+const ExhibitorTable = lazy(() => import('./pages/admin/ExhibitorTable'));
+const InvoicePage = lazy(() => import('./pages/admin/InvoicePage'));
+const SettingsPage = lazy(() => import('./pages/admin/SettingsPage'));
+const FacilityRequestsPage = lazy(() => import('./pages/admin/FacilityRequestsPage'));
+const UserManagementPage = lazy(() => import('./pages/admin/UserManagementPage'));
+const PublicFacilityRequestPage = lazy(() => import('./pages/public/PublicFacilityRequestPage'));
+const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
+const AuditLogPage = lazy(() => import('./pages/admin/AuditLogPage'));
+const MaintenancePage = lazy(() => import('./pages/admin/MaintenancePage'));
+const InvoicePrintPage = lazy(() => import('./pages/print/InvoicePrintPage'));
+
+const PageLoading = () => (
+  <div className="h-screen w-full flex items-center justify-center bg-slate-50 text-xs font-semibold text-slate-500" role="status">Memuat…</div>
+);
 
 function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
       <BrowserRouter>
+        <Suspense fallback={<PageLoading />}>
         <Routes>
         {/* Public Routes */}
         <Route element={<PublicLayout />}>
@@ -67,6 +75,7 @@ function App() {
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+        </Suspense>
     </BrowserRouter>
       </AuthProvider>
   </ErrorBoundary>

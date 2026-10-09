@@ -1,7 +1,7 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { saveDataUrl, uploadsDir, UPLOAD_NAME_RE, MIME_BY_EXT, MAX_UPLOAD_BYTES } from '../utils/uploads.js';
+import { saveDataUrl, uploadsDir, UPLOAD_NAME_RE, MIME_BY_EXT, MAX_UPLOAD_BYTES, webpCopyOf } from '../utils/uploads.js';
 
 // Image storage (AGENTS.md §28): POST stores an image as a file, GET serves it. The database keeps the URL only.
 const router = express.Router();
@@ -27,15 +27,19 @@ router.get('/:name', (req, res) => {
   if (!UPLOAD_NAME_RE.test(name)) return res.status(404).end();
   const file = path.join(uploadsDir, name);
   if (!fs.existsSync(file)) return res.status(404).end();
+  // A big PNG goes out as its lossless WebP copy to browsers that accept it (AGENTS.md §41)
+  const ext = name.split('.').pop();
+  const webp = ext === 'png' && /image\/webp/.test(req.headers.accept || '') ? webpCopyOf(file) : null;
   res.set({
-    'Content-Type': MIME_BY_EXT[name.split('.').pop()],
+    'Content-Type': webp ? 'image/webp' : MIME_BY_EXT[ext],
+    Vary: 'Accept',
     'Cache-Control': 'public, max-age=31536000, immutable',
     'X-Content-Type-Options': 'nosniff',
     // an SVG opened directly must not run scripts
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
     'Cross-Origin-Resource-Policy': 'cross-origin'
   });
-  fs.createReadStream(file).pipe(res);
+  fs.createReadStream(webp || file).pipe(res);
 });
 
 export default router;

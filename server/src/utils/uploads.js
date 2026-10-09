@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import db, { dataDir } from '../db.js';
@@ -37,7 +38,47 @@ export function saveDataUrl(dataUrl) {
     fs.writeFileSync(tmp, buffer);
     fs.renameSync(tmp, file);
   }
+  makeWebpCopy(file);
   return `${UPLOAD_URL_PREFIX}${name}`;
+}
+
+// Lossless WebP copy of a big PNG upload (AGENTS.md §41): the same pixels, ~70% smaller (the blueprint: 949 KB ->
+// 270 KB). Made in the background by `cwebp` (railpack.json installs it) next to the original as "<name>.webp" and
+// kept only when smaller; served to browsers that accept image/webp. No cwebp: the PNG is served as before.
+const WEBP_MIN_BYTES = 64 * 1024;
+const webpPending = new Set();
+const webpNoGain = new Set();
+let cwebpMissing = false;
+
+export function webpCopyOf(file) {
+  const copy = `${file}.webp`;
+  if (fs.existsSync(copy)) return copy;
+  makeWebpCopy(file);
+  return null;
+}
+
+export function makeWebpCopy(file) {
+  if (cwebpMissing || !file.endsWith('.png') || webpPending.has(file) || webpNoGain.has(file)) return;
+  let size = 0;
+  try { size = fs.statSync(file).size; } catch (e) { return; }
+  if (size < WEBP_MIN_BYTES) return;
+  webpPending.add(file);
+  const tmp = `${file}.${process.pid}.webp.tmp`;
+  execFile(process.env.CWEBP_PATH || 'cwebp', ['-quiet', '-lossless', file, '-o', tmp], { timeout: 120000 }, (error) => {
+    webpPending.delete(file);
+    try {
+      if (error) {
+        if (error.code === 'ENOENT') cwebpMissing = true;
+        return;
+      }
+      if (fs.statSync(tmp).size < size) fs.renameSync(tmp, `${file}.webp`);
+      else webpNoGain.add(file);
+    } catch (e) {
+      console.error('WebP copy failed:', e);
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
+  });
 }
 
 /** In a JSON string: embedded base64 images become upload URLs, absolute upload URLs become relative. */
