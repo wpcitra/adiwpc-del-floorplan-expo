@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import crypto from 'crypto';
+import { nextInvoiceNumber } from '../utils/contractBilling.js';
 
 const router = express.Router();
 
@@ -390,7 +391,7 @@ router.post('/requests/:id/generate-invoice', (req, res) => {
     }));
 
     const invoiceId = `inv_fac_${Date.now()}`;
-    const invoiceNumber = `INV/FAC/${new Date().getFullYear()}/${request.booth_code}-${Math.floor(100 + Math.random() * 900)}`;
+    const invoiceNumber = nextInvoiceNumber('facility');
     const issueDate = new Date().toISOString().split('T')[0];
     const dueDate = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
 

@@ -624,12 +624,13 @@ export const api = {
   },
 
   // 19. Save Invoice Layout Template Configuration
-  async saveInvoiceConfig(config) {
+  // `extra` = top-level fields, e.g. { invoiceNumberNext } when the admin typed a new running number (AGENTS.md §44)
+  async saveInvoiceConfig(config, extra = {}) {
     try {
       const res = await apiFetch(`${API_BASE_URL}/invoices/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config })
+        body: JSON.stringify({ ...extra, config })
       });
       const json = await res.json().catch(() => ({}));
       if (res.ok) {

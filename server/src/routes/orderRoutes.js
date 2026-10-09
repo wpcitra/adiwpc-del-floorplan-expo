@@ -1,7 +1,7 @@
 import express from 'express';
 import db, { ordersEmailNullable } from '../db.js';
 import { syncPaymentStatusFromInvoices, applyBoothChangesToCanvas } from '../utils/syncPaymentStatus.js';
-import { getContractInvoices, getContract, boothContractValue, invoicePaidAmount, invoiceCodeTokens, removeBoothFromInvoice, contractValueForCode } from '../utils/contractBilling.js';
+import { getContractInvoices, getContract, boothContractValue, invoicePaidAmount, invoiceCodeTokens, removeBoothFromInvoice, contractValueForCode, nextInvoiceNumber } from '../utils/contractBilling.js';
 import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
 import { clusterCheckoutBooths, computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
 import { sortCodes } from '../../../shared/boothGroups.js';
@@ -33,11 +33,8 @@ router.post('/checkout', (req, res) => {
       notes = ''
     } = req.body;
     // The invoice number is always issued here, never taken from the form: a number sent by a visitor could
-    // otherwise replace an existing (even paid) invoice with the same number
-    let invoiceNumber = `INV/EXP-${Date.now().toString().slice(-6)}`;
-    for (let i = 0; db.prepare('SELECT 1 FROM invoices WHERE invoice_number = ?').get(invoiceNumber) && i < 50; i++) {
-      invoiceNumber = `INV/EXP-${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 90 + 10)}`;
-    }
+    // otherwise replace an existing (even paid) invoice with the same number. Issued inside the transaction (§44).
+    let invoiceNumber = '';
 
     const hasBooths = Boolean(boothCode) || (Array.isArray(req.body.boothCodes) && req.body.boothCodes.some(Boolean));
     if (!hasBooths || !brandName || !phone) {
@@ -219,6 +216,7 @@ router.post('/checkout', (req, res) => {
       const invoiceStatus = isDpInvoice && resolvedPaymentStatus === 'PARTIAL' ? 'PAID' : resolvedPaymentStatus;
       const todayStr = new Date().toISOString().split('T')[0];
       const dueDateStr = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0];
+      if (!deferInvoice) invoiceNumber = nextInvoiceNumber('full');
 
       // 7. ONE invoice for the whole registration: every booth ordered together, adjacent or not (AGENTS.md §14).
       //    Amounts are computed here, never taken from the form: booth price - private discount, + PPN when chosen.

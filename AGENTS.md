@@ -665,3 +665,17 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Backups.** `createBackup()` writes `VACUUM INTO` (a consistent, compact copy, safe while the server runs), verifies it (`integrity_check`), and removes the `-shm` / `-wal` files the check leaves; `pruneBackups()` removes them with the backup. Never go back to `db.backup()` (it copies free pages).
 - **Old backups.** `compactOldBackups()` (1 s after start, background, one file at a time) rewrites each bloated backup with `VACUUM INTO`, checks it, keeps its date (retention unchanged) and replaces it. Content never changes; nothing is deleted.
 - Tests: `server/test/volume-padat.test.js`.
+
+---
+
+## 44. Nomor & Tanggal Invoice Lock (`shared/invoiceNumbering.js`, `shared/invoiceDates.js`, `contractBilling.js` `nextInvoiceNumber`, `InvoiceDateField.jsx`)
+- **One number format.** Setting > Aturan Booking > "Nomor & Tanggal Invoice": `invoiceNumberFormat` (tokens `{JENIS}` = EXP / DP / PL / FAC, `{TAHUN}`, `{BULAN}` in WIB, `{NOMOR}` = running number, min. 4 digits, required) and `invoiceNumberNext`. `invoiceFormatProblem()` validates it on the page and the server (400 `INVALID_NUMBER_FORMAT`).
+  - Every invoice the application issues takes its number from `nextInvoiceNumber(kind)`: checkout (inside its transaction, nothing for a deferred Booking Manual), Buat Invoice, DP / Pelunasan / Penuh, facility. Never build an invoice number anywhere else.
+  - The counter moves on with every number; taken numbers (deleted ones too, §31) are skipped.
+  - `POST /invoices/config` changes the counter only from the top-level `invoiceNumberNext` (Setting sends it when the admin typed it). A page that saves the whole configuration with an older copy never moves it back.
+  - A facility invoice is recognised by `invoice_kind` / id `inv_fac_*`, never by its number (the format is free).
+- **Manual number.** Edit Invoice > "Nomor Invoice" (`PUT /invoices/:id { invoiceNumber }`): `cleanInvoiceNumber` (letters, digits, `/ . _ -`, 3–60 characters, no spaces; 400 `INVALID_INVOICE_NUMBER`), unique without case, deleted invoices included (409 `INVOICE_NUMBER_TAKEN`). The booking follows (`orders.invoice_number`). Audited "Ubah nomor invoice" (category `Invoice`, old → new).
+- **Dates.** Tanggal Terbit = the day the invoice is opened / downloaded / printed (WIB); Jatuh Tempo = Tanggal Terbit + `invoiceDueDays` (Setting, default 14). `InvoiceA4View` computes both with `invoiceDates()` (also for the PDF and the WhatsApp text), never from the creation date.
+  - Per invoice either date can be fixed by hand: `invoices.issue_date_fixed` / `due_date_fixed` = 1 uses the stored `issue_date` / `due_date`. New and existing invoices are automatic (0).
+  - Forms use `InvoiceDateField` ("Otomatis" / "Tanggal tetap"): Edit Invoice, Buat Invoice (`InvoiceModal`), the DP / Pelunasan wizard (Jatuh Tempo). They send `issueDateFixed` / `dueDateFixed`.
+- Tests: `server/test/nomor-invoice.test.js`.

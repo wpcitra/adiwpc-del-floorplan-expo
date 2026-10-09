@@ -3,9 +3,12 @@ import { X, Pencil, Loader2, AlertTriangle, Eye, Wallet, Info } from 'lucide-rea
 import { api } from '../../services/api';
 import TaxOptionsField from './TaxOptionsField';
 import { computeContractTax, taxPortion, DEFAULT_TAX_NOTE } from '../../utils/invoiceTax';
+import { cleanDueDays } from '../../utils/invoiceNumbering';
+import InvoiceDateField from './InvoiceDateField';
 
 const rupiah = (n) => `Rp ${Math.round(Number(n) || 0).toLocaleString('id-ID')}`;
 const kindOf = (inv) => inv?.invoice_kind || 'full';
+const isFixed = (v) => v === true || v === 1 || v === '1';
 const isUnpaid = (inv) => ['UNPAID', 'PENDING'].includes(String(inv?.payment_status || 'UNPAID').toUpperCase());
 
 // What the A4 document may show, per invoice. "layout" keys default to the Desain Layout Invoice setting.
@@ -54,7 +57,9 @@ export default function InvoiceEditModal({ invoice, isOpen, onClose, onSaved }) 
     setForm({
       companyName: invoice.company_name || '', clientName: invoice.client_name || '', clientEmail: invoice.client_email || '',
       clientPhone: invoice.client_phone || '', clientAddress: invoice.client_address || '', clientNpwp: invoice.client_npwp || '',
-      issueDate: invoice.issue_date || '', dueDate: invoice.due_date || '', notes: invoice.notes || ''
+      invoiceNumber: invoice.invoice_number || '', notes: invoice.notes || '',
+      issueDate: invoice.issue_date || '', dueDate: invoice.due_date || '',
+      issueDateFixed: isFixed(invoice.issue_date_fixed), dueDateFixed: isFixed(invoice.due_date_fixed)
     });
     setDisplay(invoice.display || {});
     setError(''); setAckTax(false); setSplitToDp(false); setContract(null);
@@ -118,6 +123,7 @@ export default function InvoiceEditModal({ invoice, isOpen, onClose, onSaved }) 
 
   const shown = (opt) => display[opt.key] ?? (opt.layout ? layoutCfg[opt.key] !== false : true);
   const setField = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+  const dueDays = cleanDueDays(layoutCfg.invoiceDueDays);
 
   const handleSave = async () => {
     setError('');
@@ -157,7 +163,9 @@ export default function InvoiceEditModal({ invoice, isOpen, onClose, onSaved }) 
       const res = await api.updateInvoiceTerms(invoice.id, { display: shownNow });
       if (!res?.success) throw new Error(res?.error || 'Gagal menyimpan pengaturan tampilan');
 
-      onSaved?.(res.invoice, messages.filter(Boolean).join(' ') || `Invoice ${invoice.invoice_number} berhasil diperbarui.`);
+      const numberNow = details.invoice?.invoice_number || invoice.invoice_number;
+      if (numberNow !== invoice.invoice_number) messages.unshift(`Nomor invoice diubah: ${invoice.invoice_number} → ${numberNow}.`);
+      onSaved?.(res.invoice, messages.filter(Boolean).join(' ') || `Invoice ${numberNow} berhasil diperbarui.`);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -188,7 +196,7 @@ export default function InvoiceEditModal({ invoice, isOpen, onClose, onSaved }) 
         <div className="p-5 space-y-5 overflow-y-auto">
           {/* Data klien */}
           <section className="space-y-2.5">
-            <div className="text-xs font-bold text-slate-800">Data Klien & Tanggal</div>
+            <div className="text-xs font-bold text-slate-800">Data Klien</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div><label className={label}>Nama Perusahaan / Brand</label><input className={input} value={form.companyName || ''} onChange={setField('companyName')} /></div>
               <div><label className={label}>Nama PIC</label><input className={input} value={form.clientName || ''} onChange={setField('clientName')} /></div>
@@ -196,10 +204,23 @@ export default function InvoiceEditModal({ invoice, isOpen, onClose, onSaved }) 
               <div><label className={label}>No. Telepon / WA</label><input className={input} value={form.clientPhone || ''} onChange={setField('clientPhone')} /></div>
               <div><label className={label}>NPWP</label><input className={input} value={form.clientNpwp || ''} onChange={setField('clientNpwp')} /></div>
               <div><label className={label}>Alamat</label><input className={input} value={form.clientAddress || ''} onChange={setField('clientAddress')} /></div>
-              <div><label className={label}>Tanggal Terbit</label><input type="date" className={input} value={form.issueDate || ''} onChange={setField('issueDate')} /></div>
-              <div><label className={label}>Jatuh Tempo</label><input type="date" className={input} value={form.dueDate || ''} onChange={setField('dueDate')} /></div>
             </div>
             <div><label className={label}>Catatan</label><textarea rows={2} className={input} value={form.notes || ''} onChange={setField('notes')} /></div>
+          </section>
+
+          {/* Nomor & tanggal (AGENTS.md §44) */}
+          <section className="space-y-2.5">
+            <div className="text-xs font-bold text-slate-800">Nomor & Tanggal Invoice</div>
+            <div>
+              <label className={label} htmlFor="inv-edit-number">Nomor Invoice</label>
+              <input id="inv-edit-number" className={`${input} font-mono`} value={form.invoiceNumber || ''} onChange={setField('invoiceNumber')} spellCheck={false} autoComplete="off" />
+              <p className="mt-1 text-[10px] text-slate-500">Huruf, angka, dan tanda / . _ - tanpa spasi. Tidak boleh sama dengan nomor invoice lain. Booking ikut memakai nomor baru, dan perubahan tercatat di Log Aktivitas.</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {['issue', 'due'].map(which => (
+                <InvoiceDateField key={which} which={which} value={form} dueDays={dueDays} inputClassName={input} onChange={(patch) => setForm(f => ({ ...f, ...patch }))} />
+              ))}
+            </div>
           </section>
 
           {/* Tagihan: DP & PPN */}

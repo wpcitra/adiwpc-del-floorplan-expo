@@ -620,7 +620,7 @@ export default function InvoicePage() {
                           <span className="font-mono font-bold text-slate-900 text-xs">{inv.invoice_number}</span>
                         </div>
                         <div className="text-[10px] text-slate-400 mt-0.5">
-                          Terbit: {inv.issue_date} • Tempo: <span className="text-rose-600 font-medium">{inv.due_date}</span>
+                          Terbit: {Number(inv.issue_date_fixed) === 1 ? inv.issue_date : 'saat diunduh'} • Tempo: <span className="text-rose-600 font-medium">{Number(inv.due_date_fixed) === 1 ? inv.due_date : 'otomatis'}</span>
                         </div>
                         {inv.contract && ['dp', 'settlement'].includes(invoiceKind(inv)) && (
                           <div className="text-[10px] text-slate-500 mt-0.5">

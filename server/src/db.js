@@ -681,13 +681,22 @@ for (const col of [
 try {
   db.exec(`
     UPDATE invoices SET invoice_kind = 'facility'
-    WHERE (invoice_kind IS NULL OR invoice_kind = 'full') AND (id LIKE 'inv_fac_%' OR invoice_number LIKE 'INV/FAC/%');
+    WHERE (invoice_kind IS NULL OR invoice_kind = 'full') AND id LIKE 'inv_fac_%'; -- never by number: the format is set in Setting (§44)
     UPDATE invoices SET invoice_kind = 'full' WHERE invoice_kind IS NULL;
     -- Existing invoices are "Invoice Penuh": the contract value is the invoice total
     UPDATE invoices SET contract_total = total_amount WHERE contract_total IS NULL AND invoice_kind = 'full';
     UPDATE invoices SET contract_tax_rate = COALESCE(tax_rate, 0) WHERE contract_tax_rate IS NULL AND invoice_kind != 'facility';
   `);
 } catch (e) {}
+
+// Tanggal invoice (AGENTS.md §44): 0 = automatic (Tanggal Terbit = the day it is downloaded, Jatuh Tempo = that
+// day + invoiceDueDays), 1 = the stored issue_date / due_date was fixed by hand. Existing invoices become automatic.
+for (const col of [
+  'ALTER TABLE invoices ADD COLUMN issue_date_fixed INTEGER DEFAULT 0',
+  'ALTER TABLE invoices ADD COLUMN due_date_fixed INTEGER DEFAULT 0'
+]) {
+  try { db.exec(col); } catch (e) {}
+}
 
 // PPN per invoice (shared/invoiceTax.js): method 'none' | 'exclusive' (added to the price) | 'inclusive' (price includes PPN),
 // display 'show' | 'hide', DPP and the printed note, plus the contract breakdown every DP / Pelunasan shares.

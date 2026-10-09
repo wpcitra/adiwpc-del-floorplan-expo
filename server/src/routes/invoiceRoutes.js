@@ -13,6 +13,8 @@ import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
 import { saveBoothDiscount } from '../utils/boothDiscount.js';
 import { externalizeImages, CONFIG_INLINE_KEYS } from '../utils/uploads.js';
 import { renderInvoicePdf, printBaseUrl, pdfTokenValid, PdfEngineError } from '../utils/pdfRenderer.js';
+import { cleanInvoiceNumber, invoiceFormatProblem, cleanNumberNext, DEFAULT_INVOICE_NUMBER_FORMAT } from '../../../shared/invoiceNumbering.js';
+import { cleanDueDays, DEFAULT_DUE_DAYS } from '../../../shared/invoiceDates.js';
 import { canDeleteInvoice, canDeletePaidInvoice, canRestoreInvoice, cleanDeleteReason, sameInvoiceNumber, DELETE_REASON_MIN } from '../../../shared/invoicePermissions.js';
 
 const router = express.Router();
@@ -89,6 +91,10 @@ const DEFAULT_SYSTEM_CONFIG = {
   salesMaxDiscountPercent: 10,
   salesMaxDiscountAmount: 0,
   bookingExpiryMinutes: 15,
+  // Nomor & Tanggal Invoice (AGENTS.md §44): number format + running number, Jatuh Tempo = Tanggal Terbit + N days
+  invoiceNumberFormat: DEFAULT_INVOICE_NUMBER_FORMAT,
+  invoiceNumberNext: 1,
+  invoiceDueDays: DEFAULT_DUE_DAYS,
   isPublicBookingActive: true,
   isPaymentActive: true,
   currencySymbol: 'Rp'
@@ -138,6 +144,17 @@ router.post('/config', (req, res) => {
       ...config,
       updatedAt: new Date().toISOString()
     };
+
+    // Nomor & Tanggal Invoice (§44). The running number changes only when the request names it at the top level
+    // (Setting sends it when the admin typed it): a page that saved the whole configuration with an older copy of
+    // the counter must never move it back.
+    if (config.invoiceNumberFormat !== undefined) {
+      const problem = invoiceFormatProblem(config.invoiceNumberFormat);
+      if (problem) return res.status(400).json({ success: false, code: 'INVALID_NUMBER_FORMAT', error: problem });
+      merged.invoiceNumberFormat = String(config.invoiceNumberFormat).trim();
+    }
+    merged.invoiceNumberNext = cleanNumberNext(req.body.invoiceNumberNext ?? existingConfig.invoiceNumberNext);
+    merged.invoiceDueDays = cleanDueDays(merged.invoiceDueDays);
 
     // The Sales discount limit is set by the Super Admin only (Finance edits the rest of this configuration)
     if (req.user?.role !== 'superadmin') {
@@ -656,6 +673,15 @@ router.get('/:id', (req, res) => {
 // POST /api/invoices - Create new invoice
 // Creates an "Invoice DP" or "Invoice Pelunasan" for a booth contract. All amounts are computed here
 // from the booth contract (never trusted from the client).
+// A new invoice shows automatic dates (§44: Tanggal Terbit = the day it is downloaded, Jatuh Tempo = + invoiceDueDays)
+// unless the form fixed one by hand (issueDateFixed / dueDateFixed with the date).
+function fixDatesFromBody(id, body = {}) {
+  const on = (v) => v === true || v === 1 || v === '1';
+  const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  db.prepare('UPDATE invoices SET issue_date_fixed = ?, due_date_fixed = ? WHERE id = ?')
+    .run(on(body.issueDateFixed) && isDate(body.issueDate) ? 1 : 0, on(body.dueDateFixed) && isDate(body.dueDate) ? 1 : 0, id);
+}
+
 function createContractInvoice(req, res) {
   const {
     invoiceKind,
@@ -815,6 +841,7 @@ function createContractInvoice(req, res) {
     // A DP turns an unpaid single invoice of this booth into its Pelunasan (contract total - DP); a PPN change
     // recomputes the unpaid balance invoice
     recalcContract(floorplanId, c.booth.code, c.booth.id, { contract });
+    fixDatesFromBody(id, req.body);
   })();
   syncPaymentStatusFromInvoices();
 
@@ -948,6 +975,7 @@ router.post('/', (req, res) => {
         taxSplit ? taxSplit.method : null, taxSplit ? taxSplit.display : null
       );
 
+      fixDatesFromBody(id, req.body);
       // Booth status / tenant / canvas follow the contract via syncPaymentStatusFromInvoices() below
 
       return { id, invoiceNumber };
@@ -1010,6 +1038,28 @@ router.put('/:id', (req, res) => {
     const existing = db.prepare('SELECT * FROM invoices WHERE id = ?').get(id);
     if (!existing) {
       return res.status(404).json({ success: false, error: 'Invoice tidak ditemukan' });
+    }
+
+    // Nomor invoice changed by hand (AGENTS.md §44): a usable number, never one another invoice has (deleted ones
+    // included, §31). The booking keeps pointing at the invoice (orders.invoice_number follows).
+    let newNumber = null;
+    if (req.body.invoiceNumber !== undefined && String(req.body.invoiceNumber).trim() !== existing.invoice_number) {
+      newNumber = cleanInvoiceNumber(req.body.invoiceNumber);
+      if (!newNumber) {
+        return res.status(400).json({ success: false, code: 'INVALID_INVOICE_NUMBER', error: 'Nomor invoice hanya boleh berisi huruf, angka, dan tanda / . _ - (3–60 karakter, tanpa spasi)' });
+      }
+      const clash = db.prepare('SELECT invoice_number FROM invoices WHERE invoice_number = ? COLLATE NOCASE AND id != ?').get(newNumber, id);
+      if (clash) {
+        return res.status(409).json({ success: false, code: 'INVOICE_NUMBER_TAKEN', error: `Nomor ${clash.invoice_number} sudah dipakai invoice lain (termasuk invoice di Tempat Sampah)` });
+      }
+    }
+    // Tanggal Terbit / Jatuh Tempo: automatic (0) or fixed by hand (1) per invoice (§44)
+    const flagOf = (v) => v === undefined ? null : (v === true || v === 1 || v === '1' ? 1 : 0);
+    const issueFixed = flagOf(req.body.issueDateFixed);
+    const dueFixed = flagOf(req.body.dueDateFixed);
+    const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+    if ((issueFixed === 1 && !isDate(issueDate ?? existing.issue_date)) || (dueFixed === 1 && !isDate(dueDate ?? existing.due_date))) {
+      return res.status(400).json({ success: false, code: 'INVALID_DATE', error: 'Isi tanggal yang ingin dikunci (format YYYY-MM-DD)' });
     }
 
     // DP / Pelunasan amounts come from the booth contract: the edit form may change client data, dates
@@ -1105,6 +1155,23 @@ router.put('/:id', (req, res) => {
       notes,
       id
     );
+
+    if (issueFixed !== null || dueFixed !== null) {
+      db.prepare('UPDATE invoices SET issue_date_fixed = COALESCE(?, issue_date_fixed), due_date_fixed = COALESCE(?, due_date_fixed) WHERE id = ?')
+        .run(issueFixed, dueFixed, id);
+    }
+    if (newNumber) {
+      db.transaction(() => {
+        db.prepare('UPDATE invoices SET invoice_number = ? WHERE id = ?').run(newNumber, id);
+        db.prepare('UPDATE orders SET invoice_number = ? WHERE invoice_number = ?').run(newNumber, existing.invoice_number);
+      })();
+      writeAuditLog({
+        user: req.user, category: 'Invoice', action: 'Ubah nomor invoice',
+        target: `${newNumber} (${existing.company_name || '-'}, booth ${existing.booth_code || '-'})`,
+        summary: `${existing.invoice_number} → ${newNumber}`, method: 'PUT', path: `/invoices/${id}`, statusCode: 200, ip: clientIp(req),
+        details: { invoiceId: id, from: existing.invoice_number, to: newNumber }
+      });
+    }
 
     // A single ("full") invoice IS the whole contract: its value follows the edited total and PPN (AGENTS.md §14)
     if (kindOf(existing) === 'full' && totalAmount !== undefined) {

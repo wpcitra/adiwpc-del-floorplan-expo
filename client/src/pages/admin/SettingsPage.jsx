@@ -31,7 +31,9 @@ import {
   RotateCcw,
   X,
   Bot,
-  Palette
+  Palette,
+  Hash,
+  CalendarClock
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { updateBoothCategoriesRegistry } from '../../utils/floorplanUtils';
@@ -42,6 +44,7 @@ import SectionErrorBoundary from '../../components/common/SectionErrorBoundary';
 import TaxOptionsField from '../../components/admin/TaxOptionsField';
 import { DEFAULT_TAX_NOTE } from '../../utils/invoiceTax';
 import { looksLikeTypo } from '../../utils/nameCheck';
+import { DEFAULT_INVOICE_NUMBER_FORMAT, INVOICE_NUMBER_TOKENS, formatInvoiceNumber, invoiceFormatProblem, cleanNumberNext, DEFAULT_DUE_DAYS, cleanDueDays } from '../../utils/invoiceNumbering';
 
 // Account holder very similar to (but not the same as) the company name: probably a typo. Only a warning.
 function HolderNameWarning({ holder, companyName }) {
@@ -100,6 +103,11 @@ export default function SettingsPage() {
   const [bookingExpiryMinutes, setBookingExpiryMinutes] = useState(15);
   // Smallest DP a visitor may choose when registering online (% of the total)
   const [publicMinDpPercent, setPublicMinDpPercent] = useState(20);
+  // Nomor & Tanggal Invoice (AGENTS.md §44). The running number is sent only when the admin changed it
+  const [invoiceNumberFormat, setInvoiceNumberFormat] = useState(DEFAULT_INVOICE_NUMBER_FORMAT);
+  const [invoiceNumberNext, setInvoiceNumberNext] = useState(1);
+  const [loadedNumberNext, setLoadedNumberNext] = useState(1);
+  const [invoiceDueDays, setInvoiceDueDays] = useState(DEFAULT_DUE_DAYS);
   // Largest private discount the Sales role may give per booth (Studio pop up "Beri Diskon")
   const [salesMaxDiscountPercent, setSalesMaxDiscountPercent] = useState(10);
   const [salesMaxDiscountAmount, setSalesMaxDiscountAmount] = useState(0);
@@ -172,6 +180,10 @@ Salam hangat,
           if (config.taxNote) setTaxNote(config.taxNote);
           if (config.bookingExpiryMinutes !== undefined) setBookingExpiryMinutes(config.bookingExpiryMinutes);
           if (config.publicMinDpPercent !== undefined) setPublicMinDpPercent(config.publicMinDpPercent);
+          if (config.invoiceNumberFormat) setInvoiceNumberFormat(config.invoiceNumberFormat);
+          setInvoiceNumberNext(cleanNumberNext(config.invoiceNumberNext));
+          setLoadedNumberNext(cleanNumberNext(config.invoiceNumberNext));
+          if (config.invoiceDueDays !== undefined) setInvoiceDueDays(cleanDueDays(config.invoiceDueDays));
           if (config.salesMaxDiscountPercent !== undefined) setSalesMaxDiscountPercent(config.salesMaxDiscountPercent);
           if (config.salesMaxDiscountAmount !== undefined) setSalesMaxDiscountAmount(config.salesMaxDiscountAmount);
           if (config.isPublicBookingActive !== undefined) setIsPublicBookingActive(config.isPublicBookingActive);
@@ -188,6 +200,8 @@ Salam hangat,
   // Save all settings to SQLite server
   const handleSaveSettings = async (e) => {
     e.preventDefault();
+    const formatProblem = invoiceFormatProblem(invoiceNumberFormat);
+    if (formatProblem) { showToast(`⚠️ ${formatProblem}`); return; }
     setSaving(true);
 
     const configData = {
@@ -223,6 +237,8 @@ Salam hangat,
       taxNote: taxNote.trim() || DEFAULT_TAX_NOTE,
       bookingExpiryMinutes,
       publicMinDpPercent: Math.min(99, Math.max(1, Number(publicMinDpPercent) || 20)),
+      invoiceNumberFormat: invoiceNumberFormat.trim(),
+      invoiceDueDays: cleanDueDays(invoiceDueDays),
       salesMaxDiscountPercent: Math.min(100, Math.max(0, Number(salesMaxDiscountPercent) || 0)),
       salesMaxDiscountAmount: Math.max(0, Math.round(Number(salesMaxDiscountAmount) || 0)),
       isPublicBookingActive,
@@ -233,8 +249,10 @@ Salam hangat,
     };
 
     try {
-      const res = await api.saveInvoiceConfig(configData);
+      const nextChanged = cleanNumberNext(invoiceNumberNext) !== loadedNumberNext;
+      const res = await api.saveInvoiceConfig(configData, nextChanged ? { invoiceNumberNext: cleanNumberNext(invoiceNumberNext) } : {});
       if (res.success) {
+        if (res.config?.invoiceNumberNext) { setInvoiceNumberNext(res.config.invoiceNumberNext); setLoadedNumberNext(res.config.invoiceNumberNext); }
         showToast('✨ Konfigurasi sistem berhasil disimpan ke database SQLite!');
       } else {
         showToast(`⚠️ Gagal menyimpan: ${res.error || 'Server error'}`);
@@ -901,6 +919,89 @@ Salam hangat,
                 <p className="text-[11px] text-slate-500">
                   Default ini juga dipakai pemesanan online yang dikenai PPN. Perubahan tarif &amp; pengaturan pajak hanya berlaku untuk invoice <b>BARU</b>;
                   invoice yang sudah diterbitkan tetap memakai tarif dan pengaturan saat diterbitkan.
+                </p>
+              </div>
+
+              {/* Nomor & Tanggal Invoice (AGENTS.md §44) */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 sm:col-span-2">
+                <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Hash size={15} className="text-indigo-600" /> Nomor &amp; Tanggal Invoice
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_9rem] gap-3">
+                  <div>
+                    <label htmlFor="invoice-number-format" className="block text-xs font-bold text-slate-700 mb-1">Format nomor invoice</label>
+                    <input
+                      id="invoice-number-format"
+                      type="text"
+                      value={invoiceNumberFormat}
+                      onChange={(e) => setInvoiceNumberFormat(e.target.value)}
+                      spellCheck={false}
+                      autoComplete="off"
+                      maxLength={60}
+                      aria-invalid={Boolean(invoiceFormatProblem(invoiceNumberFormat))}
+                      className={`w-full px-3 py-2 bg-white border rounded-xl text-sm font-mono ${invoiceFormatProblem(invoiceNumberFormat) ? 'border-rose-400' : 'border-slate-300'}`}
+                    />
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      <span className="text-[11px] text-slate-500">Sisipkan:</span>
+                      {INVOICE_NUMBER_TOKENS.map(token => (
+                        <button
+                          key={token}
+                          type="button"
+                          onClick={() => setInvoiceNumberFormat(f => `${f}${token}`)}
+                          className="px-2 py-0.5 rounded-md bg-white border border-slate-300 text-[11px] font-mono font-bold text-indigo-700 hover:bg-indigo-50 active:scale-[0.97] transition-transform"
+                        >
+                          {token}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label htmlFor="invoice-number-next" className="block text-xs font-bold text-slate-700 mb-1">Nomor urut berikutnya</label>
+                    <input
+                      id="invoice-number-next"
+                      type="number"
+                      min={1}
+                      value={invoiceNumberNext}
+                      onChange={(e) => setInvoiceNumberNext(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-bold text-indigo-700"
+                    />
+                  </div>
+                </div>
+                {invoiceFormatProblem(invoiceNumberFormat) ? (
+                  <p className="text-[11px] font-semibold text-rose-600">{invoiceFormatProblem(invoiceNumberFormat)}</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5 text-[11px]">
+                    <span className="text-slate-500">Contoh berikutnya:</span>
+                    {[['full', 'Penuh'], ['dp', 'DP'], ['settlement', 'Pelunasan']].map(([kind, name]) => (
+                      <span key={kind} className="px-2 py-0.5 rounded-md bg-white border border-slate-200 text-slate-700">
+                        {name}: <b className="font-mono">{formatInvoiceNumber(invoiceNumberFormat, { kind, seq: cleanNumberNext(invoiceNumberNext) })}</b>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[11px] text-slate-500">
+                  <b className="font-mono">{'{JENIS}'}</b> = EXP (penuh), DP, PL (pelunasan), FAC (fasilitas) ·
+                  <b className="font-mono"> {'{TAHUN}'}</b> / <b className="font-mono">{'{BULAN}'}</b> = tanggal dibuat (WIB) ·
+                  <b className="font-mono"> {'{NOMOR}'}</b> = nomor urut (wajib), naik satu setiap invoice baru. Berlaku untuk invoice <b>baru</b>;
+                  nomor invoice yang sudah ada bisa diubah satu per satu lewat Edit Invoice.
+                </p>
+                <div className="pt-3 border-t border-slate-200 flex flex-wrap items-center gap-2">
+                  <CalendarClock size={15} className="text-rose-600" />
+                  <label htmlFor="invoice-due-days" className="text-xs font-bold text-slate-700">Jatuh tempo</label>
+                  <input
+                    id="invoice-due-days"
+                    type="number"
+                    min={0}
+                    max={365}
+                    value={invoiceDueDays}
+                    onChange={(e) => setInvoiceDueDays(e.target.value)}
+                    className="w-20 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-bold text-rose-700"
+                  />
+                  <span className="text-xs text-slate-600 font-semibold">hari setelah Tanggal Terbit</span>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Tanggal Terbit mengikuti hari invoice diunduh / dicetak (bukan hari dibuat), Jatuh Tempo = Tanggal Terbit + jumlah hari ini.
+                  Tanggal satu invoice bisa dikunci manual lewat Edit Invoice.
                 </p>
               </div>
 

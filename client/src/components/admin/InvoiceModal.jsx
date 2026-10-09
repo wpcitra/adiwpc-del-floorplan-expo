@@ -28,6 +28,8 @@ import InvoiceA4View from './InvoiceA4View';
 import TaxOptionsField from './TaxOptionsField';
 import { computeContractTax, invoiceTaxView } from '../../utils/invoiceTax';
 import InvoiceDeleteModal from './InvoiceDeleteModal';
+import InvoiceDateField from './InvoiceDateField';
+import { cleanDueDays } from '../../utils/invoiceNumbering';
 import { invoiceBriefOf } from '../../utils/invoicePermissions';
 
 export default function InvoiceModal({
@@ -61,6 +63,14 @@ export default function InvoiceModal({
   const [clientNpwp, setClientNpwp] = useState('');
   const [issueDate, setIssueDate] = useState(new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+  // Automatic dates by default (AGENTS.md §44): Tanggal Terbit = the day it is downloaded, Jatuh Tempo = + N days
+  const [dateFix, setDateFix] = useState({ issueDateFixed: false, dueDateFixed: false });
+  const [dueDays, setDueDays] = useState(cleanDueDays());
+  const applyDatePatch = (patch) => {
+    if (patch.issueDate !== undefined) setIssueDate(patch.issueDate);
+    if (patch.dueDate !== undefined) setDueDate(patch.dueDate);
+    setDateFix(f => ({ ...f, ...Object.fromEntries(Object.entries(patch).filter(([k]) => k.endsWith('Fixed'))) }));
+  };
   
   // Line items
   const [items, setItems] = useState([
@@ -88,6 +98,7 @@ export default function InvoiceModal({
   const taxRateSetting = taxCfg.rate;
   useEffect(() => {
     api.fetchInvoiceConfig().then(cfg => {
+      setDueDays(cleanDueDays(cfg?.invoiceDueDays));
       const rate = Number(cfg?.taxRate);
       const method = cfg?.defaultTaxMethod === 'inclusive' ? 'inclusive' : 'exclusive';
       setTaxCfg({
@@ -154,6 +165,7 @@ export default function InvoiceModal({
     setClientNpwp('');
     setIssueDate(new Date().toISOString().split('T')[0]);
     setDueDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+    setDateFix({ issueDateFixed: false, dueDateFixed: false });
     
     const price = booth.price || 5000000;
     const dim = `${booth.widthM || 3}x${booth.heightM || 3}m (${((booth.widthM || 3) * (booth.heightM || 3)).toFixed(1)}m²)`;
@@ -200,6 +212,7 @@ export default function InvoiceModal({
     setClientNpwp(inv.client_npwp || '');
     setIssueDate(inv.issue_date || new Date().toISOString().split('T')[0]);
     setDueDate(inv.due_date || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+    setDateFix({ issueDateFixed: Number(inv.issue_date_fixed) === 1, dueDateFixed: Number(inv.due_date_fixed) === 1 });
 
     // Parse items
     let parsedItems = [];
@@ -379,6 +392,7 @@ export default function InvoiceModal({
         clientNpwp: clientNpwp.trim(),
         issueDate,
         dueDate,
+        ...dateFix,
         items,
         subtotal: calculations.subtotal,
         discountType,
@@ -651,7 +665,7 @@ export default function InvoiceModal({
                             <span className="text-slate-400">•</span>
                             <span>PIC: {inv.client_name}</span>
                             <span className="text-slate-400">•</span>
-                            <span className="text-slate-400">Jatuh Tempo: {inv.due_date || '-'}</span>
+                            <span className="text-slate-400">Jatuh Tempo: {Number(inv.due_date_fixed) === 1 ? inv.due_date : `otomatis (+${dueDays} hari setelah diunduh)`}</span>
                           </div>
 
                           {/* Private Discount Tag if applied */}
@@ -838,30 +852,11 @@ export default function InvoiceModal({
                 </div>
               </div>
 
-              {/* Dates */}
+              {/* Dates: automatic or fixed by hand (AGENTS.md §44) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                    Tanggal Terbit Invoice:
-                  </label>
-                  <input
-                    type="date"
-                    value={issueDate}
-                    onChange={(e) => setIssueDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                    Tanggal Jatuh Tempo:
-                  </label>
-                  <input
-                    type="date"
-                    value={dueDate}
-                    onChange={(e) => setDueDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold text-rose-700"
-                  />
-                </div>
+                {['issue', 'due'].map(which => (
+                  <InvoiceDateField key={which} which={which} value={{ issueDate, dueDate, ...dateFix }} dueDays={dueDays} onChange={applyDatePatch} />
+                ))}
               </div>
             </div>
 

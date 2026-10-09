@@ -4,6 +4,8 @@ import { api } from '../../services/api';
 import { getProjectDateInfo } from './ProjectYearFolderSelector';
 import TaxOptionsField from './TaxOptionsField';
 import InvoiceTotals from './InvoiceTotals';
+import InvoiceDateField from './InvoiceDateField';
+import { cleanDueDays } from '../../utils/invoiceNumbering';
 import { computeContractTax, taxPortion, taxRemainder, invoiceTaxView, DEFAULT_TAX_NOTE } from '../../utils/invoiceTax';
 
 const rupiah = (n) => `Rp ${Math.round(Number(n) || 0).toLocaleString('id-ID')}`;
@@ -48,6 +50,7 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
   const [ackTaxChange, setAckTaxChange] = useState(false);
   useEffect(() => {
     api.fetchInvoiceConfig().then(cfg => {
+      setDueDays(cleanDueDays(cfg?.invoiceDueDays));
       const rate = Number(cfg?.taxRate);
       const method = cfg?.defaultTaxMethod === 'inclusive' ? 'inclusive' : 'exclusive';
       setTaxCfg({
@@ -61,7 +64,9 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
   }, []);
   const [dpMode, setDpMode] = useState('percent');
   const [dpInput, setDpInput] = useState('30');
-  const [dueDate, setDueDate] = useState(plusDays(7));
+  // Jatuh Tempo is automatic by default (AGENTS.md §44): Tanggal Terbit (the day it is downloaded) + N days
+  const [dates, setDates] = useState({ dueDate: plusDays(14), dueDateFixed: false });
+  const [dueDays, setDueDays] = useState(cleanDueDays());
   const [notes, setNotes] = useState('');
   const [ackUnpaidDp, setAckUnpaidDp] = useState(false);
   const [error, setError] = useState('');
@@ -75,7 +80,7 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
     setContract(null);
     setDpMode('percent');
     setDpInput('30');
-    setDueDate(plusDays(7));
+    setDates({ dueDate: plusDays(14), dueDateFixed: false });
     setNotes('');
     setAckUnpaidDp(false);
     setError('');
@@ -230,7 +235,8 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
       taxDisplay: taxOpt.display,
       taxRate,
       changeContractTax: taxChanged && ackTaxChange,
-      dueDate,
+      dueDate: dates.dueDate,
+      dueDateFixed: dates.dueDateFixed,
       notes,
       confirmUnpaidDp: ackUnpaidDp
     });
@@ -470,10 +476,7 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
 
                 {!blocker && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">Jatuh Tempo</label>
-                      <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={cardInput} />
-                    </div>
+                    <InvoiceDateField which="due" value={dates} dueDays={dueDays} inputClassName={cardInput} onChange={(patch) => setDates(d => ({ ...d, ...patch }))} />
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">Catatan (opsional)</label>
                       <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} className={cardInput} placeholder="contoh: Termin 1 sesuai kontrak" />

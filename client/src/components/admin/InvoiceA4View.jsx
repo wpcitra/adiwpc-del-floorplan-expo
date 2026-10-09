@@ -25,6 +25,7 @@ import { downloadInvoicePdf, printInvoice } from '../../utils/invoicePdf';
 import { api } from '../../services/api';
 import { invoiceTaxView, allocate } from '../../utils/invoiceTax';
 import InvoiceTotals from './InvoiceTotals';
+import { invoiceDates } from '../../utils/invoiceNumbering';
 
 // Kop surat (AGENTS.md §42), printed: the letterhead must cover the whole paper, so the page margin is 0 and these
 // empty head / foot rows (repeated on every page) give the content the usual 12 mm margins on each page.
@@ -111,11 +112,14 @@ export default function InvoiceA4View({
   const showBank = displayChoice.showBank !== false;
   const showNotes = displayChoice.showNotes !== false;
 
+  const dates = invoiceDates(invoice, { dueDays: cfg.invoiceDueDays });
   const inv = {
     id: invoice.id || invoice._id || 'INV-DOC',
     invoice_number: invoice.invoice_number || invoice.invoiceNumber || 'INV/EXP/2026/001',
-    issue_date: invoice.issue_date || invoice.issueDate || new Date().toISOString().split('T')[0],
-    due_date: invoice.due_date || invoice.dueDate || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
+    // Tanggal Terbit = the day the invoice is opened / downloaded / printed, Jatuh Tempo = that day + the days of
+    // Setting, unless a date was fixed by hand on this invoice (AGENTS.md §44)
+    issue_date: dates.issueDate,
+    due_date: dates.dueDate,
     client_name: invoice.client_name || invoice.clientName || '-',
     company_name: invoice.company_name || invoice.companyName || '-',
     client_email: invoice.client_email || invoice.clientEmail || '',

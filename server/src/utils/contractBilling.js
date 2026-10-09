@@ -1,5 +1,6 @@
 import db from '../db.js';
 import { exhibitorIdFor } from './exhibitorIdentity.js';
+import { DEFAULT_INVOICE_NUMBER_FORMAT, formatInvoiceNumber, invoiceFormatProblem, cleanNumberNext } from '../../../shared/invoiceNumbering.js';
 import { computeContractTax, contractTaxOf, dpTaxOf, invoiceTaxView, paidTaxOf, taxPortion, taxRemainder } from '../../../shared/invoiceTax.js';
 
 // ---------------------------------------------------------------------------
@@ -316,14 +317,26 @@ export function impliedTaxRate(contractTotal, booth) {
 }
 
 // Next invoice number with a type marker, following the existing INV/<TYPE>/<YEAR>/<n> format
-export function nextInvoiceNumber(kind) {
-  const marker = kind === 'dp' ? 'DP' : kind === 'settlement' ? 'PL' : 'EXP';
-  const prefix = `INV/${marker}/${new Date().getFullYear()}/`;
-  // A number is never used twice, also not the number of a deleted invoice (Tempat Sampah, AGENTS.md §31)
+/**
+ * The next invoice number (AGENTS.md §44): the format of Setting > Aturan Booking ("Nomor & Tanggal Invoice") with
+ * its running number. Every invoice the application issues takes its number here (checkout, Buat Invoice,
+ * DP / Pelunasan / Penuh, facility). The counter is stored in the invoice configuration and moves on with every
+ * number handed out. A number is never used twice, also not the number of a deleted invoice (§31): taken numbers
+ * are skipped.
+ */
+export function nextInvoiceNumber(kind = 'full') {
+  const row = db.prepare('SELECT config_json FROM invoice_settings WHERE id = ?').get('default_template');
+  let cfg = {};
+  try { cfg = JSON.parse(row?.config_json || '{}') || {}; } catch (e) {}
+  const format = invoiceFormatProblem(cfg.invoiceNumberFormat) ? DEFAULT_INVOICE_NUMBER_FORMAT : cfg.invoiceNumberFormat;
   const taken = db.prepare('SELECT 1 FROM invoices WHERE invoice_number = ?');
-  let n = Number(Date.now().toString().slice(-5));
-  while (taken.get(`${prefix}${String(n).padStart(5, '0')}`)) n = (n + 1) % 100000;
-  return `${prefix}${String(n).padStart(5, '0')}`;
+  let seq = cleanNumberNext(cfg.invoiceNumberNext);
+  let number = formatInvoiceNumber(format, { kind, seq });
+  for (let i = 0; taken.get(number) && i < 100000; i++) number = formatInvoiceNumber(format, { kind, seq: ++seq });
+  const next = JSON.stringify({ ...cfg, invoiceNumberNext: seq + 1 });
+  if (row) db.prepare('UPDATE invoice_settings SET config_json = ? WHERE id = ?').run(next, 'default_template');
+  else db.prepare('INSERT INTO invoice_settings (id, config_json) VALUES (?, ?)').run('default_template', next);
+  return number;
 }
 
 /**
