@@ -252,7 +252,14 @@ const INVOICE_ROW_SQL = `
           FROM floorplans fp 
           WHERE fp.id = COALESCE(inv.floorplan_id, 'FP-2026-001')
           LIMIT 1
-        ) AS project_title
+        ) AS project_title,
+        (
+          SELECT CASE WHEN json_valid(fp.metadata_json)
+            THEN COALESCE(json_extract(fp.metadata_json, '$.event.venue'), json_extract(fp.metadata_json, '$.venue')) END
+          FROM floorplans fp
+          WHERE fp.id = COALESCE(inv.floorplan_id, 'FP-2026-001')
+          LIMIT 1
+        ) AS project_venue
       FROM invoices inv
 `;
 
@@ -296,6 +303,10 @@ function invoiceRowMapper() {
 
 
   return (inv) => {
+    // The event name on the invoice is the project's name (the floorplan title edited in the Studio, AGENTS.md §13):
+    // never the shared event's title ("Kanvas Baru") stored on some invoices, nor the template's default text
+    if (inv.project_title) inv.event_title = inv.project_title;
+    if (inv.project_venue) inv.event_venue = inv.project_venue;
     // Auto-merge contract "A-01+A-03+A-04" (AGENTS.md §18): size of every booth + total area
     const codeTokens = invoiceCodeTokens(inv.booth_code);
     if (codeTokens.length > 1 && !(Number(inv.booth_width_m) > 0) && inv.floorplan_id) {
