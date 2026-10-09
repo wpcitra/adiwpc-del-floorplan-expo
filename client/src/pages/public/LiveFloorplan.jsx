@@ -482,7 +482,7 @@ export default function LiveFloorplan() {
       showToast('📄 Sedang memproses dokumen PDF denah...');
       const dataUrl = canvas.toDataURL({ format: 'png', multiplier: 3 });
       await exportFloorplanToPdf(dataUrl, {
-        eventTitle: currentEvent?.title || eventTitle,
+        eventTitle,
         hallTitle: activeFpTitle || floorplanData?.title || 'Denah Pameran',
         venue: eventVenue,
         summary: displayStats,
@@ -2022,7 +2022,7 @@ export default function LiveFloorplan() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight truncate max-w-[240px] sm:max-w-md">
-                    {currentEvent?.title || eventTitle}
+                    {eventTitle}
                   </h2>
                   {allEvents && allEvents.length > 1 && (
                     <select

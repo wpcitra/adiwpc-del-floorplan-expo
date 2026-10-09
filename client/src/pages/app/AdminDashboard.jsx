@@ -1137,7 +1137,7 @@ export default function AdminDashboard() {
       const dataUrl = editorRef.current?.getPngDataUrl(2.5) || canvas.toDataURL({ format: 'png', multiplier: 2.5 });
 
       await exportFloorplanToPdf(dataUrl, {
-        eventTitle: currentEvent?.title || currentFloorplanTitle,
+        eventTitle: currentFloorplanTitle,
         hallTitle: currentFloorplanTitle,
         venue: currentFloorplanVenue,
         summary: summaryStats,
@@ -1556,7 +1556,7 @@ export default function AdminDashboard() {
         onExportPng={() => editorRef.current?.exportPng()}
         onExportPdf={handleExportPdf}
         currentFloorplanTitle={currentFloorplanTitle}
-        currentEventTitle={currentEvent?.title || currentFloorplanTitle}
+        currentEventTitle={currentFloorplanTitle}
         currentVenue={currentFloorplanVenue}
       />
 
