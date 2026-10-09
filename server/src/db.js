@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import { hashPassword, verifyPassword } from './utils/password.js';
 import { exhibitorIdFor } from './utils/exhibitorIdentity.js';
 import { initialPriceMode } from '../../shared/templatePrice.js';
+import { cleanBoothCode } from '../../shared/boothCodes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1182,6 +1183,52 @@ if (secureAccounts) {
       .map(u => u.email);
     if (weak.length) console.warn(`⚠️ Akun berikut masih memakai password bawaan dari repo publik, segera ganti: ${weak.join(', ')}`);
   } catch (e) {}
+}
+
+// Booth numbers without outer / repeated spaces (AGENTS.md §40). Old data held "15        " in booths, orders and
+// invoices: cleaned once everywhere (booths, orders, invoices incl. their items, the saved canvas), after a copy of
+// the database. A booth whose clean number another booth of its floorplan already has is left as it is.
+try {
+  const DIRTY = (col) => `${col} IS NOT NULL AND (${col} != TRIM(${col}) OR ${col} LIKE '%  %' OR ${col} LIKE '% +%' OR ${col} LIKE '%+ %')`;
+  const dirty = ['booths:code', 'orders:booth_code', 'invoices:booth_code']
+    .reduce((n, tc) => { const [t, c] = tc.split(':'); return n + db.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE ${DIRTY(c)}`).get().n; }, 0);
+  if (dirty) {
+    const backupsDir = path.join(dataDir, 'backups');
+    fs.mkdirSync(backupsDir, { recursive: true });
+    db.prepare('VACUUM INTO ?').run(path.join(backupsDir, `pre-migration_nomor-booth_${new Date().toISOString().replace(/[:.]/g, '-')}.db`));
+    let fixed = 0;
+    db.transaction(() => {
+      const taken = db.prepare('SELECT 1 FROM booths WHERE floorplan_id = ? AND id != ? AND deleted_at IS NULL AND LOWER(code) = LOWER(?)');
+      for (const b of db.prepare(`SELECT id, floorplan_id, code FROM booths WHERE ${DIRTY('code')}`).all()) {
+        const clean = cleanBoothCode(b.code);
+        if (clean && !taken.get(b.floorplan_id, b.id, clean)) { db.prepare('UPDATE booths SET code = ? WHERE id = ?').run(clean, b.id); fixed += 1; }
+      }
+      for (const o of db.prepare(`SELECT id, booth_code FROM orders WHERE ${DIRTY('booth_code')}`).all()) {
+        db.prepare('UPDATE orders SET booth_code = ? WHERE id = ?').run(cleanBoothCode(o.booth_code), o.id);
+      }
+      for (const inv of db.prepare(`SELECT id, booth_code, items_json FROM invoices WHERE ${DIRTY('booth_code')}`).all()) {
+        let items = inv.items_json;
+        try {
+          const list = JSON.parse(inv.items_json || '[]');
+          if (Array.isArray(list)) items = JSON.stringify(list.map(it => (it?.boothCode ? { ...it, boothCode: cleanBoothCode(it.boothCode) } : it)));
+        } catch (e) { /* items kept as they are */ }
+        db.prepare('UPDATE invoices SET booth_code = ?, items_json = ? WHERE id = ?').run(cleanBoothCode(inv.booth_code), items, inv.id);
+      }
+      for (const fp of db.prepare('SELECT id, canvas_fabric_json FROM floorplans WHERE canvas_fabric_json IS NOT NULL').all()) {
+        try {
+          const canvas = JSON.parse(fp.canvas_fabric_json);
+          let changed = false;
+          (canvas.objects || []).forEach(o => ['code', 'booth_number'].forEach(k => {
+            if (typeof o?.boothData?.[k] === 'string' && cleanBoothCode(o.boothData[k]) !== o.boothData[k]) { o.boothData[k] = cleanBoothCode(o.boothData[k]); changed = true; }
+          }));
+          if (changed) db.prepare('UPDATE floorplans SET canvas_fabric_json = ? WHERE id = ?').run(JSON.stringify(canvas), fp.id);
+        } catch (e) { /* unreadable canvas: left as it is */ }
+      }
+    })();
+    console.log(`🧹 Nomor booth dirapikan (spasi berlebih): ${fixed} booth, beserta booking, invoice dan denah.`);
+  }
+} catch (error) {
+  console.error('Merapikan nomor booth gagal:', error);
 }
 
 export default db;

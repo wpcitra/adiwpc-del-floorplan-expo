@@ -9,7 +9,7 @@ import { exhibitorIdFor } from '../utils/exhibitorIdentity.js';
 import { computeFloorplanMergeGroups } from '../utils/boothMergeGroups.js';
 import { publicFloorplanPayload } from '../utils/publicData.js';
 import { externalizeImages } from '../utils/uploads.js';
-import { duplicateBoothCodes, duplicateBoothCodeMessage } from '../../../shared/boothCodes.js';
+import { duplicateBoothCodes, duplicateBoothCodeMessage, cleanBoothCode } from '../../../shared/boothCodes.js';
 import { buildTemplateIndex, resolveTemplatePrice, initialPriceMode, priceModeOf, discountAmountOf } from '../../../shared/templatePrice.js';
 import { catalogFor, lockedBoothCodes } from '../utils/templatePricing.js';
 
@@ -1380,6 +1380,16 @@ router.post('/save', (req, res) => {
 
     fabricJson = externalizeImages(fabricJson);
     metadata = externalizeImages(metadata);
+
+    // Booth numbers are stored without outer / repeated spaces (AGENTS.md §40): "15      " is booth "15"
+    (fabricJson?.objects || []).forEach(o => {
+      if (o?.boothData?.code) o.boothData.code = cleanBoothCode(o.boothData.code);
+      if (o?.boothData?.booth_number) o.boothData.booth_number = cleanBoothCode(o.boothData.booth_number);
+    });
+    if (Array.isArray(booths)) booths.forEach(b => {
+      if (b?.code) b.code = cleanBoothCode(b.code);
+      if (b?.booth_number) b.booth_number = cleanBoothCode(b.booth_number);
+    });
 
     // Booth numbers are unique per floorplan (AGENTS.md §30): nothing is saved while two booths share a number
     const canvasBooths = extractBoothsFromFabricJson(fabricJson?.objects);

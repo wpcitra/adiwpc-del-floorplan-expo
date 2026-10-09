@@ -415,6 +415,7 @@ export default function SalesCharts() {
     totalRevenue: 0, potentialRevenue: 0, remainingBill: 0, remainingPercentage: 0
   });
   const [loading, setLoading] = useState(true);
+  const [showUnbilled, setShowUnbilled] = useState(false);
 
   const loadStats = useCallback(async (projId) => {
     setLoading(true);
@@ -438,7 +439,16 @@ export default function SalesCharts() {
           totalTaxBilled: s.totalTaxBilled || 0,
           potentialRevenue: s.potentialRevenue || 0,
           remainingBill: s.remainingBill ?? 0,
-          remainingPercentage: s.remainingPercentage ?? 0
+          remainingPercentage: s.remainingPercentage ?? 0,
+          // AGENTS.md §40: received money split, booked booths without invoice, value of the empty booths
+          paidInFullAmount: s.paidInFullAmount,
+          paidInFullInvoices: s.paidInFullInvoices,
+          downPaymentAmount: s.downPaymentAmount,
+          downPaymentInvoices: s.downPaymentInvoices,
+          unbilledBooths: s.unbilledBooths || [],
+          unbilledCount: s.unbilledCount || 0,
+          unbilledValue: s.unbilledValue || 0,
+          availableValue: s.availableValue
         });
         if (s.floorplanList?.length > 0) setFloorplanList(s.floorplanList);
         if (s.categoryBreakdown) setCategoryBreakdown(s.categoryBreakdown);
@@ -809,10 +819,18 @@ export default function SalesCharts() {
         {/* Card 1: Total Pendapatan Real (Linear Dark Card) */}
         <div className="bg-slate-950 text-white p-5 rounded-xl border border-slate-800 shadow-xs flex items-center justify-between relative overflow-hidden">
           <div>
-            <div className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-1">Total Pendapatan Real (Lunas){es.taxCollected > 0 ? ' · Sebelum PPN' : ''}</div>
+            <div className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-1">Uang Masuk (Diterima){es.taxCollected > 0 ? ' · Sebelum PPN' : ''}</div>
             {/* PPN is collected for the state, not revenue: the headline is the amount before PPN */}
             <h3 className="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-1 font-sans">{fmtRupiah(es.taxCollected > 0 ? es.revenueExclTax : es.totalRevenue)}</h3>
-            <p className="text-xs text-slate-400 flex items-center gap-1.5"><span className="text-emerald-400 font-medium">{es.paidCount || 0} booth</span><span>sudah lunas terbayar</span></p>
+            {es.paidInFullInvoices !== undefined ? (
+              <p className="text-xs text-slate-400 leading-relaxed">
+                <span className="text-emerald-400 font-medium">Lunas {fmtRupiah(es.paidInFullAmount)}</span> ({es.paidInFullInvoices} invoice)
+                <span className="mx-1.5 text-slate-600">·</span>
+                <span className="text-sky-300 font-medium">DP {fmtRupiah(es.downPaymentAmount)}</span> ({es.downPaymentInvoices} invoice)
+              </p>
+            ) : (
+              <p className="text-xs text-slate-400 flex items-center gap-1.5"><span className="text-emerald-400 font-medium">{es.paidCount || 0} booth</span><span>sudah lunas terbayar</span></p>
+            )}
             {es.taxCollected > 0 && (
               <p className="text-[11px] text-slate-400 mt-1">Diterima {fmtRupiah(es.totalRevenue)}, termasuk PPN {fmtRupiah(es.taxCollected)}</p>
             )}
@@ -828,7 +846,10 @@ export default function SalesCharts() {
           <div>
             <div className="text-xs font-medium uppercase tracking-wider text-slate-500 mb-1">Total Sisa Tagihan (Pending)</div>
             <h3 className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900 mb-1 font-sans">{fmtRupiah(es.remainingBill)}</h3>
-            <p className="text-xs text-slate-500 flex items-center gap-1.5"><span className="text-amber-700 font-medium">{es.bookedCount || 0} booth booking</span><span>menunggu pelunasan</span></p>
+            <p className="text-xs text-slate-500">Belum dibayar dari invoice yang sudah terbit</p>
+            {es.unbilledCount > 0 && (
+              <p className="text-xs text-amber-700 font-medium mt-0.5">+ {es.unbilledCount} booth booking belum ditagih ({fmtRupiah(es.unbilledValue)})</p>
+            )}
           </div>
           <div className="w-10 h-10 bg-amber-50 text-amber-700 rounded-lg flex items-center justify-center shrink-0 border border-amber-100"><Clock3 size={20} /></div>
         </div>
@@ -898,10 +919,10 @@ export default function SalesCharts() {
               </div>
               <div className="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/60 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Nilai Belum Terjual</span>
+                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">{es.availableValue !== undefined ? 'Nilai Booth Tersedia' : 'Nilai Belum Terjual'}</span>
                   <span className="p-1 bg-white text-slate-600 rounded border border-slate-200/70"><TrendingUp size={12} /></span>
                 </div>
-                <span className="text-xl font-semibold text-slate-900">{fmtRupiah(unsoldVal)}</span>
+                <span className="text-xl font-semibold text-slate-900">{fmtRupiah(es.availableValue ?? unsoldVal)}</span>
                 <div className="w-full bg-slate-200/80 h-1.5 rounded-full overflow-hidden"><div className="bg-emerald-600 h-full rounded-full transition-all duration-500" style={{ width: `${cashRate}%` }} /></div>
                 <p className="text-[10px] text-slate-500 flex items-center justify-between">
                   <span>Realisasi Kas: <strong className="text-slate-800 font-semibold">{cashRate}%</strong></span>
@@ -942,13 +963,50 @@ export default function SalesCharts() {
                 <div className="flex items-center gap-2 min-w-0">
                   <div className="w-6 h-6 rounded-md bg-amber-100 text-amber-800 flex items-center justify-center shrink-0"><Clock3 size={13} /></div>
                   <div className="min-w-0">
-                    <p className="text-xs text-amber-900 font-medium">Ada <strong>{es.bookedCount || 0} booth booking</strong> senilai <strong>{fmtRupiah(es.remainingBill)}</strong> menunggu pelunasan.</p>
+                    <p className="text-xs text-amber-900 font-medium">Ada <strong>{es.bookedCount || 0} booth booking</strong>; sisa tagihan dari invoice yang terbit <strong>{fmtRupiah(es.remainingBill)}</strong>.</p>
                   </div>
                 </div>
                 <button type="button" onClick={() => setStatusFilter('reserved')}
                   className="px-2.5 py-1 bg-amber-700 hover:bg-amber-800 text-white font-medium rounded-md text-[11px] shrink-0 transition-colors cursor-pointer">
                   Lihat Booking
                 </button>
+              </div>
+            )}
+
+            {/* Booked booths without any invoice (AGENTS.md §40): their value is in no invoice total yet */}
+            {es.unbilledCount > 0 && (
+              <div className="rounded-lg border border-rose-200/80 bg-rose-50/60 text-xs">
+                <div className="p-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-6 h-6 rounded-md bg-rose-100 text-rose-700 flex items-center justify-center shrink-0"><AlertTriangle size={13} /></div>
+                    <p className="text-rose-900 font-medium">
+                      <strong>{es.unbilledCount} booth</strong> sudah dibooking tapi <strong>belum ada invoice</strong> ({fmtRupiah(es.unbilledValue)})
+                      {es.unbilledBooths.some(b => b.status === 'sold') && <> — termasuk <strong>{es.unbilledBooths.filter(b => b.status === 'sold').length} booth Sold</strong> tanpa pembayaran tercatat</>}.
+                    </p>
+                  </div>
+                  <button type="button" onClick={() => setShowUnbilled(v => !v)} aria-expanded={showUnbilled}
+                    className="px-2.5 py-1 bg-rose-700 hover:bg-rose-800 text-white font-medium rounded-md text-[11px] shrink-0 transition-colors cursor-pointer">
+                    {showUnbilled ? 'Tutup' : 'Lihat Daftar'}
+                  </button>
+                </div>
+                {showUnbilled && (
+                  <div className="border-t border-rose-200/80 bg-white rounded-b-lg">
+                    <div className="max-h-56 overflow-y-auto divide-y divide-slate-100">
+                      {es.unbilledBooths.map(b => (
+                        <div key={`${b.floorplanId}_${b.code}`} className="flex items-center gap-3 px-3 py-1.5">
+                          <span className="w-16 shrink-0 font-semibold text-slate-900">#{b.code}</span>
+                          <span className="flex-1 min-w-0 truncate text-slate-700">{b.ownerName || 'Tanpa nama tenant'}</span>
+                          <span className={`shrink-0 px-1.5 py-px rounded text-[10px] font-semibold ${b.status === 'sold' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>{b.status === 'sold' ? 'Sold' : 'Reserved'}</span>
+                          <span className="w-28 shrink-0 text-right tabular-nums text-slate-700">{fmtRupiah(b.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="px-3 py-2 border-t border-slate-100 flex items-center justify-between gap-2 text-[11px] text-slate-600">
+                      <span>Terbitkan invoicenya dari Data Exhibitor ("Buat Invoice").</span>
+                      <button type="button" onClick={() => navigate('/admin/exhibitors')} className="font-semibold text-indigo-700 hover:underline cursor-pointer">Buka Data Exhibitor</button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

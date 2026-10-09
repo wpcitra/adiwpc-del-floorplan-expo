@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import { applyBoothStatusToContract } from '../utils/boothStatus.js';
+import { getContractInvoices } from '../utils/contractBilling.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
 import { getExhibitorsData } from './orderRoutes.js';
 import { invoiceTaxView, paidTaxOf } from '../../../shared/invoiceTax.js';
@@ -161,9 +162,32 @@ router.get('/', (req, res) => {
       unpaidInvoiceAmount = db.prepare("SELECT SUM(CASE WHEN payment_status IN ('UNPAID', 'PENDING') THEN total_amount WHEN payment_status = 'PARTIAL' THEN MAX(0, total_amount - paid_amount) ELSE 0 END) as total FROM invoices WHERE deleted_at IS NULL").get()?.total || 0;
     }
 
-    const taxTotals = invoiceTaxTotals(hasFilter
+    const invoiceRows = hasFilter
       ? db.prepare(`SELECT * FROM invoices WHERE (floorplan_id IN (${inPlaceholders}) OR event_id = ?) AND deleted_at IS NULL`).all(...targetFloorplanIds, rawProjectId)
-      : db.prepare('SELECT * FROM invoices WHERE deleted_at IS NULL').all());
+      : db.prepare('SELECT * FROM invoices WHERE deleted_at IS NULL').all();
+    const taxTotals = invoiceTaxTotals(invoiceRows);
+
+    // Uang masuk dipecah (AGENTS.md §40): invoices paid in full vs down payments (a paid DP invoice is still a DP)
+    const received = { fullAmount: 0, fullCount: 0, dpAmount: 0, dpCount: 0 };
+    invoiceRows.forEach(inv => {
+      const st = String(inv.payment_status || '').toUpperCase();
+      if (st === 'PAID' && inv.invoice_kind !== 'dp') { received.fullAmount += Number(inv.total_amount) || 0; received.fullCount += 1; }
+      else if (st === 'PAID') { received.dpAmount += Number(inv.total_amount) || 0; received.dpCount += 1; }
+      else if (st === 'PARTIAL') { received.dpAmount += Number(inv.paid_amount) || 0; received.dpCount += 1; }
+    });
+
+    // Booked booths without any live contract invoice: their value is not billed yet, so it is in no invoice total
+    const unbilledBooths = db.prepare(`
+      SELECT id, floorplan_id, code, status, owner_name, price, discount_amount FROM booths
+      WHERE ${hasFilter ? `floorplan_id IN (${inPlaceholders}) AND ` : ''} status IN ('reserved', 'sold') AND deleted_at IS NULL
+    `).all(...boothParams)
+      .filter(b => !getContractInvoices(b.floorplan_id, b.code, b.id).some(inv => String(inv.payment_status || '').toUpperCase() !== 'CANCELED'))
+      .map(b => ({ floorplanId: b.floorplan_id, code: b.code, status: b.status, ownerName: b.owner_name || '', value: Math.max(0, (Number(b.price) || 0) - (Number(b.discount_amount) || 0)) }))
+      .sort((a, b) => a.code.localeCompare(b.code, 'id', { numeric: true }));
+    const availableValue = db.prepare(`
+      SELECT SUM(price) as total FROM booths
+      WHERE ${hasFilter ? `floorplan_id IN (${inPlaceholders}) AND ` : ''} status = 'available' AND (category != 'Free' OR category IS NULL) AND price > 0 AND deleted_at IS NULL
+    `).get(...boothParams)?.total || 0;
 
     let orderRevenue = 0;
     if (hasFilter) {
@@ -261,7 +285,15 @@ router.get('/', (req, res) => {
         totalTaxBilled: taxTotals.billed,
         potentialRevenue,
         remainingBill,
-        remainingPercentage
+        remainingPercentage,
+        paidInFullAmount: received.fullAmount,
+        paidInFullInvoices: received.fullCount,
+        downPaymentAmount: received.dpAmount,
+        downPaymentInvoices: received.dpCount,
+        unbilledBooths,
+        unbilledCount: unbilledBooths.length,
+        unbilledValue: unbilledBooths.reduce((sum, b) => sum + b.value, 0),
+        availableValue
       }
     });
   } catch (error) {

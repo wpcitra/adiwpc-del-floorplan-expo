@@ -5,6 +5,9 @@
 
 export const boothCodeKey = (code) => String(code ?? '').trim().toUpperCase();
 
+/** The number as it is stored (AGENTS.md §40): no outer / repeated spaces, "A-01 + A-02" -> "A-01+A-02". */
+export const cleanBoothCode = (code) => String(code ?? '').split('+').map(t => t.replace(/\s+/g, ' ').trim()).filter(Boolean).join('+');
+
 /** The numbers a code occupies: "a-01 + A-02" -> ["A-01", "A-02"]. */
 export const boothCodeTokens = (code) => [...new Set(String(code ?? '').split('+').map(boothCodeKey).filter(Boolean))];
 

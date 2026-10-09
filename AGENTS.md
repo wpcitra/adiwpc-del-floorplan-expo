@@ -618,3 +618,14 @@ Fabric.js v7 does not automatically preserve custom object properties (`isBooth`
 - **Studio sync.** `GET /api/floorplan/:id/booth-version` (staff; drafts too) = a sha1 of the booth fields the Studio syncs (`code, status, owner_name, exhibitor_id, merge_separate`). The Studio checks it every `BOOTH_SYNC_MS` (5 s), only while the tab is visible and on `visibilitychange`; the first answer after opening is the baseline; the whole floorplan is fetched (and merged by `syncBoothsFromDb`) only when it changed, and the version is kept only once that sync ran (a selected booth postpones it). Positions and prices are not in the fingerprint, so the Studio's own edits never trigger a download.
 - **Never poll a full floorplan / list on a timer again.** Poll a small fingerprint (like `/live-version`, §35) and fetch the data when it changes; stop while `document.hidden`.
 - Tests: `server/test/hemat-egress.test.js`. Browser check: an idle Studio = one ~200-byte request per 5 s; a booking made elsewhere appears within ~5 s.
+
+---
+
+## 40. Angka Dashboard & Nomor Booth Bersih Lock (`statsRoutes.js`, `SalesCharts.jsx`, `shared/boothCodes.js` `cleanBoothCode`)
+- **Uang masuk is not "lunas".** `totalRevenue` = all money received (PAID invoices + paid part of PARTIAL). The dashboard card is "Uang Masuk (Diterima)" with the split `paidInFullAmount` / `paidInFullInvoices` (PAID, not a DP invoice) and `downPaymentAmount` / `downPaymentInvoices` (a paid DP invoice or a PARTIAL one).
+- **Booked but not billed.** `unbilledBooths` = Reserved / Sold booths without any live contract invoice (`getContractInvoices`, canceled ones ignored), with `unbilledCount` / `unbilledValue` (price − private discount). Their value is in no invoice total: the "Sisa Tagihan" card says it counts issued invoices only and adds "+ n booth booking belum ditagih"; the dashboard lists them ("Lihat Daftar"), Sold ones called out (no payment recorded).
+- **"Nilai Booth Tersedia"** = `availableValue` (Available, non-Free booths), not potential − received − remaining.
+- The year view aggregates the project list and has none of these fields: the cards fall back to the old wording there.
+- **Booth numbers are stored clean**: `cleanBoothCode` (no outer / repeated spaces, "A-01 + A-02" → "A-01+A-02") on `POST /floorplan/save` (canvas + booth list) and on blur of "Nomor / Kode Booth". `db.js` cleans old data once (booths, orders, invoices incl. item `boothCode`, saved canvases) after `VACUUM INTO backups/pre-migration_nomor-booth_*.db`; a booth whose clean number is taken in its floorplan is left as it is.
+- The shared event title ("Kanvas Baru", §13) is not shown on the project cards of Manajemen Invoice / Data Exhibitor (`ProjectYearFolderSelector`).
+- Tests: `server/test/dashboard-angka.test.js`.

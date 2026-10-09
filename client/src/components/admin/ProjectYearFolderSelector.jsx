@@ -282,7 +282,6 @@ export default function ProjectYearFolderSelector({
         list = list.filter(p => 
           (p.title || '').toLowerCase().includes(query) ||
           (p.venue || '').toLowerCase().includes(query) ||
-          (p.event_title || '').toLowerCase().includes(query) ||
           (p.id || '').toLowerCase().includes(query)
         );
       }
@@ -1103,11 +1102,6 @@ export default function ProjectYearFolderSelector({
                                     <Building2 size={13} />
                                   </div>
                                   <div className="min-w-0">
-                                    {proj.event_title && (
-                                      <span className={`text-[9px] font-medium uppercase tracking-wider block truncate ${isSelected ? 'text-slate-300' : 'text-slate-500'}`} title={proj.event_title}>
-                                        {proj.event_title}
-                                      </span>
-                                    )}
                                     <h3 className={`text-xs font-semibold leading-tight truncate ${isSelected ? 'text-white' : 'text-slate-900'}`} title={proj.title}>
                                       {proj.title}
                                     </h3>
@@ -1228,11 +1222,6 @@ export default function ProjectYearFolderSelector({
                                     <h4 className={`text-xs font-semibold truncate ${isSelected ? 'text-slate-900' : 'text-slate-800'}`}>
                                       {proj.title}
                                     </h4>
-                                    {proj.event_title && (
-                                      <span className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 border border-slate-200">
-                                        {proj.event_title}
-                                      </span>
-                                    )}
                                   </div>
                                   <div className="flex items-center gap-3 text-[10px] text-slate-400 mt-0.5 flex-wrap">
                                     <span className="flex items-center gap-1 text-slate-500">
