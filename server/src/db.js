@@ -632,6 +632,39 @@ db.exec(`
   );
 `);
 
+// Chat antar staf (AGENTS.md §38): direct = one conversation per pair (direct_key "idA|idB", sorted), group = Super Admin.
+// last_read_id / last_delivered_id per member drive the unread count and the ticks.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL CHECK (type IN ('direct', 'group')),
+    title TEXT DEFAULT '',
+    direct_key TEXT UNIQUE,
+    created_by TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_message_at DATETIME
+  );
+  CREATE TABLE IF NOT EXISTS chat_members (
+    conversation_id INTEGER NOT NULL,
+    user_id TEXT NOT NULL,
+    joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    left_at DATETIME,
+    last_read_id INTEGER DEFAULT 0,
+    last_delivered_id INTEGER DEFAULT 0,
+    PRIMARY KEY (conversation_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL,
+    sender_id TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    attachment_json TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_messages_conv ON chat_messages(conversation_id, id);
+  CREATE INDEX IF NOT EXISTS idx_chat_members_user ON chat_members(user_id);
+`);
+
 // Booth contract billing: DP + Pelunasan invoices (see utils/contractBilling.js)
 //   invoice_kind: 'full' (single/legacy invoice) | 'dp' | 'settlement' | 'facility' (add-on, not part of the booth contract)
 //   related_invoice_id: settlement -> its DP invoice

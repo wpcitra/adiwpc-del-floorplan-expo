@@ -119,6 +119,18 @@ const AUDIT_RULES = [
     describe: (req, m) => ({ target: `Tugas ${m[1]}`, summary: [req.body?.title ? `judul: ${String(req.body.title).slice(0, 80)}` : '', req.body?.status ? `status: ${req.body.status}` : ''].filter(Boolean).join(' · ') }) },
   { method: 'PUT', path: /^\/maintenance\/ai-config$/, category: 'Maintenance', action: 'Ubah pengaturan AI (model / batas biaya)',
     describe: (req) => ({ target: 'Integrasi AI', summary: Object.entries(req.body || {}).map(([k, v]) => `${k}: ${v}`).join(', ').slice(0, 200) }) },
+  // Chat antar staf (AGENTS.md §38): only group management is logged, never messages (their routes skip the audit)
+  { method: 'POST', path: /^\/chat\/groups$/, category: 'Chat', action: 'Buat grup chat',
+    describe: (req) => ({ target: `Grup "${req.body.title || ''}"`, summary: `${(req.body.memberIds || []).length} anggota` }) },
+  { method: 'PUT', path: /^\/chat\/groups\/(\d+)$/, category: 'Chat', action: 'Ganti nama grup chat',
+    before: (m) => db.prepare('SELECT title FROM chat_conversations WHERE id = ?').get(m[1]),
+    describe: (req, m, before) => ({ target: `Grup #${m[1]}`, summary: `${before?.title || '?'} → ${req.body.title || ''}` }) },
+  { method: 'POST', path: /^\/chat\/groups\/(\d+)\/members$/, category: 'Chat', action: 'Tambah anggota grup chat',
+    describe: (req, m) => ({ target: `Grup ${db.prepare('SELECT title FROM chat_conversations WHERE id = ?').get(m[1])?.title || m[1]}`,
+      summary: (req.body.userIds || []).map(id => db.prepare('SELECT name FROM users WHERE id = ?').get(id)?.name || id).join(', ') }) },
+  { method: 'DELETE', path: /^\/chat\/groups\/(\d+)\/members\/([^/]+)$/, category: 'Chat', action: 'Keluarkan anggota grup chat',
+    describe: (req, m) => ({ target: `Grup ${db.prepare('SELECT title FROM chat_conversations WHERE id = ?').get(m[1])?.title || m[1]}`,
+      summary: db.prepare('SELECT name FROM users WHERE id = ?').get(m[2])?.name || m[2] }) },
   // Claude API key: the key itself is never logged (SENSITIVE_KEYS drops `apiKey` from the details too)
   { method: 'PUT', path: /^\/maintenance\/ai-key$/, category: 'Maintenance', action: 'Simpan API key Claude',
     describe: () => ({ target: 'ANTHROPIC_API_KEY (server/.env)', summary: 'Key baru disimpan (nilai tidak dicatat)' }) },
@@ -192,7 +204,8 @@ export function auditTrail(req, res, next) {
   const found = findAuditRule(req.method, path);
   let before = null;
   try { before = found?.rule.before ? found.rule.before(found.match, req) : null; } catch (e) { before = null; }
-  const bodySnapshot = safeDetails(req.body);
+  // Chat (AGENTS.md §38): message text never reaches the audit log, not even in a denied attempt
+  const bodySnapshot = path.startsWith('/chat/') ? null : safeDetails(req.body);
 
   res.on('finish', () => {
     const user = req.user;
