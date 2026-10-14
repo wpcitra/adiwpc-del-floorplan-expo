@@ -14,7 +14,7 @@ before(async () => {
 });
 after(async () => { await s.stop(); });
 
-const book = (code, extra = {}, as) => s.api('POST', '/orders/checkout', {
+const book = (code, extra = {}, as = 'superadmin') => s.api('POST', '/orders/checkout', {
   floorplanId: FP, boothCodes: [code], boothCode: code, fullName: 'Rina', brandName: `Brand ${code}`, brandCategory: 'F&B',
   phone: '081234567890', bookingType: 'booking', ...extra
 }, as ? { as } : undefined);

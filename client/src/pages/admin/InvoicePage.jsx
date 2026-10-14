@@ -33,6 +33,8 @@ import InvoiceEditModal from '../../components/admin/InvoiceEditModal';
 import { INVOICE_KIND_BADGE, invoiceKind, summarizeInvoices, matchesStatusTab, groupByContract } from '../../utils/invoiceSummary';
 import { Palette } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import InlineTenantEdit from '../../components/admin/InlineTenantEdit';
+import { InlineInvoiceNumberEdit, InlineDiscountEdit, InlineDpEdit } from '../../components/admin/InlineInvoiceCells';
 import InvoiceDeleteModal from '../../components/admin/InvoiceDeleteModal';
 import InvoiceTrashModal from '../../components/admin/InvoiceTrashModal';
 import { canDeleteInvoice, canRestoreInvoice, invoiceBriefOf } from '../../utils/invoicePermissions';
@@ -613,6 +615,7 @@ export default function InvoicePage() {
                     <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
                       {/* Invoice No & Date */}
                       <td className="px-3.5 py-3.5 whitespace-nowrap">
+                        <InlineInvoiceNumberEdit inv={inv} onSaved={loadInvoices}>
                         <div className="flex items-center gap-1.5">
                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${INVOICE_KIND_BADGE[invoiceKind(inv)]?.className || INVOICE_KIND_BADGE.full.className}`}>
                             {INVOICE_KIND_BADGE[invoiceKind(inv)]?.label || 'Penuh'}
@@ -622,6 +625,7 @@ export default function InvoicePage() {
                         <div className="text-[10px] text-slate-400 mt-0.5">
                           Terbit: {Number(inv.issue_date_fixed) === 1 ? inv.issue_date : 'saat diunduh'} • Tempo: <span className="text-rose-600 font-medium">{Number(inv.due_date_fixed) === 1 ? inv.due_date : 'otomatis'}</span>
                         </div>
+                        </InlineInvoiceNumberEdit>
                         {inv.contract && ['dp', 'settlement'].includes(invoiceKind(inv)) && (
                           <div className="text-[10px] text-slate-500 mt-0.5">
                             {/* DP share from the amounts (an older registration could store a percentage that did not match) */}
@@ -659,12 +663,14 @@ export default function InvoicePage() {
 
                       {/* Company & PIC */}
                       <td className="px-3.5 py-3.5 min-w-[160px]">
+                        <InlineTenantEdit inv={inv} onSaved={loadInvoices}>
                         <div className="font-bold text-slate-900 text-xs leading-snug line-clamp-1" title={inv.company_name}>
                           {inv.company_name}
                         </div>
                         <div className="text-[11px] text-slate-500 mt-0.5 leading-snug line-clamp-1" title={`PIC: ${inv.client_name} ${inv.client_phone ? `(${inv.client_phone})` : ''}`}>
                           PIC: {inv.client_name} {inv.client_phone ? `(${inv.client_phone})` : ''}
                         </div>
+                        </InlineTenantEdit>
                         {/* Project Category Tag */}
                         <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-600 font-medium">
                           <Building2 size={11} className="text-slate-400 shrink-0" />
@@ -712,6 +718,7 @@ export default function InvoicePage() {
 
                       {/* Private Discount */}
                       <td className="px-3 py-3.5 whitespace-nowrap">
+                        <InlineDiscountEdit inv={inv} onSaved={loadInvoices}>
                         {hasDiscount ? (
                           <div className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200" title={effectiveDiscountReason || 'Diskon Khusus'}>
                             <Lock size={10} className="text-emerald-600 shrink-0" />
@@ -724,11 +731,14 @@ export default function InvoicePage() {
                         ) : (
                           <span className="text-slate-400 text-xs">-</span>
                         )}
+                        </InlineDiscountEdit>
                       </td>
 
                       {/* Grand Total Tagihan */}
                       <td className="px-3 py-3.5 text-right font-mono font-bold text-slate-900 text-xs whitespace-nowrap">
-                        Rp {displayTotal.toLocaleString('id-ID')}
+                        <InlineDpEdit inv={inv} onSaved={loadInvoices}>
+                          <span>Rp {displayTotal.toLocaleString('id-ID')}</span>
+                        </InlineDpEdit>
                       </td>
 
                       {/* Uang yang Baru / Sudah Dibayar (DP) */}

@@ -138,6 +138,15 @@ const AUDIT_RULES = [
     describe: () => ({ target: 'ANTHROPIC_API_KEY (server/.env)' }) },
   { method: 'POST', path: /^\/maintenance\/ai-key\/test$/, category: 'Maintenance', action: 'Uji koneksi Claude API',
     describe: () => ({ target: 'api.anthropic.com /v1/models' }) },
+  // WhatsApp (Fonnte): the token and the webhook secret are never logged
+  { method: 'PUT', path: /^\/maintenance\/whatsapp$/, category: 'Maintenance', action: 'Simpan pengaturan WhatsApp (Fonnte)',
+    describe: () => ({ target: 'FONNTE_* (server/.env)', summary: 'Token / nomor device diubah (nilai tidak dicatat)' }) },
+  { method: 'POST', path: /^\/maintenance\/whatsapp\/secret$/, category: 'Maintenance', action: 'Ganti rahasia webhook WhatsApp',
+    describe: () => ({ target: 'FONNTE_WEBHOOK_SECRET (server/.env)' }) },
+  { method: 'POST', path: /^\/maintenance\/whatsapp\/test$/, category: 'Maintenance', action: 'Kirim pesan tes WhatsApp',
+    describe: () => ({ target: 'api.fonnte.com /send' }) },
+  { method: 'DELETE', path: /^\/maintenance\/whatsapp$/, category: 'Maintenance', action: 'Hapus pengaturan WhatsApp (Fonnte)',
+    describe: () => ({ target: 'FONNTE_* (server/.env)' }) },
   { method: 'POST', path: /^\/maintenance\/errors\/([^/]+)\/status$/, category: 'Maintenance', action: 'Ubah status error',
     before: (m) => db.prepare('SELECT id, status, priority, message FROM error_groups WHERE id = ?').get(m[1]),
     describe: (req, m, before) => ({

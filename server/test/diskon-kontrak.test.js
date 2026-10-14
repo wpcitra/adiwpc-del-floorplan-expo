@@ -78,7 +78,7 @@ test('invoice DP booth gabungan membawa diskon kontrak = jumlah diskon semua boo
   const r = await s.api('POST', '/orders/checkout', {
     floorplanId: FP, boothCodes: ['K-03', 'K-04'], fullName: 'Rw', brandName: 'rwrwer', email: 'rw@c.test', phone: '081234567890',
     bookingType: 'booking', paymentType: 'dp', dpPercent: 40
-  });
+  }, { as: 'superadmin' });
   assert.equal(r.status, 200, r.text);
   const dp = await invoiceOf('K-03+K-04');
   assert.equal(dp.invoice_kind, 'dp');

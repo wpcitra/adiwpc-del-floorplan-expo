@@ -35,10 +35,19 @@ const plusDays = (days) => new Date(Date.now() + days * 86400000).toISOString().
 
 // "+ Buat Invoice Baru": choose Invoice DP or Invoice Pelunasan, then pick project & booth. All amounts come
 // from the booth contract (price - private discount, + optional PPN) and are recomputed by the server.
+// Search box of the pickers: every word must appear in one of the fields (letter case and a leading # ignored)
+const matchesQuery = (query, ...fields) => {
+  const words = String(query || '').toLowerCase().replace(/#/g, ' ').split(/\s+/).filter(Boolean);
+  const hay = fields.map(f => String(f || '').toLowerCase()).join(' ');
+  return words.every(w => hay.includes(w));
+};
+
 export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], defaultProjectId = '', defaultBoothCode = '', onCreated, onOpenInvoice }) {
   const [kind, setKind] = useState(null);
   const [projectId, setProjectId] = useState('');
   const [booths, setBooths] = useState([]);
+  const [projectQuery, setProjectQuery] = useState('');
+  const [boothQuery, setBoothQuery] = useState('');
   const [boothsLoading, setBoothsLoading] = useState(false);
   const [boothCode, setBoothCode] = useState('');
   const [contract, setContract] = useState(null);
@@ -295,20 +304,25 @@ export default function ContractInvoiceWizard({ isOpen, onClose, projects = [], 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Project</label>
-                <select value={projectId} onChange={(e) => { setProjectId(e.target.value); setBoothCode(''); }} className={cardInput}>
+                <input type="search" value={projectQuery} onChange={(e) => setProjectQuery(e.target.value)} placeholder="Cari project..." aria-label="Cari project" className={`${cardInput} mb-1.5`} />
+                <select value={projectId} onChange={(e) => { setProjectId(e.target.value); setBoothCode(''); setBoothQuery(''); }} className={cardInput}>
                   <option value="">— Pilih project —</option>
-                  {projectGroups.map(([year, list]) => (
-                    <optgroup key={year} label={`📁 ${year}`}>
-                      {list.map(p => <option key={p.id} value={p.id}>{p.title || p.id}</option>)}
-                    </optgroup>
-                  ))}
+                  {projectGroups.map(([year, list]) => {
+                    const shown = list.filter(p => p.id === projectId || matchesQuery(projectQuery, p.title, p.id));
+                    return shown.length ? (
+                      <optgroup key={year} label={`📁 ${year}`}>
+                        {shown.map(p => <option key={p.id} value={p.id}>{p.title || p.id}</option>)}
+                      </optgroup>
+                    ) : null;
+                  })}
                 </select>
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Booth / Exhibitor</label>
+                <input type="search" value={boothQuery} onChange={(e) => setBoothQuery(e.target.value)} disabled={!projectId || boothsLoading} placeholder="Cari no. booth atau nama tenant..." aria-label="Cari booth atau tenant" className={`${cardInput} mb-1.5 disabled:bg-slate-50`} />
                 <select value={boothCode} onChange={(e) => setBoothCode(e.target.value)} disabled={!projectId || boothsLoading} className={`${cardInput} disabled:bg-slate-50 disabled:text-slate-400`}>
                   <option value="">{boothsLoading ? 'Memuat booth...' : !projectId ? 'Pilih project dulu' : booths.length ? '— Pilih booth —' : 'Belum ada booth bertenant'}</option>
-                  {booths.map(b => (
+                  {booths.filter(b => b.code === boothCode || matchesQuery(boothQuery, b.code, b.owner_name, b.ownerName, b.pic_name, b.picName)).map(b => (
                     <option key={b.id || b.code} value={b.code}>
                       #{b.code} — {b.owner_name || b.ownerName || '(tanpa nama)'} ({String(b.status).toUpperCase()})
                     </option>

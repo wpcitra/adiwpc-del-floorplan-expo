@@ -70,6 +70,9 @@ function BookingForm({ floorplanId, summary, onSaved, onError }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // Payment plan chosen by the tenant: Bayar Penuh or a DP percentage. "Buat Invoice" issues what was chosen.
+  const [scheme, setScheme] = useState('full');
+  const [dpInput, setDpInput] = useState('30');
   // Typing another brand name for a new booking drops the email carried from a picked tenant (it belongs to that tenant)
   const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value, ...(key === 'brandName' && !editing ? { email: '' } : {}) }));
 
@@ -96,11 +99,13 @@ function BookingForm({ floorplanId, summary, onSaved, onError }) {
     setError('');
     const data = Object.fromEntries(Object.entries(form).map(([k, v]) => [k, String(v || '').trim()]));
     if (!data.brandName || !data.fullName || !data.phone) { setError('Nama tenant / brand, nama PIC, dan no. WhatsApp wajib diisi.'); return; }
+    const dp = parseFloat(String(dpInput).replace(',', '.')) || 0;
+    if (!editing && scheme === 'dp' && !(dp > 0 && dp < 100)) { setError('DP harus lebih dari 0% dan kurang dari 100%. Untuk 100% pilih "Bayar Penuh".'); return; }
     setSaving(true);
     const payload = { floorplanId, boothId: b.id, boothCode: b.code, ...data };
     const res = editing
       ? await api.updateTenantBiodata(payload)
-      : await api.checkoutOrder({ ...payload, boothCodes: [b.code], boothIds: [b.id], bookingType: 'booking', deferInvoice: true, source: 'admin' });
+      : await api.checkoutOrder({ ...payload, boothCodes: [b.code], boothIds: [b.id], bookingType: 'booking', deferInvoice: true, source: 'admin', paymentType: scheme, dpPercent: scheme === 'dp' ? dp : 0 });
     setSaving(false);
     if (res?.success) { onSaved(editing ? `Booking booth ${b.code} diperbarui.` : `Booth ${b.code} dibooking untuk "${data.brandName}" (Reserved).`); return; }
     setError(res?.error || 'Booking gagal disimpan.');
@@ -161,6 +166,29 @@ function BookingForm({ floorplanId, summary, onSaved, onError }) {
               {categories.map(c => <option key={c.id || c.name} value={c.name}>{c.name}</option>)}
             </select>
           </div>
+          {!editing && (
+            <div>
+              <span className={labelCls}>Skema Pembayaran</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                {[['full', 'Bayar Penuh (100%)'], ['dp', 'Uang Muka (DP)']].map(([id, label]) => (
+                  <button key={id} type="button" onClick={() => setScheme(id)}
+                    className={`py-1.5 text-[11px] font-bold rounded-lg border cursor-pointer ${scheme === id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {scheme === 'dp' && (
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  {[20, 30, 50].map(p => (
+                    <button key={p} type="button" onClick={() => setDpInput(String(p))}
+                      className={`px-2 py-1 rounded-lg border text-[11px] font-bold cursor-pointer ${Number(dpInput) === p ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-200'}`}>{p}%</button>
+                  ))}
+                  <input type="text" inputMode="decimal" value={dpInput} onChange={(e) => setDpInput(e.target.value)} aria-label="Persen DP" className={`${inputCls} !w-16 text-right ml-auto`} />
+                  <span className="text-xs font-bold text-slate-600">%</span>
+                </div>
+              )}
+            </div>
+          )}
           <div>
             <label className={labelCls} htmlFor="sb-notes">Catatan</label>
             <textarea id="sb-notes" rows={2} value={form.notes} onChange={set('notes')} className={inputCls} placeholder="Catatan booking (opsional)" maxLength={500} />

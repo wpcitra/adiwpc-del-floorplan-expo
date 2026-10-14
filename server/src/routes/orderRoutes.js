@@ -9,9 +9,7 @@ import { notifyOpsOfSalesChange } from '../utils/opsLayer.js';
 import { taxOptionsFrom, readBookingRules } from '../utils/taxSettings.js';
 import { cleanEmail } from '../../../shared/emailRule.js';
 import { buildInvoiceRow } from './invoiceRoutes.js';
-import { pdfTokenFor } from '../utils/pdfRenderer.js';
 
-const withPdfToken = (invoice) => (invoice ? { ...invoice, pdfToken: pdfTokenFor(invoice.id) } : invoice);
 import { computeContractTax, taxPortion } from '../../../shared/invoiceTax.js';
 
 const router = express.Router();
@@ -26,7 +24,7 @@ router.post('/checkout', (req, res) => {
       brandName,
       brandCategory = '',
       phone,
-      bookingType = 'booking',
+      bookingType: askedBookingType = 'booking',
       paymentMethod = 'qris',
       transferBank = '',
       transferSenderName = '',
@@ -35,6 +33,11 @@ router.post('/checkout', (req, res) => {
     // The invoice number is always issued here, never taken from the form: a number sent by a visitor could
     // otherwise replace an existing (even paid) invoice with the same number. Issued inside the transaction (§44).
     let invoiceNumber = '';
+    let orderNotes = String(req.body.notes || '').trim().slice(0, 500);
+
+    // A visitor only reserves the booth ("Hold"): no invoice and no payment method. The invoice is issued by
+    // staff (Sales / Finance / Super Admin) after the visitor confirms through WhatsApp.
+    const bookingType = req.user ? askedBookingType : (['booking', 'manual_transfer'].includes(askedBookingType) ? 'booking' : askedBookingType);
 
     const hasBooths = Boolean(boothCode) || (Array.isArray(req.body.boothCodes) && req.body.boothCodes.some(Boolean));
     if (!hasBooths || !brandName || !phone) {
@@ -56,7 +59,8 @@ router.post('/checkout', (req, res) => {
       return res.status(403).json({ success: false, code: 'FORBIDDEN', error: 'Role Sales hanya dapat membuat booking (Reserved). Pembayaran dicatat oleh Finance.' });
     }
     // "Booking Manual" (staff): the booth is reserved now and the invoice is issued later with "Buat Invoice"
-    const deferInvoice = Boolean(req.user) && req.body.deferInvoice === true && bookingType === 'booking';
+    // Visitors never get an invoice at registration: it is issued by staff later.
+    const deferInvoice = !req.user || (req.body.deferInvoice === true && bookingType === 'booking');
 
     // Determine status based on bookingType:
     // 1. 'payment_gateway' -> PAID & sold immediately
@@ -214,6 +218,11 @@ router.post('/checkout', (req, res) => {
       }
       const isDpInvoice = resolvedPaymentType === 'dp';
       const invoiceStatus = isDpInvoice && resolvedPaymentStatus === 'PARTIAL' ? 'PAID' : resolvedPaymentStatus;
+      // The plan is kept in orders.payment_type / dp_percent (staff "Buat Invoice" follows it); a visitor, who has no notes field, also gets it as a note
+      if (!req.user) {
+        const plan = isDpInvoice ? `Rencana pembayaran: DP ${resolvedDpPercent || askedDpPercent}%, sisanya Invoice Pelunasan.` : 'Rencana pembayaran: Bayar Penuh.';
+        orderNotes = [String(notes || '').trim(), plan].filter(Boolean).join(' | ').slice(0, 500);
+      }
       const todayStr = new Date().toISOString().split('T')[0];
       const dueDateStr = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0];
       if (!deferInvoice) invoiceNumber = nextInvoiceNumber('full');
@@ -315,8 +324,8 @@ router.post('/checkout', (req, res) => {
       const insertOrder = db.prepare(`
         INSERT INTO orders (
           id, floorplan_id, booth_id, booth_code, company_name, pic_name, email, phone, total_amount, payment_method, payment_status,
-          invoice_number, brand_category, source, admin_name, exhibitor_id, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          invoice_number, brand_category, source, admin_name, exhibitor_id, notes, payment_type, dp_percent
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       priced.forEach((p, i) => {
         const orderId = `ORD-${stamp}${priced.length > 1 ? `-${i + 1}` : ''}`;
@@ -324,7 +333,7 @@ router.post('/checkout', (req, res) => {
         insertOrder.run(orderId, floorplanId, p.b.id, p.b.code, brandName, fullName || brandName, orderEmail, phone,
           subtotal - discount > 0 ? Math.round((contractTotal * (p.price - p.discount)) / (subtotal - discount)) : 0,
           resolvedPaymentMethod, resolvedPaymentStatus, deferInvoice ? '' : invoiceNumber, brandCategory || '', registrationSource, adminName, exhibitorId,
-          String(notes || '').trim().slice(0, 500));
+          orderNotes, isDpInvoice ? 'dp' : 'full', isDpInvoice ? resolvedDpPercent : 0);
       });
 
       // Booths that touch each other are still SHOWN as one booth on the floorplan (display only, §18)
@@ -378,10 +387,8 @@ router.post('/checkout', (req, res) => {
         fullName,
         email,
         phone,
-        // The invoice just issued, exactly as Manajemen Invoice stores it: the registrant views / downloads it
-        // right away (visitors cannot open invoices afterwards; they get this one copy)
-        // with a short-lived token so the registrant (not logged in) can download this invoice as PDF
-        invoice: result.invoiceNumbers[0] ? withPdfToken(buildInvoiceRow(result.invoiceNumbers[0])) : null,
+        // Only staff registrations issue an invoice here; a visitor's invoice is issued later by staff (AGENTS.md §12)
+        invoice: result.invoiceNumbers[0] ? buildInvoiceRow(result.invoiceNumbers[0]) : null,
         // computed by the server (price - discount + PPN), not the value sent by the form
         totalAmount: result.contractTotal,
         taxRate: result.taxRate,
@@ -767,24 +774,24 @@ router.put('/update-tenant', (req, res) => {
       db.prepare(`
         UPDATE booths 
         SET owner_name = ?, 
-            brand_category = ?, 
+            brand_category = COALESCE(?, brand_category), 
             pic_name = ?, 
             email = ?, 
             phone = ?, 
             updated_at = CURRENT_TIMESTAMP
         WHERE (id = ? OR (floorplan_id = ? AND code = ?))
-      `).run(brandName, brandCategory || '', fullName, email, phone, boothId || '', fpId, boothCode || '');
+      `).run(brandName, brandCategory ?? null, fullName, email, phone, boothId || '', fpId, boothCode || '');
 
       // 2. Update orders
       db.prepare(`
         UPDATE orders 
         SET company_name = ?, 
             pic_name = ?, 
-            brand_category = ?, 
+            brand_category = COALESCE(?, brand_category), 
             email = ?, 
             phone = ?
         WHERE (booth_id = ? OR (floorplan_id = ? AND booth_code = ?))
-      `).run(brandName, fullName, brandCategory || '', email ?? (ordersEmailNullable() ? null : ''), phone, boothId || '', fpId, boothCode || '');
+      `).run(brandName, fullName, brandCategory ?? null, email ?? (ordersEmailNullable() ? null : ''), phone, boothId || '', fpId, boothCode || '');
 
       // Note of the booking (Booking Manual): only when the form sent one
       if (req.body.notes !== undefined) {

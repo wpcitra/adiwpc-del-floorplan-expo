@@ -30,7 +30,7 @@ export async function downloadInvoicePdf({ invoice, config = null, preview = fal
   try {
     const issued = !preview && invoice?.id && !String(invoice.id).startsWith('INV-DOC');
     const res = issued
-      ? await apiFetch(`${API_BASE_URL}/invoices/${encodeURIComponent(invoice.id)}/pdf${invoice.pdfToken ? `?token=${encodeURIComponent(invoice.pdfToken)}` : ''}`)
+      ? await apiFetch(`${API_BASE_URL}/invoices/${encodeURIComponent(invoice.id)}/pdf`)
       : await apiFetch(`${API_BASE_URL}/invoices/pdf-preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invoice, config }) });
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));

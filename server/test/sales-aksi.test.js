@@ -12,7 +12,9 @@ before(async () => {
     boothObject('A-02', { left: 200, top: 0 }),
     boothObject('A-03', { left: 400, top: 0, status: 'maintenance' }),
     boothObject('A-04', { left: 600, top: 0 }),
-    boothObject('A-05', { left: 800, top: 0 })
+    boothObject('A-05', { left: 800, top: 0 }),
+    boothObject('B-01', { left: 0, top: 400 }),
+    boothObject('B-02', { left: 200, top: 400 })
   ]);
 });
 after(async () => { await s.stop(); });
@@ -192,4 +194,18 @@ test('Role: Operasional & pengunjung ditolak; Finance & Super Admin boleh', asyn
   assert.equal((await s.api('POST', '/booth-actions/invoice', { floorplanId: FP, boothCode: 'A-02' })).status, 401);
   assert.equal((await s.api('GET', url, undefined, { as: 'finance' })).status, 200);
   assert.equal((await s.api('GET', url, undefined, { as: 'superadmin' })).body.discountLimit.limited, false);
+});
+
+test('skema DP dari booking (Sales atau pendaftar online): Buat Invoice menerbitkan Invoice DP sesuai persen yang dipilih', async () => {
+  const r = await book('B-01', 'Dp Sales B', { paymentType: 'dp', dpPercent: 30 });
+  assert.equal(r.status, 200, r.text);
+  const inv = await s.api('POST', '/booth-actions/invoice', { floorplanId: FP, boothCode: 'B-01' }, { as: 'sales' });
+  assert.equal(inv.status, 200, inv.text);
+  assert.equal(inv.body.invoice.invoice_kind, 'dp');
+  assert.equal(inv.body.invoice.dp_percent, 30);
+  assert.equal(inv.body.invoice.total_amount, 3000000, '30% dari 10.000.000');
+  const full = await book('B-02', 'Penuh Sales', { paymentType: 'full' });
+  assert.equal(full.status, 200, full.text);
+  const inv2 = await s.api('POST', '/booth-actions/invoice', { floorplanId: FP, boothCode: 'B-02' }, { as: 'sales' });
+  assert.equal(inv2.body.invoice.invoice_kind, 'full');
 });

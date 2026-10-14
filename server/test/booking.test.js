@@ -117,7 +117,7 @@ test('kontrak DP + Pelunasan dengan diskon: nilai dihitung server, status mengik
 });
 
 test('multi-booth berdampingan satu exhibitor: satu invoice untuk grup (auto-merge)', async () => {
-  const r = await s.api('POST', '/orders/checkout', visitor(['A-01', 'A-02'], { email: 'grup@contoh.test', brandName: 'Brand Grup' }));
+  const r = await s.api('POST', '/orders/checkout', visitor(['A-01', 'A-02'], { email: 'grup@contoh.test', brandName: 'Brand Grup' }), { as: 'superadmin' });
   assert.equal(r.status, 200, r.text);
   const a1 = await boothRow('A-01');
   const a2 = await boothRow('A-02');

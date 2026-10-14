@@ -31,7 +31,6 @@ import {
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { computeContractTax, DEFAULT_TAX_NOTE } from '../../utils/invoiceTax';
-import InvoiceA4View from '../admin/InvoiceA4View';
 
 // Organizer's bank accounts, company name and WhatsApp come from Setting (database), never from this file
 const banksFromConfig = (cfg = {}) => [
@@ -60,11 +59,7 @@ export default function BookingModal({
   // PPN from Setting (rate, and whether online registrations are taxed). Admins choose per registration.
   const [taxCfg, setTaxCfg] = useState({ rate: 11, publicTax: true, method: 'exclusive', display: 'show', note: DEFAULT_TAX_NOTE });
   const [orgCfg, setOrgCfg] = useState({ companyName: '', whatsapp: '', banks: [] });
-  // Invoice number issued by the server for this registration (shown on the success screen and in WhatsApp)
-  const [issuedInvoiceNumber, setIssuedInvoiceNumber] = useState('');
   const [issuedTotal, setIssuedTotal] = useState(null);
-  // The invoice the server issued for this registration (the same one as in Manajemen Invoice)
-  const [issuedInvoice, setIssuedInvoice] = useState(null);
   const [adminApplyTax, setAdminApplyTax] = useState(null); // null = follow the setting
   useEffect(() => {
     api.fetchInvoiceConfig().then(cfg => {
@@ -88,7 +83,6 @@ export default function BookingModal({
       });
     });
   }, []);
-  const [showA4Invoice, setShowA4Invoice] = useState(false);
 
   const boothList = Array.isArray(booths) && booths.length > 0 
     ? booths 
@@ -245,9 +239,9 @@ export default function BookingModal({
   const dpAmount = Math.round((grandTotal * dpPercent) / 100);
   const dpInvalid = paymentScheme === 'dp' && !(dpPercent >= minDpPercent && dpPercent < 100);
   const invoiceNumber = `INV/EXP-${Date.now().toString().slice(-6)}`;
-  const shownInvoiceNumber = issuedInvoiceNumber || invoiceNumber;
   // Total computed by the server (price - private discount + PPN), shown after the registration was saved
   const shownTotal = issuedTotal ?? grandTotal;
+  const planLabel = paymentScheme === 'dp' ? `Uang Muka (DP ${dpPercent}%) Rp ${dpAmount.toLocaleString('id-ID')}, sisanya Pelunasan` : 'Bayar Penuh (100%)';
   const vaNumber = `8809${Math.floor(100000000000 + Math.random() * 900000000000)}`;
 
   const formatTime = (seconds) => {
@@ -307,6 +301,7 @@ export default function BookingModal({
     }
 
     // Mode is admin registration
+    if (adminStatusChoice !== 'sold' && dpInvalid) { setSubmitError(`DP minimal ${minDpPercent}% dan kurang dari 100%. Untuk 100% pilih "Bayar Penuh".`); return; }
     setIsProcessing(true);
     const isSold = adminStatusChoice === 'sold';
     const resolvedPaymentStatus = isSold ? 'PAID' : 'UNPAID';
@@ -327,8 +322,8 @@ export default function BookingModal({
       grandTotal,
       applyTax,
       taxRate: taxCfg.rate,
-      paymentType: 'full',
-      dpPercent: 0,
+      paymentType: !isSold && paymentScheme === 'dp' ? 'dp' : 'full',
+      dpPercent: !isSold && paymentScheme === 'dp' ? dpPercent : 0,
       paidAmount: isSold ? grandTotal : 0,
       remainingAmount: isSold ? 0 : grandTotal,
       bookingType: resolvedBookingType,
@@ -350,8 +345,6 @@ export default function BookingModal({
         handleAdminDirectSubmit(e);
       } else if (isAdmin) {
         handleAdminDirectSubmit(e);
-      } else if (isPaymentActive === false) {
-        handleConfirmPayment();
       } else {
         setStep('payment');
       }
@@ -432,12 +425,142 @@ export default function BookingModal({
         setStep('form');
         return;
       }
-      setIssuedInvoiceNumber(result?.order?.invoiceNumber || '');
-      setIssuedInvoice(result?.order?.invoice || null);
       setIssuedTotal(Number.isFinite(Number(result?.order?.totalAmount)) ? Number(result.order.totalAmount) : null);
       setStep('success');
     }
   };
+
+  // Payment plan chooser (Bayar Penuh / Uang Muka with a percentage): the same for visitors and staff
+  const schemePanel = (
+    <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 text-xs space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="font-bold text-slate-700">Pilihan Skema Pembayaran:</span>
+        <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
+          Bisa Uang Muka (DP)
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => setPaymentScheme('full')}
+          className={`p-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
+            paymentScheme === 'full'
+              ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+              : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+          }`}
+        >
+          <div>Bayar Penuh (100%)</div>
+          <div className={`text-[10px] mt-0.5 font-normal ${paymentScheme === 'full' ? 'text-indigo-100' : 'text-slate-400'}`}>
+            Dibayar Sekaligus
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setPaymentScheme('dp')}
+          className={`p-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
+            paymentScheme === 'dp'
+              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+              : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+          }`}
+        >
+          <div>Uang Muka / DP</div>
+          <div className={`text-[10px] mt-0.5 font-normal ${paymentScheme === 'dp' ? 'text-blue-100' : 'text-slate-400'}`}>
+            Minimal {minDpPercent}% dari total
+          </div>
+        </button>
+      </div>
+
+      {/* Rincian Biaya */}
+      <div className="pt-2 border-t border-slate-200 space-y-1.5">
+        {isMultiBooth && (
+          <div className="space-y-1 mb-2">
+            <span className="text-[11px] font-bold text-slate-700 block">Rincian Per Unit Booth:</span>
+            {boothList.map((b, idx) => (
+              <div key={b.id || idx} className="flex justify-between text-[11px] text-slate-600 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200/80">
+                <span>Booth {b.code || b.booth_number} ({b.category || 'Standard'} • {b.widthM || 3}x{b.heightM || 3}m)</span>
+                <span className="font-semibold text-slate-800 font-mono">
+                  {b.status === 'free' ? 'GRATIS' : `Rp ${(b.price || 5000000).toLocaleString('id-ID')}`}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex justify-between text-slate-600">
+          <span>Total Sewa {isMultiBooth ? `${boothList.length} Booth` : `Booth ${boothCode}`} {brandName ? `(${brandName})` : ''}</span>
+          <span className="font-semibold text-slate-800 font-mono">Rp {price.toLocaleString('id-ID')}</span>
+        </div>
+        {isAdmin && (
+          <div className="flex items-center justify-between gap-2 py-1">
+            <span className="text-slate-600">Pajak (PPN)</span>
+            <div className="flex bg-white border border-slate-200 rounded-lg p-0.5">
+              {[[true, `Dengan PPN ${taxCfg.rate}%`], [false, 'Tanpa PPN']].map(([val, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setAdminApplyTax(val)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer ${applyTax === val ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {!(taxIncluded && taxCfg.display === 'hide') && (
+          <div className="flex justify-between text-slate-600">
+            <span>{applyTax ? `PPN ${taxCfg.rate}%${taxIncluded ? ' (sudah termasuk dalam harga)' : ''}` : 'PPN'}</span>
+            <span className="font-semibold text-slate-800 font-mono">{applyTax ? `Rp ${ppn.toLocaleString('id-ID')}` : 'Tidak dikenakan'}</span>
+          </div>
+        )}
+        <div className="flex justify-between text-slate-600">
+          <span>Biaya Administrasi</span>
+          <span className="font-semibold text-emerald-600">GRATIS</span>
+        </div>
+
+        <div className="h-px bg-slate-200 my-1" />
+        <div className="flex justify-between text-sm font-black text-slate-900 pt-0.5">
+          <span>Total Tagihan Kontrak:</span>
+          <span className="font-mono text-base text-slate-900">
+            Rp {grandTotal.toLocaleString('id-ID')}
+          </span>
+        </div>
+        {taxIncluded && <div className="text-[10px] italic text-slate-500 text-right">{taxCfg.note}</div>}
+
+        {paymentScheme === 'dp' && (
+          <div className="mt-2 p-2.5 bg-blue-50/90 rounded-xl border border-blue-200 space-y-2 animate-fadeIn">
+            <div className="font-bold text-blue-900 text-xs">Berapa DP yang akan dibayarkan?</div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[...new Set([minDpPercent, 30, 50].filter(p => p >= minDpPercent && p < 100))].map(p => (
+                <button key={p} type="button" onClick={() => setDpPercentInput(String(p))}
+                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer ${dpPercent === p ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
+                  {p}%
+                </button>
+              ))}
+              <div className="flex items-center gap-1 ml-auto">
+                <input type="text" inputMode="decimal" value={dpPercentInput} onChange={(e) => setDpPercentInput(e.target.value)}
+                  className="w-16 px-2 py-1 rounded-lg border border-slate-300 bg-white text-xs font-bold text-right focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+                <span className="text-xs font-bold text-slate-600">%</span>
+              </div>
+            </div>
+            {dpInvalid && (
+              <div className="text-[11px] font-semibold text-rose-600">DP minimal {minDpPercent}% dan kurang dari 100%. Untuk 100% pilih "Bayar Penuh".</div>
+            )}
+            <div className="flex justify-between font-bold text-blue-900 text-xs">
+              <span>Uang Muka (DP {dpPercent}%):</span>
+              <span className="font-mono font-black text-emerald-700">Rp {dpAmount.toLocaleString('id-ID')}</span>
+            </div>
+            <div className="flex justify-between font-bold text-amber-800 text-xs border-t border-blue-200/60 pt-1">
+              <span>Sisa ditagih lewat Invoice Pelunasan:</span>
+              <span className="font-mono font-black text-amber-700">Rp {Math.max(0, grandTotal - dpAmount).toLocaleString('id-ID')}</span>
+            </div>
+            <div className="text-[10px] text-slate-500">Nominal akhir dihitung sistem dari harga resmi booth.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-md z-[100] flex items-center justify-center p-4 select-none animate-fadeIn">
@@ -715,6 +838,8 @@ export default function BookingModal({
                 </div>
               )}
 
+              {isAdmin && mode !== 'edit' && adminStatusChoice === 'reserved' && schemePanel}
+
               {/* Submit Button */}
               <button
                 type="submit"
@@ -727,10 +852,8 @@ export default function BookingModal({
                   <><CheckCircle2 size={16} /> Simpan Perubahan Biodata</>
                 ) : isAdmin ? (
                   <><CheckCircle2 size={16} /> Daftarkan Tenant & Terbitkan Invoice</>
-                ) : isPaymentActive !== false ? (
-                  <>Lanjut ke Menu Pembayaran <ArrowRight size={16} /></>
                 ) : (
-                  <>Konfirmasi Booking Booth (Tanpa Bayar Online) <CheckCircle2 size={16} /></>
+                  <>Lanjut: Pilih DP atau Bayar Penuh <ArrowRight size={16} /></>
                 )}
               </button>
             </form>
@@ -739,287 +862,14 @@ export default function BookingModal({
           {/* STEP 2: MENU PEMBAYARAN */}
           {step === 'payment' && (
             <div className="space-y-4">
-              {/* 2 OPSI PEMBAYARAN (tanpa payment gateway: pembayaran diverifikasi manual oleh tim keuangan) */}
-              <div>
-                <label className="block text-xs font-bold text-slate-800 mb-2">
-                  Pilih Opsi Pembayaran / Booking:
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {/* Opsi 1: Booking Dulu */}
-                  <button
-                    type="button"
-                    onClick={() => setBookingType('booking')}
-                    className={`p-3 rounded-2xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
-                      bookingType === 'booking'
-                        ? 'border-amber-500 bg-amber-50/80 ring-2 ring-amber-400/30 shadow-sm'
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full mb-1">
-                      <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
-                        <Clock size={16} />
-                      </div>
-                      {bookingType === 'booking' && <CheckCircle2 size={15} className="text-amber-600" />}
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-slate-900 leading-tight">1. Booking Dulu</div>
-                      <div className="text-[10px] text-amber-800 font-semibold mt-0.5">Hold 24 Jam</div>
-                    </div>
-                    <span className="text-[9px] text-slate-500 mt-1 line-clamp-2">Tanpa bayar sekarang, hold sementara</span>
-                  </button>
-
-                  {/* Opsi 2: Transfer Bank Manual */}
-                  <button
-                    type="button"
-                    onClick={() => setBookingType('manual_transfer')}
-                    className={`p-3 rounded-2xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
-                      bookingType === 'manual_transfer'
-                        ? 'border-blue-600 bg-blue-50/80 ring-2 ring-blue-500/30 shadow-sm'
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full mb-1">
-                      <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
-                        <Building size={16} />
-                      </div>
-                      {bookingType === 'manual_transfer' && <CheckCircle2 size={15} className="text-blue-600" />}
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-slate-900 leading-tight">2. Transfer Bank</div>
-                      <div className="text-[10px] text-blue-800 font-semibold mt-0.5">Rekening Resmi</div>
-                    </div>
-                    <span className="text-[9px] text-slate-500 mt-1 line-clamp-2">Transfer manual ke {orgCfg.banks.length ? orgCfg.banks.map(bank => bank.bankName).join(' / ') : 'rekening penyelenggara'}</span>
-                  </button>
-
-                </div>
+              <div className="p-3 bg-amber-50/90 rounded-2xl border border-amber-200 text-[11px] text-amber-950 flex gap-2">
+                <BookmarkCheck size={18} className="text-amber-600 shrink-0" />
+                <p className="leading-relaxed">
+                  Booth <b>{boothCode}</b> akan langsung ditandai <b>Reserved</b>. Pilih skema pembayaran di bawah, lalu hubungi admin lewat WhatsApp untuk konfirmasi. <b>Invoice diterbitkan oleh admin</b> setelah konfirmasi.
+                </p>
               </div>
 
-              {/* PANEL DETAIL SESUAI OPSI YANG DIPILIH */}
-
-              {/* DETAIL OPSI 1: BOOKING DULU */}
-              {bookingType === 'booking' && (
-                <div className="space-y-3 animate-fadeIn">
-                  <div className="bg-amber-50/90 p-4 rounded-2xl border border-amber-200 text-xs text-amber-950 space-y-2">
-                    <div className="flex items-center gap-2 font-bold text-amber-900 text-sm">
-                      <BookmarkCheck size={18} className="text-amber-600 shrink-0" />
-                      <span>Reservasi Sementara (Hold 24 Jam)</span>
-                    </div>
-                    <p className="text-slate-700 leading-relaxed text-[11px]">
-                      Pilihan ini memberikan Anda kesempatan untuk mengamankan lokasi booth <b>{boothCode}</b> tanpa harus langsung membayar sekarang. Unit akan ditandai dengan status <b>Reserved</b> di denah interaktif.
-                    </p>
-                    <div className="bg-white/80 p-3 rounded-xl border border-amber-200/80 space-y-1 text-[11px]">
-                      <div className="flex items-center gap-1.5 font-semibold text-amber-900">
-                        <Clock size={13} className="text-amber-600" /> Batas Waktu Hold: <b>24 Jam sejak pemesanan</b>
-                      </div>
-                      <p className="text-slate-500">
-                        Invoice resmi (status: <b>UNPAID</b>) akan langsung diterbitkan untuk proses pengajuan PO / persetujuan internal perusahaan Anda.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* DETAIL OPSI 2: TRANSFER BANK MANUAL */}
-              {bookingType === 'manual_transfer' && (
-                <div className="space-y-3 animate-fadeIn">
-                  <div className="bg-blue-50/70 p-3.5 rounded-2xl border border-blue-200 text-xs text-blue-950 space-y-2">
-                    <div className="flex items-center gap-2 font-bold text-blue-900">
-                      <Landmark size={16} className="text-blue-600 shrink-0" />
-                      <span>Rekening Resmi Penyelenggara{orgCfg.companyName ? ` (${orgCfg.companyName})` : ''}</span>
-                    </div>
-                    <p className="text-slate-600 text-[11px]">
-                      Silakan lakukan transfer sesuai total tagihan ke salah satu rekening resmi perusahaan kami di bawah ini:
-                    </p>
-
-                    {/* Daftar Rekening Bank Resmi */}
-                    <div className="space-y-2 pt-1">
-                      {orgCfg.banks.length === 0 && (
-                        <div className="p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-[11px]">Rekening penyelenggara belum diatur. Silakan hubungi panitia.</div>
-                      )}
-                      {orgCfg.banks.map((bank) => (
-                        <div 
-                          key={bank.id}
-                          className={`p-3 rounded-xl border bg-white flex items-center justify-between transition-all ${
-                            transferBank === bank.bankName ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200'
-                          }`}
-                        >
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-900 text-xs">{bank.bankName}</span>
-                              {bank.branch && <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-medium">{bank.branch}</span>}
-                            </div>
-                            <div className="font-mono text-sm font-black text-slate-800 tracking-wider mt-0.5">
-                              {bank.accountNumber}
-                            </div>
-                            <div className="text-[10px] text-slate-500">a.n. {bank.accountHolder}</div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleCopyBank(bank.accountNumber, bank.id)}
-                            className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                          >
-                            {copiedBankId === bank.id ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
-                            {copiedBankId === bank.id ? 'Tersalin' : 'Salin Rek'}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Input Konfirmasi Pengirim */}
-                    <div className="pt-2 border-t border-blue-200/60 space-y-2">
-                      <span className="text-[11px] font-bold text-blue-900 block">Informasi Rekening Pengirim (Opsional):</span>
-                      <div className="grid grid-cols-2 gap-2">
-                        <select
-                          value={transferBank}
-                          onChange={(e) => setTransferBank(e.target.value)}
-                          className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        >
-                          <option value="">Transfer ke: pilih rekening</option>
-                          {orgCfg.banks.map(bank => <option key={bank.id} value={bank.bankName}>Transfer ke: {bank.bankName}</option>)}
-                        </select>
-                        <input
-                          type="text"
-                          placeholder="Nama Pemilik Rekening Pengirim"
-                          value={transferSenderName}
-                          onChange={(e) => setTransferSenderName(e.target.value)}
-                          className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-
-              {/* Skema Pembayaran: Penuh vs Uang Muka (DP) */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 text-xs space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-700">Pilihan Skema Pembayaran:</span>
-                  <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
-                    Bisa Uang Muka (DP)
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setPaymentScheme('full')}
-                    className={`p-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
-                      paymentScheme === 'full'
-                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-                        : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                    }`}
-                  >
-                    <div>Bayar Penuh (100%)</div>
-                    <div className={`text-[10px] mt-0.5 font-normal ${paymentScheme === 'full' ? 'text-indigo-100' : 'text-slate-400'}`}>
-                      Dibayar Sekaligus
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPaymentScheme('dp')}
-                    className={`p-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
-                      paymentScheme === 'dp'
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                        : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                    }`}
-                  >
-                    <div>Uang Muka / DP</div>
-                    <div className={`text-[10px] mt-0.5 font-normal ${paymentScheme === 'dp' ? 'text-blue-100' : 'text-slate-400'}`}>
-                      Minimal {minDpPercent}% dari total
-                    </div>
-                  </button>
-                </div>
-
-                {/* Rincian Biaya */}
-                <div className="pt-2 border-t border-slate-200 space-y-1.5">
-                  {isMultiBooth && (
-                    <div className="space-y-1 mb-2">
-                      <span className="text-[11px] font-bold text-slate-700 block">Rincian Per Unit Booth:</span>
-                      {boothList.map((b, idx) => (
-                        <div key={b.id || idx} className="flex justify-between text-[11px] text-slate-600 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200/80">
-                          <span>Booth {b.code || b.booth_number} ({b.category || 'Standard'} • {b.widthM || 3}x{b.heightM || 3}m)</span>
-                          <span className="font-semibold text-slate-800 font-mono">
-                            {b.status === 'free' ? 'GRATIS' : `Rp ${(b.price || 5000000).toLocaleString('id-ID')}`}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex justify-between text-slate-600">
-                    <span>Total Sewa {isMultiBooth ? `${boothList.length} Booth` : `Booth ${boothCode}`} {brandName ? `(${brandName})` : ''}</span>
-                    <span className="font-semibold text-slate-800 font-mono">Rp {price.toLocaleString('id-ID')}</span>
-                  </div>
-                  {isAdmin && (
-                    <div className="flex items-center justify-between gap-2 py-1">
-                      <span className="text-slate-600">Pajak (PPN)</span>
-                      <div className="flex bg-white border border-slate-200 rounded-lg p-0.5">
-                        {[[true, `Dengan PPN ${taxCfg.rate}%`], [false, 'Tanpa PPN']].map(([val, label]) => (
-                          <button
-                            key={label}
-                            type="button"
-                            onClick={() => setAdminApplyTax(val)}
-                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer ${applyTax === val ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {!(taxIncluded && taxCfg.display === 'hide') && (
-                    <div className="flex justify-between text-slate-600">
-                      <span>{applyTax ? `PPN ${taxCfg.rate}%${taxIncluded ? ' (sudah termasuk dalam harga)' : ''}` : 'PPN'}</span>
-                      <span className="font-semibold text-slate-800 font-mono">{applyTax ? `Rp ${ppn.toLocaleString('id-ID')}` : 'Tidak dikenakan'}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-slate-600">
-                    <span>Biaya Administrasi</span>
-                    <span className="font-semibold text-emerald-600">GRATIS</span>
-                  </div>
-
-                  <div className="h-px bg-slate-200 my-1" />
-                  <div className="flex justify-between text-sm font-black text-slate-900 pt-0.5">
-                    <span>Total Tagihan Kontrak:</span>
-                    <span className="font-mono text-base text-slate-900">
-                      Rp {grandTotal.toLocaleString('id-ID')}
-                    </span>
-                  </div>
-                  {taxIncluded && <div className="text-[10px] italic text-slate-500 text-right">{taxCfg.note}</div>}
-
-                  {paymentScheme === 'dp' && (
-                    <div className="mt-2 p-2.5 bg-blue-50/90 rounded-xl border border-blue-200 space-y-2 animate-fadeIn">
-                      <div className="font-bold text-blue-900 text-xs">Berapa DP yang akan dibayarkan?</div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {[...new Set([minDpPercent, 30, 50].filter(p => p >= minDpPercent && p < 100))].map(p => (
-                          <button key={p} type="button" onClick={() => setDpPercentInput(String(p))}
-                            className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer ${dpPercent === p ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
-                            {p}%
-                          </button>
-                        ))}
-                        <div className="flex items-center gap-1 ml-auto">
-                          <input type="text" inputMode="decimal" value={dpPercentInput} onChange={(e) => setDpPercentInput(e.target.value)}
-                            className="w-16 px-2 py-1 rounded-lg border border-slate-300 bg-white text-xs font-bold text-right focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
-                          <span className="text-xs font-bold text-slate-600">%</span>
-                        </div>
-                      </div>
-                      {dpInvalid && (
-                        <div className="text-[11px] font-semibold text-rose-600">DP minimal {minDpPercent}% dan kurang dari 100%. Untuk 100% pilih "Bayar Penuh".</div>
-                      )}
-                      <div className="flex justify-between font-bold text-blue-900 text-xs">
-                        <span>Uang Muka (DP {dpPercent}%) dibayar sekarang:</span>
-                        <span className="font-mono font-black text-emerald-700">Rp {dpAmount.toLocaleString('id-ID')}</span>
-                      </div>
-                      <div className="flex justify-between font-bold text-amber-800 text-xs border-t border-blue-200/60 pt-1">
-                        <span>Sisa ditagih lewat Invoice Pelunasan:</span>
-                        <span className="font-mono font-black text-amber-700">Rp {Math.max(0, grandTotal - dpAmount).toLocaleString('id-ID')}</span>
-                      </div>
-                      <div className="text-[10px] text-slate-500">Nominal akhir dihitung sistem dari harga resmi booth; invoice DP bisa langsung diunduh setelah pemesanan.</div>
-                    </div>
-                  )}
-                </div>
-              </div>
+              {schemePanel}
 
               {/* Actions Button */}
               <div className="flex items-center gap-3 pt-2">
@@ -1031,227 +881,77 @@ export default function BookingModal({
                   <ArrowLeft size={14} /> Kembali
                 </button>
 
-                {/* Tombol Konfirmasi Sesuai Pilihan */}
-                {bookingType === 'booking' && (
-                  <button
-                    type="button"
-                    disabled={isProcessing || dpInvalid}
-                    onClick={handleConfirmPayment}
-                    className="flex-1 py-3 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-2xl font-bold text-xs shadow-lg shadow-amber-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
-                  >
-                    {isProcessing ? (
-                      <>Memproses Booking...</>
-                    ) : (
-                      <>
-                        <BookmarkCheck size={16} /> Konfirmasi Booking Booth (Hold 24 Jam)
-                      </>
-                    )}
-                  </button>
-                )}
-
-                {bookingType === 'manual_transfer' && (
-                  <button
-                    type="button"
-                    disabled={isProcessing || dpInvalid}
-                    onClick={handleConfirmPayment}
-                    className="flex-1 py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold text-xs shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
-                  >
-                    {isProcessing ? (
-                      <>Menyimpan Data Transfer...</>
-                    ) : (
-                      <>
-                        <Building size={16} /> Konfirmasi Transfer (Ajukan Verifikasi)
-                      </>
-                    )}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  disabled={isProcessing || dpInvalid}
+                  onClick={handleConfirmPayment}
+                  className="flex-1 py-3 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-2xl font-bold text-xs shadow-lg shadow-amber-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                >
+                  {isProcessing ? 'Memproses Pendaftaran...' : <><BookmarkCheck size={16} /> Konfirmasi Pendaftaran Booth</>}
+                </button>
               </div>
             </div>
           )}
 
-          {/* STEP 3: SUKSES / INVOICE */}
+          {/* STEP 3: SUKSES. Pendaftar tidak menerima invoice: admin menerbitkannya setelah konfirmasi WhatsApp */}
           {step === 'success' && (
             <div className="text-center py-3 space-y-4 animate-fadeIn">
-              {/* Icon & Title berdasarkan bookingType */}
-              {bookingType === 'booking' ? (
-                <>
-                  <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto ring-8 ring-amber-50 animate-bounce">
-                    <BookmarkCheck size={36} />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-black text-slate-900">Booking Booth Berhasil Di-Hold!</h3>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Unit booth <b>{boothCode}</b> resmi di-hold untuk <b>{brandName}</b> selama 24 jam.
-                    </p>
-                  </div>
-                </>
-              ) : bookingType === 'manual_transfer' ? (
-                <>
-                  <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto ring-8 ring-blue-50 animate-bounce">
-                    <Building size={36} />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-black text-slate-900">Pemesanan Berhasil Diajukan!</h3>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Terima kasih! Menunggu verifikasi mutasi transfer oleh tim finance kami.
-                    </p>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto ring-8 ring-emerald-50 animate-bounce">
-                    <CheckCircle2 size={36} />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-black text-slate-900">Pembayaran Berhasil & Terverifikasi!</h3>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Selamat! Booth <b>{boothCode}</b> resmi menjadi milik <b>{brandName}</b>.
-                    </p>
-                  </div>
-                </>
-              )}
+              <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto ring-8 ring-amber-50">
+                <BookmarkCheck size={36} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900">Pendaftaran Berhasil Diterima!</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Booth <b>{boothCode}</b> sudah ditandai Reserved untuk <b>{brandName}</b>.
+                </p>
+              </div>
 
-              {/* E-Receipt Card */}
               <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-left text-xs space-y-2 font-mono">
-                <div className="flex justify-between items-center pb-2 border-b border-slate-200">
-                  <span className="text-slate-500">NO. INVOICE</span>
-                  <span className="font-bold text-slate-800">{shownInvoiceNumber}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">EXHIBITOR</span>
-                  <span className="font-bold text-slate-800">{brandName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">PIC / PEMESAN</span>
-                  <span className="font-bold text-slate-800">{fullName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">NO. WHATSAPP</span>
-                  <span className="font-bold text-slate-800">{phone}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">BOOTH DI PESAN</span>
-                  <span className="font-bold text-indigo-600">{boothCode} ({firstBooth?.category || 'Standar'})</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">OPSI PEMESANAN</span>
-                  <span className="font-bold text-slate-800">
-                    {bookingType === 'booking' ? 'Booking Hold (24 Jam)' : bookingType === 'manual_transfer' ? `Transfer Manual (${transferBank})` : 'Payment Gateway Instan'}
-                  </span>
-                </div>
+                <div className="flex justify-between"><span className="text-slate-500">EXHIBITOR</span><span className="font-bold text-slate-800">{brandName}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">PIC / PEMESAN</span><span className="font-bold text-slate-800">{fullName}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">NO. WHATSAPP</span><span className="font-bold text-slate-800">{phone}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">BOOTH DI PESAN</span><span className="font-bold text-indigo-600">{boothCode} ({firstBooth?.category || 'Standar'})</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">SKEMA PEMBAYARAN</span><span className="font-bold text-slate-800">{planLabel}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">TOTAL TAGIHAN</span><span className="font-bold text-slate-800">Rp {shownTotal.toLocaleString('id-ID')}</span></div>
                 <div className="flex justify-between pt-2 border-t border-slate-200 font-sans">
-                  <span className="text-slate-500 font-bold">STATUS TRANSAKSI</span>
-                  {bookingType === 'booking' ? (
-                    <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-black text-[11px]">
-                      🟡 RESERVED (HOLD 24 JAM)
-                    </span>
-                  ) : bookingType === 'manual_transfer' ? (
-                    <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-black text-[11px]">
-                      🔵 PENDING VERIFIKASI
-                    </span>
-                  ) : (
-                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded font-black text-[11px]">
-                      🟢 LUNAS (PAID)
-                    </span>
-                  )}
+                  <span className="text-slate-500 font-bold">STATUS</span>
+                  <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-black text-[11px]">🟡 RESERVED, MENUNGGU KONFIRMASI ADMIN</span>
                 </div>
               </div>
 
-              {/* WhatsApp Quick Action Button jika Booking Dulu atau Transfer Manual */}
-              {(bookingType === 'booking' || bookingType === 'manual_transfer') && orgCfg.whatsapp && (
-                <div className="p-3 bg-emerald-50/80 rounded-2xl border border-emerald-200 text-left text-xs flex items-center justify-between gap-3">
-                  <div className="text-[11px] text-emerald-950">
-                    <span className="font-bold block">Hubungi Admin / Finance via WhatsApp:</span>
-                    <p className="text-slate-600 text-[10px]">Kirimkan konfirmasi atau bukti transfer langsung untuk respons cepat.</p>
-                  </div>
+              <div className="p-3 bg-emerald-50/80 rounded-2xl border border-emerald-200 text-left text-xs space-y-2">
+                <div className="text-[11px] text-emerald-950">
+                  <span className="font-bold block">Langkah selanjutnya: konfirmasi ke admin via WhatsApp</span>
+                  <p className="text-slate-600 text-[10px]">Invoice diterbitkan oleh admin penyelenggara setelah Anda mengonfirmasi pendaftaran.</p>
+                </div>
+                {orgCfg.whatsapp ? (
                   <a
                     href={`https://wa.me/${orgCfg.whatsapp}?text=${encodeURIComponent(
-                      bookingType === 'booking'
-                        ? `Halo Admin${orgCfg.companyName ? ` ${orgCfg.companyName}` : ''}, saya telah melakukan pemesanan (Hold 24 Jam) booth pameran:\n\n• No. Invoice: ${shownInvoiceNumber}\n• Perusahaan: ${brandName}\n• PIC: ${fullName}\n• No. Booth: ${boothCode}\n• Total: Rp ${shownTotal.toLocaleString('id-ID')}\n\nMohon info tata cara pelunasan lebih lanjut. Terima kasih.`
-                        : `Halo Finance${orgCfg.companyName ? ` ${orgCfg.companyName}` : ''}, saya ingin mengonfirmasi transfer manual pembayaran booth pameran:\n\n• No. Invoice: ${shownInvoiceNumber}\n• Perusahaan: ${brandName}\n• PIC: ${fullName}\n• No. Booth: ${boothCode}\n• Rekening Tujuan: ${transferBank}\n• Pengirim: ${transferSenderName || fullName}\n• Total: Rp ${shownTotal.toLocaleString('id-ID')}\n\nBerikut bukti transfer saya. Mohon verifikasinya. Terima kasih.`
+                      `Halo Admin${orgCfg.companyName ? ` ${orgCfg.companyName}` : ''}, saya telah mendaftar booth pameran:\n\n• Perusahaan: ${brandName}\n• PIC: ${fullName}\n• No. Booth: ${boothCode}\n• Skema Pembayaran: ${planLabel}\n• Total: Rp ${shownTotal.toLocaleString('id-ID')}\n\nMohon konfirmasi dan penerbitan invoice. Terima kasih.`
                     )}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors shrink-0 shadow-sm"
+                    className="w-full px-3 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
                   >
-                    <Send size={13} /> Kirim WhatsApp
+                    <Send size={13} /> Konfirmasi via WhatsApp Admin
                   </a>
-                </div>
-              )}
-
-              {/* Bottom Buttons */}
-              <div className="flex items-center gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowA4Invoice(true)}
-                  className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <FileText size={14} /> Lihat Invoice A4
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowA4Invoice(true)}
-                  className="flex-1 py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Download size={14} /> Unduh / Print
-                </button>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md cursor-pointer"
-                >
-                  Tutup
-                </button>
+                ) : (
+                  <p className="text-[11px] font-semibold text-emerald-900">Silakan hubungi admin penyelenggara untuk konfirmasi.</p>
+                )}
               </div>
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors shadow-md cursor-pointer"
+              >
+                Tutup
+              </button>
             </div>
           )}
         </div>
       </div>
 
-      {showA4Invoice && (
-        <InvoiceA4View
-          invoice={issuedInvoice || {
-            id: `INV-${boothCode}`,
-            invoice_number: shownInvoiceNumber,
-            issue_date: new Date().toISOString().split('T')[0],
-            due_date: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
-            client_name: fullName,
-            company_name: brandName,
-            email: email,
-            phone: phone,
-            address: 'Alamat Pemesan Exhibitor',
-            booth_code: boothCode,
-            booth_category: booth?.category || 'Standard',
-            event_name: 'Indonesia International Expo 2026',
-            event_venue: 'Jakarta Convention Center (Hall A)',
-            subtotal: price,
-            discount: 0,
-            tax_rate: taxSplit.rate,
-            tax_amount: ppn,
-            tax_method: taxSplit.method,
-            tax_display: taxIncluded ? taxCfg.display : 'show',
-            tax_note: taxCfg.note,
-            dpp_amount: taxSplit.dpp,
-            grand_total: grandTotal,
-            payment_status: bookingType === 'booking' ? 'UNPAID' : bookingType === 'manual_transfer' ? 'PENDING' : 'PAID',
-            payment_method: bookingType === 'booking' ? 'Booking Hold (24 Jam)' : bookingType === 'manual_transfer' ? `Transfer Bank Manual (${transferBank})` : `Payment Gateway (${paymentMethod.toUpperCase()})`,
-            items: isMultiBooth ? boothList.map(b => ({
-              description: `Sewa Booth Pameran ${b.code || b.booth_number} (${b.category || 'Standard'} • ${b.widthM || 3}x${b.heightM || 3}m)`,
-              price: b.price || 5000000,
-              qty: 1,
-              total: b.price || 5000000
-            })) : [
-              {
-                description: `Sewa Booth Pameran ${boothCode} (${firstBooth?.category || 'Standard'})`,
-                price: price,
-                qty: 1,
-                total: price
-              }
-            ]
-          }}
-          onClose={() => setShowA4Invoice(false)}
-        />
-      )}
     </div>
   );
 }

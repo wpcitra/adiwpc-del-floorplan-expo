@@ -1,5 +1,5 @@
 // Online registration with a DP chosen by the visitor (Setting "DP minimal"), and the issued invoice returned so the
-// registrant can download it right away (AGENTS.md §12: a DP chosen at registration is a plan, nothing is paid yet)
+// registrant gets NO invoice: staff issue it after the WhatsApp confirmation (AGENTS.md §12)
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, boothObject, createPublishedFloorplan } from './helpers.js';
@@ -17,21 +17,16 @@ before(async () => {
 });
 after(async () => { await s?.stop(); });
 
-test('pengunjung memilih DP 20%: Invoice DP diterbitkan & dikembalikan untuk diunduh, belum ada pembayaran', async () => {
+test('pengunjung memilih DP 20%: booth Reserved, TIDAK ada invoice, rencana DP dicatat untuk admin', async () => {
   const r = await s.api('POST', '/orders/checkout', visitor('D-01', { paymentType: 'dp', dpPercent: 20, paidAmount: 999 }));
   assert.equal(r.status, 200, r.text);
-  const inv = r.body.order.invoice;
-  assert.ok(inv, 'invoice ikut dikirim ke pendaftar');
-  assert.equal(inv.invoice_number, r.body.order.invoiceNumber);
-  assert.equal(inv.invoice_kind, 'dp');
-  assert.equal(inv.total_amount, 1110000, 'DP 20% dari 5.550.000 (harga + PPN 11%)');
-  assert.equal(inv.dp_percent, 20);
-  assert.equal(inv.payment_status, 'UNPAID');
-  assert.equal(inv.paid_amount, 0, 'DP masih rencana sampai keuangan mengonfirmasi');
-  assert.ok(inv.tax_view, 'lengkap untuk dokumen A4');
-  // the same invoice as in Manajemen Invoice
-  const same = (await s.api('GET', `/invoices/${inv.id}`, undefined, { as: 'finance' })).body.invoice;
-  assert.equal(same.total_amount, inv.total_amount);
+  assert.equal(r.body.order.invoice, null, 'pendaftar tidak menerima invoice');
+  assert.equal(r.body.order.invoiceNumber, null);
+  assert.equal(r.body.order.boothStatus, 'reserved');
+  const invoices = (await s.api('GET', '/invoices', undefined, { as: 'finance' })).body.invoices || [];
+  assert.equal(invoices.filter(i => /D-01/.test(i.booth_code)).length, 0, 'invoice hanya diterbitkan staf');
+  const sum = await s.api('GET', `/booth-actions/summary?floorplanId=${FP}&boothCode=D-01`, undefined, { as: 'sales' });
+  assert.match(JSON.stringify(sum.body), /DP 20%/, 'rencana pembayaran tersimpan di catatan booking');
 });
 
 test('DP di bawah minimal atau 100% ditolak untuk pengunjung', async () => {
@@ -52,9 +47,9 @@ test('DP minimal mengikuti Setting', async () => {
   assert.equal(pub.publicMinDpPercent, 30, 'form pengunjung membaca minimal dari Setting');
 });
 
-test('bayar penuh tetap satu invoice penuh', async () => {
+test('bayar penuh dari pengunjung juga tanpa invoice', async () => {
   const r = await s.api('POST', '/orders/checkout', visitor('D-04', { paymentType: 'full' }));
   assert.equal(r.status, 200, r.text);
-  assert.equal(r.body.order.invoice.invoice_kind, 'full');
-  assert.equal(r.body.order.invoice.total_amount, 5550000);
+  assert.equal(r.body.order.invoice, null);
+  assert.equal(r.body.order.boothStatus, 'reserved');
 });

@@ -129,15 +129,14 @@ test('mengubah pajak kontrak yang berjalan butuh konfirmasi; invoice belum dibay
   assert.equal(pl.tax_method, 'inclusive');
 });
 
-test('pengunjung mengikuti default Setting: harga sudah termasuk PPN', async () => {
+test('pengunjung: perkiraan total mengikuti default Setting, tanpa invoice', async () => {
   const cfg = await s.api('POST', '/invoices/config', { config: { defaultTaxMethod: 'inclusive', defaultTaxDisplay: 'show', publicBookingTax: true } }, { as: 'superadmin' });
   assert.equal(cfg.status, 200, cfg.text);
   const r = await s.api('POST', '/orders/checkout', staffReg('P-06', { taxMethod: 'none' }));
   assert.equal(r.status, 200, r.text);
-  const [full] = await invoicesOf('P-06');
-  assert.equal(full.tax_method, 'inclusive', 'pengunjung tidak bisa memilih');
-  assert.equal(full.total_amount, 5000000);
-  assert.equal(full.tax_amount, 495495);
+  assert.equal(r.body.order.invoice, null, 'pengunjung tidak mendapat invoice');
+  assert.equal((await invoicesOf('P-06')).length, 0);
+  assert.equal(r.body.order.totalAmount, 5000000, 'perkiraan total mengikuti default Setting (sudah termasuk PPN)');
 });
 
 test('invoice lama: PPN hanya di total kontrak dipisah ulang dari tarif yang tersimpan (total tidak berubah)', () => {

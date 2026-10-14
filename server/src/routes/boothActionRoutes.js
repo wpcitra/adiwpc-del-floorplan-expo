@@ -5,7 +5,7 @@ import { computeContractTax } from '../../../shared/invoiceTax.js';
 import { taxOptionsFrom, readSalesDiscountLimit } from '../utils/taxSettings.js';
 import { saveBoothDiscount, discountAmountFor } from '../utils/boothDiscount.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
-import { buildInvoiceRow } from './invoiceRoutes.js';
+import { buildInvoiceRow, createContractInvoice } from './invoiceRoutes.js';
 import { writeAuditLog } from '../middleware/audit.js';
 import { clientIp } from '../middleware/auth.js';
 
@@ -194,6 +194,26 @@ router.post('/invoice', (req, res) => {
       const action = actionsFor(booth, live).invoice;
       if (!action.enabled) return { status: 409, body: { success: false, code: 'ACTION_NOT_ALLOWED', error: action.reason } };
       if (action.mode === 'booking') return { status: 409, body: { success: false, code: 'NEED_BOOKING', error: `Booth ${booth.code} belum punya tenant. Buat Booking Manual terlebih dahulu.` } };
+
+      // The tenant chose a DP at registration: the first invoice is that Invoice DP (the Pelunasan is issued later),
+      // through the same code as Finance's DP wizard
+      const plan = db.prepare(`
+        SELECT payment_type, dp_percent FROM orders
+        WHERE floorplan_id = ? AND deleted_at IS NULL AND UPPER(COALESCE(payment_status, '')) != 'CANCELED'
+          AND TRIM(COALESCE(invoice_number, '')) = '' AND LOWER(TRIM(booth_code)) = LOWER(TRIM(?))
+        ORDER BY created_at DESC LIMIT 1`).get(floorplanId, booth.code);
+      if (plan?.payment_type === 'dp' && Number(plan.dp_percent) > 0) {
+        let out; let code = 200;
+        const capture = { status(c) { code = c; return this; }, json(b) { out = b; return this; } };
+        createContractInvoice({ body: { invoiceKind: 'dp', floorplanId, boothCode: booth.code, boothId: booth.id, dpMode: 'percent', dpValue: plan.dp_percent }, user: req.user }, capture);
+        if (!out?.success) return { status: code === 200 ? 500 : code, body: out || { success: false, error: 'Gagal menerbitkan Invoice DP' } };
+        db.prepare(`
+          UPDATE orders SET invoice_number = ?
+          WHERE floorplan_id = ? AND deleted_at IS NULL AND UPPER(COALESCE(payment_status, '')) != 'CANCELED'
+            AND TRIM(COALESCE(invoice_number, '')) = '' AND LOWER(TRIM(booth_code)) = LOWER(TRIM(?))
+        `).run(out.invoice.invoice_number, floorplanId, booth.code);
+        return { status: 200, booth, id: out.invoice.id, invoiceNumber: out.invoice.invoice_number, total: out.invoice.total_amount, discount: Number(out.invoice.discount_amount) || 0 };
+      }
 
       // Sales always follows the PPN setting; Finance / Super Admin may choose (applyTax / taxMethod)
       const row = draftInvoiceRow(booth, req.user.role === 'sales' ? {} : req.body);

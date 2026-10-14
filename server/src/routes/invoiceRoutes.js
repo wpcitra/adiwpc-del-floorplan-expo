@@ -12,7 +12,7 @@ import { clientIp } from '../middleware/auth.js';
 import { syncPaymentStatusFromInvoices } from '../utils/syncPaymentStatus.js';
 import { saveBoothDiscount } from '../utils/boothDiscount.js';
 import { externalizeImages, CONFIG_INLINE_KEYS } from '../utils/uploads.js';
-import { renderInvoicePdf, printBaseUrl, pdfTokenValid, PdfEngineError } from '../utils/pdfRenderer.js';
+import { renderInvoicePdf, printBaseUrl, PdfEngineError } from '../utils/pdfRenderer.js';
 import { cleanInvoiceNumber, invoiceFormatProblem, cleanNumberNext, DEFAULT_INVOICE_NUMBER_FORMAT } from '../../../shared/invoiceNumbering.js';
 import { cleanDueDays, DEFAULT_DUE_DAYS } from '../../../shared/invoiceDates.js';
 import { canDeleteInvoice, canDeletePaidInvoice, canRestoreInvoice, cleanDeleteReason, sameInvoiceNumber, DELETE_REASON_MIN } from '../../../shared/invoicePermissions.js';
@@ -514,17 +514,14 @@ router.post('/pdf-preview', async (req, res) => {
   return sendInvoicePdf(req, res, { ...invoice, id: 'preview' }, { ...invoiceDesign(true), ...(config && typeof config === 'object' ? config : {}) });
 });
 
-// GET /api/invoices/:id/pdf: the issued invoice as PDF. Staff: any logged-in role that can open invoices. A registrant
-// who is not logged in: only with the signed token of the checkout response (`order.invoice.pdfToken`).
+// GET /api/invoices/:id/pdf: the issued invoice as PDF, for any logged-in role that can open invoices.
+// Registrants (not logged in) get no invoice: staff issue it (AGENTS.md §12).
 router.get('/:id/pdf', async (req, res) => {
   const row = db.prepare('SELECT id FROM invoices WHERE (id = ? OR invoice_number = ?) AND deleted_at IS NULL').get(req.params.id, req.params.id);
-  const staff = Boolean(req.user);
-  if (!staff && !(row && pdfTokenValid(row.id, req.query.token))) {
-    return res.status(401).json({ success: false, error: 'Silakan login terlebih dahulu' });
-  }
+  if (!req.user) return res.status(401).json({ success: false, error: 'Silakan login terlebih dahulu' });
   const invoice = row ? buildInvoiceRow(row.id) : null;
   if (!invoice) return res.status(404).json({ success: false, error: 'Invoice tidak ditemukan' });
-  return sendInvoicePdf(req, res, invoice, invoiceDesign(staff));
+  return sendInvoicePdf(req, res, invoice, invoiceDesign(true));
 });
 
 // ---------- Hapus Invoice, Tempat Sampah & Pulihkan (AGENTS.md §31) ----------
@@ -682,7 +679,7 @@ function fixDatesFromBody(id, body = {}) {
     .run(on(body.issueDateFixed) && isDate(body.issueDate) ? 1 : 0, on(body.dueDateFixed) && isDate(body.dueDate) ? 1 : 0, id);
 }
 
-function createContractInvoice(req, res) {
+export function createContractInvoice(req, res) {
   const {
     invoiceKind,
     floorplanId,

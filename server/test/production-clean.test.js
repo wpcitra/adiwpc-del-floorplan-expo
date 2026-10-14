@@ -66,17 +66,17 @@ test('production: hanya Super Admin pertama, password dari INITIAL_ADMIN_PASSWOR
     const finance = await s.api('POST', '/auth/login', { email: 'keuangan@expo.local', password: 'keuangan123' });
     assert.equal(finance.status, 401, 'akun contoh lain tidak dibuat');
 
-    // Checkout: a visitor cannot choose (and so overwrite) an invoice number
+    // Checkout: the form cannot choose (and so overwrite) an invoice number
     const FP = 'FP-TEST-CLEAN';
     await createPublishedFloorplan(s.api, FP, [boothObject('Q-01', { left: 0, top: 0 }), boothObject('Q-02', { left: 300, top: 0 })]);
     const reg = (code, extra = {}) => ({
       floorplanId: FP, boothCodes: [code], fullName: 'Ani', brandName: `Brand ${code}`, email: `${code}@contoh.test`,
       phone: '081234567890', bookingType: 'booking', ...extra
     });
-    const first = await s.api('POST', '/orders/checkout', reg('Q-01'));
+    const first = await s.api('POST', '/orders/checkout', reg('Q-01'), { as: 'superadmin' });
     assert.equal(first.status, 200, first.text);
     const taken = first.body.order.invoiceNumber;
-    const second = await s.api('POST', '/orders/checkout', reg('Q-02', { invoiceNumber: taken }));
+    const second = await s.api('POST', '/orders/checkout', reg('Q-02', { invoiceNumber: taken }), { as: 'superadmin' });
     assert.equal(second.status, 200, second.text);
     assert.notEqual(second.body.order.invoiceNumber, taken);
     const list = (await s.api('GET', `/invoices?floorplanId=${FP}`, undefined, { as: 'superadmin' })).body.invoices;

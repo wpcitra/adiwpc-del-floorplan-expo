@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 // Invoice PDF (AGENTS.md §34): headless Chromium opens the app's own print route (/print/invoice/:id), which renders
@@ -126,22 +125,4 @@ export function renderInvoicePdf({ invoice, config, baseUrl }) {
   });
   queue = job.catch(() => {});
   return job;
-}
-
-// ---- Download link for a registrant who is not logged in (the "Selesai" step of the public registration) ----
-// A signed, short-lived token for ONE invoice; there is still no public invoice link (AGENTS.md §12, §20).
-const TOKEN_SECRET = process.env.PDF_TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
-const TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
-const sign = (invoiceId, expires) => crypto.createHmac('sha256', TOKEN_SECRET).update(`${invoiceId}:${expires}`).digest('hex');
-
-export function pdfTokenFor(invoiceId) {
-  const expires = Date.now() + TOKEN_TTL_MS;
-  return `${expires}.${sign(String(invoiceId), expires)}`;
-}
-
-export function pdfTokenValid(invoiceId, token) {
-  const [expires, signature] = String(token || '').split('.');
-  if (!expires || !signature || !/^\d+$/.test(expires) || Number(expires) < Date.now()) return false;
-  const expected = sign(String(invoiceId), Number(expires));
-  return signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }

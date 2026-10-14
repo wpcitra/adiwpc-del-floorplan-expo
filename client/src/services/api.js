@@ -1480,6 +1480,18 @@ export const api = {
     }
   },
 
+  // WhatsApp assistant (Fonnte) settings, Super Admin: the token is write-only
+  async waSettings(method = 'GET', path = '', body) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/maintenance/whatsapp${path}${method === 'GET' ? `?_t=${Date.now()}` : ''}`, {
+        method, headers: { 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {})
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Server tidak dapat dihubungi' };
+    }
+  },
+
   // 50. Fetch Users (Super Admin, Keuangan, Sales)
   async fetchUsers() {
     try {

@@ -25,6 +25,8 @@ import maintenanceRoutes, { reportRouter as errorReportRoutes } from './routes/m
 import agentRoutes from './routes/agentRoutes.js';
 import boothActionRoutes from './routes/boothActionRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
+import whatsappRoutes from './routes/whatsappRoutes.js';
+import whatsappSettingsRoutes from './routes/whatsappSettingsRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
 import { attachChatSocket } from './utils/chatSocket.js';
 import { migrateEmbeddedImages } from './utils/uploads.js';
@@ -120,8 +122,10 @@ app.use('/api/audit-logs', auditRoutes);
 app.use('/api/ops', opsRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/errors', errorReportRoutes);
 app.use('/api/maintenance/agent', agentRoutes);
+app.use('/api/maintenance/whatsapp', whatsappSettingsRoutes);
 app.use('/api/maintenance', maintenanceRoutes);
 
 // Unhandled route errors: recorded for the Pusat Maintenance, answered without internal details

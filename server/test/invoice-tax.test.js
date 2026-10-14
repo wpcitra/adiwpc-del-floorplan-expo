@@ -30,7 +30,7 @@ before(async () => {
 after(async () => { await s?.stop(); });
 
 test('pesanan 3 booth yang tidak bersebelahan menghasilkan SATU invoice berisi semua booth', async () => {
-  const r = await s.api('POST', '/orders/checkout', reg(['C-01', 'A-01', 'B-01']));
+  const r = await s.api('POST', '/orders/checkout', reg(['C-01', 'A-01', 'B-01']), { as: 'superadmin' });
   assert.equal(r.status, 200, r.text);
   assert.equal(r.body.order.invoiceNumbers.length, 1);
   const inv = await invoicesOf('A-01');
@@ -46,20 +46,19 @@ test('pesanan 3 booth yang tidak bersebelahan menghasilkan SATU invoice berisi s
   }
 });
 
-test('pengunjung: PPN mengikuti Setting (default 11%), dihitung server; total dari form diabaikan', async () => {
+test('pengunjung: total dihitung server (PPN dari Setting), total dari form diabaikan, TIDAK ada invoice; staf menerbitkannya', async () => {
   const r = await s.api('POST', '/orders/checkout', reg(['D-01'], { totalAmount: 1000 }));
   assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.order.totalAmount, 11100000, 'total palsu dari form tidak dipakai');
+  assert.equal(r.body.order.invoice, null);
+  assert.equal((await invoicesOf('D-01')).length, 0, 'pendaftar tidak mendapat invoice');
+  // staff issue it (Sales: PPN follows Setting's default)
+  const made = await s.api('POST', '/booth-actions/invoice', { floorplanId: FP, boothCode: 'D-01' }, { as: 'sales' });
+  assert.equal(made.status, 200, made.text);
   const [inv] = await invoicesOf('D-01');
   assert.equal(inv.subtotal, 10000000);
-  assert.equal(inv.tax_rate, 11);
-  assert.equal(inv.tax_amount, 1100000);
-  assert.equal(inv.total_amount, 11100000, 'total palsu dari form tidak dipakai');
-  assert.equal(inv.contract_tax_rate, 11);
-  assert.equal(r.body.order.totalAmount, 11100000);
-  // a visitor cannot switch the tax off
-  const r2 = await s.api('POST', '/orders/checkout', reg(['D-02'], { applyTax: false, taxRate: 0 }));
-  assert.equal(r2.status, 200, r2.text);
-  assert.equal((await invoicesOf('D-02'))[0].tax_rate, 11);
+  assert.equal(inv.tax_rate, 0, 'PPN invoice staf mengikuti default Setting (tanpa PPN), bukan pengaturan pengunjung');
+  assert.equal(inv.total_amount, 10000000);
 });
 
 test('staf memilih Tanpa PPN atau Dengan PPN (tarif sendiri)', async () => {
@@ -77,17 +76,15 @@ test('staf memilih Tanpa PPN atau Dengan PPN (tarif sendiri)', async () => {
   assert.equal(b.total_amount, 5600000);
 });
 
-test('Setting "PPN pemesanan online" nonaktif: pengunjung tidak dikenakan PPN', async () => {
+test('Setting "PPN pemesanan online" nonaktif: total perkiraan pengunjung tanpa PPN, tetap tanpa invoice', async () => {
   const cfg = await s.api('POST', '/invoices/config', { config: { publicBookingTax: false } }, { as: 'superadmin' });
   assert.equal(cfg.status, 200, cfg.text);
-  // release E-02 first so it can be booked again by a visitor
   const detach = await s.api('POST', '/orders/detach-tenant', { floorplanId: FP, boothCode: 'E-02' }, { as: 'superadmin' });
   assert.equal(detach.status, 200, detach.text);
   const r = await s.api('POST', '/orders/checkout', reg(['E-02'], { email: 'baru@contoh.test', brandName: 'Baru' }));
   assert.equal(r.status, 200, r.text);
-  const inv = (await invoicesOf('E-02')).find(i => i.company_name === 'Baru');
-  assert.equal(inv.tax_rate, 0);
-  assert.equal(inv.total_amount, 5000000);
+  assert.equal(r.body.order.totalAmount, 5000000);
+  assert.equal(r.body.order.invoice, null);
 });
 
 test('mengedit invoice penuh menjadi Tanpa PPN: nilai kontrak ikut berubah, lunas = PAID', async () => {
