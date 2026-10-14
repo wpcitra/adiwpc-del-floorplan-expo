@@ -1,5 +1,5 @@
 import express from 'express';
-import { waEnabled, secretMatches, incomingMessage, staffByPhone, sendText } from '../utils/whatsapp.js';
+import { waEnabled, secretMatches, incomingMessage, staffByPhone, sendText, sendFile } from '../utils/whatsapp.js';
 import { answerStaff } from '../utils/waAgent.js';
 
 // WhatsApp (Fonnte) webhook of the staff assistant (AGENTS.md §45). Public path; Fonnte does not sign its calls, so the
@@ -28,7 +28,12 @@ export async function processMessage(m) {
     await sendText(m.from, 'Saat ini saya hanya membaca pesan teks. Voice note dan gambar belum didukung, silakan ketik pertanyaannya.');
     return;
   }
-  await sendText(m.from, await answerStaff(user, m.text));
+  // The answer is one text, or several parts: texts and a document ({ file, filename, caption }, e.g. the invoice PDF)
+  for (const part of [].concat(await answerStaff(user, m.text))) {
+    if (typeof part === 'string') { await sendText(m.from, part); continue; }
+    const sentFile = await sendFile(m.from, part.file, part.filename, part.caption);
+    if (!sentFile.ok) await sendText(m.from, `PDF ${part.filename} tidak terkirim lewat WhatsApp (${sentFile.reason}). Unduh dari aplikasi.`);
+  }
 }
 
 // POST: answered at once (200), the reply is sent afterwards through Fonnte. A wrong secret looks like a missing page.

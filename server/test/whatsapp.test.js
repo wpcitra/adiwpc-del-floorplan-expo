@@ -1,4 +1,4 @@
-// Asisten WhatsApp (Fonnte) untuk staf, Tahap 1 (AGENTS.md §45): rahasia di URL webhook, hanya nomor staf, hanya membaca,
+// Asisten WhatsApp (Fonnte) untuk staf (AGENTS.md §45): rahasia di URL webhook, hanya nomor staf, AI tidak menyimpan langsung,
 // voice note ditolak sopan. Fonnte dan Claude adalah tiruan lokal: tes tidak memanggil layanan asli.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -97,9 +97,10 @@ test('detail booth memuat rencana pembayaran DP dan tidak membocorkan email', as
   assert.ok(!/email/i.test(toolResult), 'tanpa email');
 });
 
-test('Tahap 1 hanya membaca: tool tulis seperti buat_invoice tidak ada, tidak ada invoice yang lahir', async () => {
+test('AI tidak punya tool yang langsung menyimpan: tool karangan seperti buat_invoice tidak melahirkan invoice', async () => {
+  // Tahap 2: booking / invoice hanya DISIAPKAN (siapkan_*); menyimpan butuh balasan YA dari staf (whatsapp-tahap2.test.js)
   const tools = claudeSeen[0].tools.map(t => t.name).sort();
-  assert.deepEqual(tools, ['cari_booth', 'daftar_project', 'detail_booth', 'ringkasan_project']);
+  assert.deepEqual(tools, ['booth_tersedia', 'cari_booth', 'daftar_project', 'detail_booth', 'ringkasan_project', 'siapkan_booking', 'siapkan_invoice']);
   const n = sent.length;
   await call(text('6281234567890', 'BUATKAN invoice A-01'));
   await waitSent(n + 1);

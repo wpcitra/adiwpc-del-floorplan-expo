@@ -77,3 +77,27 @@ export async function sendText(to, text) {
   }
   return { ok: true, reason: '' };
 }
+
+// A document (the invoice PDF) as an upload, so no public link is ever made. Fonnte allows files on its
+// Super / Advanced / Ultra packages, max 4 MB; otherwise its `reason` comes back and the caller says so in text.
+export async function sendFile(to, buffer, filename, caption = '') {
+  const form = new FormData();
+  form.append('target', to);
+  form.append('message', caption);
+  form.append('filename', filename);
+  form.append('countryCode', '0');
+  form.append('file', new Blob([buffer], { type: 'application/pdf' }), filename);
+  try {
+    const res = await fetch(`${apiBase()}/send`, { method: 'POST', headers: { Authorization: env('FONNTE_TOKEN') }, body: form, signal: AbortSignal.timeout(60000) });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || out.status === false) {
+      const reason = String(out.reason || `HTTP ${res.status}`);
+      console.error(`WhatsApp (Fonnte) kirim file gagal: ${reason}`);
+      return { ok: false, reason };
+    }
+    return { ok: true, reason: '' };
+  } catch (e) {
+    console.error('WhatsApp (Fonnte) kirim file gagal (jaringan)');
+    return { ok: false, reason: 'Server tidak dapat menghubungi api.fonnte.com' };
+  }
+}

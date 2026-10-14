@@ -59,7 +59,7 @@ export default function FonnteSettings() {
       </div>
 
       <p className="text-xs text-slate-500 leading-relaxed">
-        Staf (Sales, Keuangan, Super Admin) bisa bertanya lewat WhatsApp ke nomor asisten tentang booth, tenant, dan invoice. Hubungkan nomor asisten di{' '}
+        Staf (Sales, Keuangan, Super Admin) bisa bertanya lewat WhatsApp ke nomor asisten tentang booth, tenant, dan invoice, melihat booth yang tersedia, serta minta booking booth dan invoice (PDF-nya dikirim ke WhatsApp; mengirim file butuh paket Fonnte Super / Advanced / Ultra). Booking dan invoice baru disimpan setelah staf membalas <b>YA</b>. Hubungkan nomor asisten di{' '}
         <a href="https://fonnte.com" target="_blank" rel="noopener noreferrer" className="text-emerald-700 font-semibold underline">fonnte.com</a>{' '}
         (menu Device, scan QR), lalu salin <b>Token</b> device-nya ke sini. Token hanya disimpan di server (<code className="bg-slate-100 px-1 py-0.5 rounded">server/.env</code>) dan <b>tidak pernah ditampilkan lagi</b>.
       </p>
