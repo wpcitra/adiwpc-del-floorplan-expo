@@ -59,7 +59,7 @@ export default function FonnteSettings() {
       </div>
 
       <p className="text-xs text-slate-500 leading-relaxed">
-        Staf (Sales, Keuangan, Super Admin) bisa bertanya lewat WhatsApp ke nomor asisten tentang booth, tenant, dan invoice, melihat booth yang tersedia, serta minta booking booth dan invoice (PDF-nya dikirim ke WhatsApp; mengirim file butuh paket Fonnte Super / Advanced / Ultra). Booking dan invoice baru disimpan setelah staf membalas <b>YA</b>. Hubungkan nomor asisten di{' '}
+        Staf (Sales, Keuangan, Super Admin) mengirim kata perintah ke nomor asisten (ketik <b>MENU</b>): booth yang tersedia, detail booth, cari tenant, ringkasan, booking booth, dan invoice (PDF-nya dikirim ke WhatsApp; mengirim file butuh paket Fonnte Super / Advanced / Ultra). Tanpa AI, tanpa kunci Claude. Booking dan invoice baru disimpan setelah staf membalas <b>YA</b>. Hubungkan nomor asisten di{' '}
         <a href="https://fonnte.com" target="_blank" rel="noopener noreferrer" className="text-emerald-700 font-semibold underline">fonnte.com</a>{' '}
         (menu Device, scan QR), lalu salin <b>Token</b> device-nya ke sini. Token hanya disimpan di server (<code className="bg-slate-100 px-1 py-0.5 rounded">server/.env</code>) dan <b>tidak pernah ditampilkan lagi</b>.
       </p>
@@ -102,7 +102,7 @@ export default function FonnteSettings() {
             <label className="block text-xs font-bold text-slate-700 mb-1">{status?.tokenConfigured ? 'Ganti token Fonnte' : 'Token Fonnte'}</label>
             <div className="flex items-center bg-white border border-slate-200 rounded-xl px-3 focus-within:border-emerald-400">
               <KeyRound size={14} className="text-slate-400 shrink-0" />
-              <input type={showToken ? 'text' : 'password'} name="fonnte-token" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Token dari Fonnte > Device" autoComplete="new-password" spellCheck={false}
+              <input type={showToken ? 'text' : 'password'} name="fonnte-token" value={token} onChange={(e) => setToken(e.target.value)} placeholder={status?.tokenConfigured ? `Token tersimpan (${status.tokenHint}). Isi hanya untuk mengganti.` : 'Token dari Fonnte > Device'} autoComplete="new-password" spellCheck={false}
                 className="flex-1 bg-transparent px-2 py-2.5 text-xs font-mono text-slate-800 focus:outline-none" />
               <button type="button" onClick={() => setShowToken(v => !v)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer" aria-label={showToken ? 'Sembunyikan token' : 'Tampilkan token'}>
                 {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -156,9 +156,10 @@ export default function FonnteSettings() {
           {/* Test message */}
           <div className="p-4 rounded-2xl border border-slate-200 space-y-2">
             <div className="text-sm font-bold text-slate-900">Kirim pesan tes</div>
-            <p className="text-[11px] text-slate-500">Mengirim satu pesan dari nomor asisten. Ini juga membuktikan token benar.</p>
+            <p className="text-[11px] text-slate-500">Mengirim satu pesan dari nomor asisten ke nomor yang Anda isi. Ini juga membuktikan token benar. Isi pesannya dibuat otomatis.</p>
+            <label htmlFor="wa-test-target" className="block text-xs font-bold text-slate-700">Nomor HP tujuan (bukan isi pesan)</label>
             <div className="flex gap-2">
-              <input value={testTarget} onChange={(e) => setTestTarget(e.target.value)} className={input} placeholder="Nomor tujuan, contoh 081234567890" inputMode="tel" aria-label="Nomor tujuan tes" />
+              <input id="wa-test-target" value={testTarget} onChange={(e) => setTestTarget(e.target.value)} className={input} placeholder="Nomor WhatsApp Anda, contoh 081234567890" inputMode="tel" />
               <button type="button" disabled={Boolean(busy) || !testTarget.trim()} onClick={() => run('test', () => api.waSettings('POST', '/test', { target: testTarget }))}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shrink-0">
                 {busy === 'test' ? <RefreshCw size={13} className="animate-spin" /> : <Send size={13} />} Kirim Tes
