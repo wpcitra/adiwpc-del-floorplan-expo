@@ -30,6 +30,12 @@ import { api } from '../../services/api';
 import BroadcastTenantModal from '../../components/admin/BroadcastTenantModal';
 import GenerateTenantFacilityModal from '../../components/admin/GenerateTenantFacilityModal';
 
+// Suggested facility categories; any other name can be typed and is then suggested too (taken from the saved items)
+const DEFAULT_FACILITY_CATEGORIES = [
+  'Listrik & Pencahayaan', 'Furnitur & Meja-Kursi', 'Sanitasi & Air', 'Konstruksi & Karpet', 'Jaringan & IT',
+  'Multimedia & Display', 'Kebersihan & Layanan', 'Aksesoris & Branding', 'Keamanan & Safety'
+];
+
 export default function FacilityRequestsPage() {
   const [activeTab, setActiveTab] = useState('requests'); // 'requests' | 'builder'
   const [requests, setRequests] = useState([]);
@@ -235,18 +241,26 @@ export default function FacilityRequestsPage() {
     setItemModalOpen(true);
   };
 
+  // Every category already used (built-in suggestions, saved forms and templates, this form), without duplicates
+  const categoryOptions = [...new Set([
+    ...DEFAULT_FACILITY_CATEGORIES,
+    ...forms.flatMap(f => (Array.isArray(f.items) ? f.items : []).map(i => i.category)),
+    ...builderForm.items.map(i => i.category)
+  ].map(c => String(c || '').trim()).filter(Boolean))];
+
   const handleSaveItem = () => {
     if (!itemDraft.name.trim()) {
       showToast('⚠️ Nama fasilitas wajib diisi');
       return;
     }
+    const saved = { ...itemDraft, category: String(itemDraft.category || '').trim().replace(/\s+/g, ' ') || 'Lainnya' };
 
     setBuilderForm(prev => {
       const items = [...prev.items];
       if (editingItemIdx !== null) {
-        items[editingItemIdx] = { ...itemDraft };
+        items[editingItemIdx] = saved;
       } else {
-        items.push({ ...itemDraft, id: itemDraft.id || `item_${Date.now()}` });
+        items.push({ ...saved, id: saved.id || `item_${Date.now()}` });
       }
       return { ...prev, items };
     });
@@ -803,22 +817,21 @@ export default function FacilityRequestsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Kategori</label>
-                  <select
+                  <label htmlFor="facility-item-category" className="block text-xs font-semibold text-slate-700 mb-1">Kategori</label>
+                  <input
+                    id="facility-item-category"
+                    list="facility-category-options"
                     value={itemDraft.category}
                     onChange={(e) => setItemDraft({ ...itemDraft, category: e.target.value })}
+                    placeholder="Pilih atau ketik kategori baru"
+                    maxLength={60}
+                    autoComplete="off"
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="Listrik & Pencahayaan">Listrik & Pencahayaan</option>
-                    <option value="Furnitur & Meja-Kursi">Furnitur & Meja-Kursi</option>
-                    <option value="Sanitasi & Air">Sanitasi & Air</option>
-                    <option value="Konstruksi & Karpet">Konstruksi & Karpet</option>
-                    <option value="Jaringan & IT">Jaringan & IT</option>
-                    <option value="Multimedia & Display">Multimedia & Display</option>
-                    <option value="Kebersihan & Layanan">Kebersihan & Layanan</option>
-                    <option value="Aksesoris & Branding">Aksesoris & Branding</option>
-                    <option value="Keamanan & Safety">Keamanan & Safety</option>
-                  </select>
+                  />
+                  <datalist id="facility-category-options">
+                    {categoryOptions.map(c => <option key={c} value={c} />)}
+                  </datalist>
+                  <p className="text-[10px] text-slate-500 mt-1">Pilih dari daftar, atau ketik nama kategori baru (misalnya Catering).</p>
                 </div>
 
                 <div>
