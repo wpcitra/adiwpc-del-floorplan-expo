@@ -158,7 +158,27 @@ html.print-route #invoice-print-sheet { margin: 0 auto; }
   }
   /* Chromium prints a blurred box-shadow as a grey rectangle: the sheet's soft badge shadows are left out on paper */
   html.print-route .invoice-sheet,
-  html.print-route .invoice-sheet * { box-shadow: none !important; }
+  html.print-route .invoice-sheet *,
+  html.print-route #printable-facility-form-a4,
+  html.print-route #printable-facility-form-a4 * { box-shadow: none !important; }
+  /* the facility form may run over several pages: its table head / foot rows give each page its margins and the
+     kop surat (data-kop-bg) is fixed, so it is printed on every page (AGENTS.md §46) */
+  html.print-route #printable-facility-form-a4 {
+    position: static !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+    break-inside: auto !important;
+    page-break-inside: auto !important;
+  }
+  html.print-route #printable-facility-form-a4 [data-kop-bg] {
+    position: fixed !important;
+    display: block !important;
+    max-width: none !important;
+  }
   html.print-route #invoice-print-sheet {
     page: invoice;
     width: auto !important;

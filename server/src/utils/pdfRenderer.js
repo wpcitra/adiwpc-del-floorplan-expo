@@ -99,20 +99,18 @@ export function printBaseUrl(req, port) {
 let queue = Promise.resolve();
 
 /**
- * Render { invoice, config } to an A4 PDF Buffer. `invoice` is the row every page shows (INVOICE_ROW_SQL +
- * invoiceRowMapper); `config` the invoice design (Desain Layout Invoice).
+ * Render a print route of the client to an A4 PDF Buffer. `payload` is injected as `window[globalName]` before the
+ * page runs; the page marks itself `data-print-ready="1"` once its stylesheet, fonts and images are in.
  */
-export function renderInvoicePdf({ invoice, config, baseUrl }) {
+function renderPrintRoutePdf({ baseUrl, route, globalName, payload }) {
   const job = queue.then(async () => {
     const browser = await getBrowser();
     const page = await browser.newPage();
     try {
       await page.setViewport({ width: 794, height: 1123, deviceScaleFactor: 1 });
       // (as script text: this file is linted as server code, `window` exists only inside the page)
-      await page.evaluateOnNewDocument(`window.__INVOICE_PRINT__ = ${JSON.stringify({ invoice, config }).replace(/</g, '\\u003c')};`);
-      const id = encodeURIComponent(String(invoice?.id || 'preview'));
-      await page.goto(`${baseUrl}/print/invoice/${id}`, { waitUntil: 'networkidle0', timeout: 30000 });
-      // the print page marks the sheet once the stylesheet, the fonts and every image (logo, signature) are in
+      await page.evaluateOnNewDocument(`window.${globalName} = ${JSON.stringify(payload).replace(/</g, '\\u003c')};`);
+      await page.goto(`${baseUrl}${route}`, { waitUntil: 'networkidle0', timeout: 30000 });
       await page.waitForSelector('[data-print-ready="1"]', { timeout: 20000 });
       await page.evaluate('document.fonts.ready.then(() => true)');
       return Buffer.from(await page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true, margin: { top: 0, right: 0, bottom: 0, left: 0 } }));
@@ -125,4 +123,21 @@ export function renderInvoicePdf({ invoice, config, baseUrl }) {
   });
   queue = job.catch(() => {});
   return job;
+}
+
+/**
+ * Render { invoice, config } to an A4 PDF Buffer. `invoice` is the row every page shows (INVOICE_ROW_SQL +
+ * invoiceRowMapper); `config` the invoice design (Desain Layout Invoice).
+ */
+export function renderInvoicePdf({ invoice, config, baseUrl }) {
+  const id = encodeURIComponent(String(invoice?.id || 'preview'));
+  return renderPrintRoutePdf({ baseUrl, route: `/print/invoice/${id}`, globalName: '__INVOICE_PRINT__', payload: { invoice, config } });
+}
+
+/**
+ * Render the facility form (FacilityFormA4View: { tenant, form, items, mode, docNumber }) with the invoice design
+ * `config` (logo, colours, kop surat) to an A4 PDF Buffer; a long form continues on the next page (AGENTS.md §46).
+ */
+export function renderFacilityFormPdf({ sheet, config, baseUrl }) {
+  return renderPrintRoutePdf({ baseUrl, route: '/print/facility-form', globalName: '__FACILITY_PRINT__', payload: { ...sheet, config } });
 }

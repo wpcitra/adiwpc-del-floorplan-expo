@@ -44,6 +44,28 @@ export async function downloadInvoicePdf({ invoice, config = null, preview = fal
 }
 
 /**
+ * Download the facility form (FacilityFormA4View, AGENTS.md §46) as PDF made by the server through /print/facility-form,
+ * with the saved design and kop surat. Same result shape as downloadInvoicePdf.
+ */
+export async function downloadFacilityFormPdf({ tenant, form, items, mode, docNumber, fileName }) {
+  try {
+    const res = await apiFetch(`${API_BASE_URL}/facilities/form-pdf`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant, form, items, mode, docNumber })
+    });
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      return { success: false, unavailable: res.status === 503, error: json.error || `PDF gagal dibuat (HTTP ${res.status})` };
+    }
+    saveBlob(await res.blob(), fileName || 'Formulir_Fasilitas.pdf');
+    return { success: true };
+  } catch (e) {
+    return { success: false, unavailable: true, error: 'Server tidak dapat dihubungi' };
+  }
+}
+
+/**
  * Print with this browser: the print route in a hidden frame, fed with the invoice and design shown on screen
  * (also a design that is not saved, or a visitor's invoice). The dialog opens once the page says it is ready.
  */

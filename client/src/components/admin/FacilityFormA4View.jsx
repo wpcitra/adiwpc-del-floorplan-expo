@@ -100,21 +100,45 @@ export default function FacilityFormA4View({
     ? items.reduce((sum, item) => sum + ((Number(item.qty) || 0) * (Number(item.price) || 0)), 0)
     : 0;
 
+  // Page margins: an empty table head / foot row, repeated by the browser on every printed page (same idea as the
+  // invoice's KopFrame, AGENTS.md §42). With a letterhead the bottom margin also keeps the letterhead's own footer
+  // (logo, address) free; a long form continues on the next page instead of being cut off.
+  const marginBottomMm = cfg.letterheadUrl ? 38 : 12;
+
   return (
     <div className="w-full flex justify-center">
       <div 
         ref={printRef}
         id="printable-facility-form-a4"
-        className={`printable-a4-sheet bg-white text-slate-900 shadow-2xl rounded-sm border border-slate-200 relative flex flex-col justify-between font-sans print:shadow-none print:border-none print:m-0 ${cfg.fontFamily || 'font-sans'}`}
+        data-print-pages="1"
+        className={`printable-a4-sheet bg-white text-slate-900 shadow-2xl rounded-sm border border-slate-200 relative font-sans print:shadow-none print:border-none print:m-0 ${cfg.fontFamily || 'font-sans'}`}
         style={{
           boxSizing: 'border-box',
           width: '210mm',
           minHeight: '297mm',
           maxWidth: '210mm',
-          padding: '12mm 14mm',
-          backgroundColor: '#ffffff'
+          padding: 0,
+          backgroundColor: '#ffffff',
+          isolation: 'isolate' // the letterhead (z-index -1) sits above the white sheet and below the content
         }}
       >
+        {cfg.letterheadUrl && (
+          // Kop surat (Desain Layout Invoice > Logo & Posisi, AGENTS.md §42): the A4 letterhead behind the whole form;
+          // printed (page margin 0, printInvoiceElement) it is fixed, so it covers every page
+          <img
+            src={cfg.letterheadUrl}
+            alt=""
+            aria-hidden="true"
+            data-kop-bg="1"
+            className="pointer-events-none select-none"
+            style={{ position: 'absolute', top: 0, left: 0, width: '210mm', height: '297mm', objectFit: 'fill', zIndex: -1 }}
+          />
+        )}
+        <table className="w-full border-collapse">
+          <thead><tr><td style={{ height: '12mm', padding: 0 }} /></tr></thead>
+          <tfoot><tr><td style={{ height: `${marginBottomMm}mm`, padding: 0 }} /></tr></tfoot>
+          <tbody><tr><td style={{ padding: '0 14mm', verticalAlign: 'top' }}>
+        <div className="flex flex-col justify-between" style={{ minHeight: `${297 - 12 - marginBottomMm - 1}mm` }}>
         {/* TOP CONTAINER (SECTIONS 1 TO 4) */}
         <div>
           {/* SECTION 1: STANDARDIZED KOP SURAT PERUSAHAAN (IDENTICAL TO REAL-TIME LIVE CANVAS PREVIEW) */}
@@ -145,7 +169,7 @@ export default function FacilityFormA4View({
                 {cfg.companyName || 'PT Wahyu Promo Citra'}
               </h1>
               <p className="text-[11px] text-slate-500 max-w-lg mx-auto">
-                {cfg.companyAddress} • Telp: {cfg.companyPhone} • Email: {cfg.companyEmail}
+                {cfg.companyAddress}
               </p>
 
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
@@ -329,9 +353,6 @@ export default function FacilityFormA4View({
               </div>
               <div className="space-y-0.5 text-slate-600 text-[11px]">
                 <div className="leading-tight">{cfg.companyAddress || 'Gedung Exhibition Plaza Lt. 4, Jakarta Pusat'}</div>
-                <div>Telp: <b className="text-slate-800">{cfg.companyPhone || '+62 21-555-8899'}</b></div>
-                <div>Email: <b className="text-slate-800">{cfg.companyEmail || 'info@expokarya.id'}</b></div>
-                {cfg.companyWebsite && <div>Web: <b className="text-slate-800">{cfg.companyWebsite}</b></div>}
               </div>
             </div>
           </div>
@@ -380,7 +401,7 @@ export default function FacilityFormA4View({
                   const itemSubtotal = qty * price;
 
                   return (
-                    <tr key={idx} className="hover:bg-slate-50/60">
+                    <tr key={idx} className="hover:bg-slate-50/60" style={{ breakInside: 'avoid' }}>
                       <td className="py-2 px-3 text-center text-slate-500 font-mono text-[11px]">
                         {idx + 1}
                       </td>
@@ -429,10 +450,10 @@ export default function FacilityFormA4View({
 
             {/* Total Row in filled mode */}
             {mode === 'filled' && totalAmount > 0 && (
-              <div className="pt-2 flex justify-end">
-                <div className="w-64 bg-slate-50 border border-slate-200 rounded-xl p-2.5 flex items-baseline justify-between text-xs">
+              <div className="pt-2 flex justify-end" style={{ breakInside: 'avoid' }}>
+                <div className="min-w-64 bg-slate-50 border border-slate-200 rounded-xl p-2.5 flex items-baseline justify-between gap-4 text-xs">
                   <span className="font-bold uppercase text-slate-700">Total Biaya Fasilitas:</span>
-                  <span className="font-mono font-black text-slate-950 text-sm">
+                  <span className="font-mono font-black text-slate-950 text-sm whitespace-nowrap">
                     Rp {totalAmount.toLocaleString('id-ID')}
                   </span>
                 </div>
@@ -442,7 +463,7 @@ export default function FacilityFormA4View({
         </div>
 
         {/* BOTTOM CONTAINER (SECTION 5: INSTRUCTIONS, BANK & DUAL SIGNATURE) */}
-        <div className="pt-3 border-t-2 space-y-3 shrink-0" style={{ borderColor: primaryColor }}>
+        <div className="pt-3 border-t-2 space-y-3 shrink-0" style={{ borderColor: primaryColor, breakInside: 'avoid' }}>
           
           {/* Ketentuan & Rekening Pembayaran */}
           <div className="grid grid-cols-2 gap-4 text-[10px] text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
@@ -517,7 +538,9 @@ export default function FacilityFormA4View({
             Dokumen Formulir Resmi diterbitkan oleh {cfg.companyName || 'PT Wahyu Promo Citra'} • Dicetak melalui Floorplan Studio System
           </div>
         </div>
-
+        </div>
+          </td></tr></tbody>
+        </table>
       </div>
     </div>
   );

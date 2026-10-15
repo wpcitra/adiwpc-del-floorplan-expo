@@ -1,6 +1,3 @@
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
-
 /**
  * Pre-load and convert external images to base64 or ensure completed loading
  */
@@ -92,6 +89,7 @@ export async function printInvoiceElement(elementOrId = 'printable-invoice-a4') 
         print-color-adjust: exact !important;
         color-adjust: exact !important;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      }
       body * {
         visibility: visible !important;
       }
@@ -139,6 +137,21 @@ export async function printInvoiceElement(elementOrId = 'printable-invoice-a4') 
     </style>
   `;
 
+  // A sheet marked data-print-pages (the facility form) may run over several pages: its own table head / foot rows
+  // give every page its margins, and a letterhead marked data-kop-bg is fixed so it is printed on each page.
+  const pagedPrintCss = element.dataset?.printPages ? `
+    <style>
+      html, body { height: auto !important; max-height: none !important; overflow: visible !important; }
+      html body #${element.id} {
+        position: static !important; height: auto !important; min-height: 0 !important; max-height: none !important;
+        overflow: visible !important;
+        padding: 0 !important; display: block !important;
+        page-break-inside: auto !important; break-inside: auto !important;
+      }
+      html body #${element.id} [data-kop-bg] { position: fixed !important; display: block !important; }
+    </style>
+  ` : '';
+
   iframeDoc.open();
   iframeDoc.write(`
     <!DOCTYPE html>
@@ -148,6 +161,7 @@ export async function printInvoiceElement(elementOrId = 'printable-invoice-a4') 
         <title>Print Invoice A4</title>
         ${headStyles}
         ${isolatedPrintCss}
+        ${pagedPrintCss}
       </head>
       <body>
         ${element.outerHTML}
@@ -192,101 +206,4 @@ export async function printInvoiceElement(elementOrId = 'printable-invoice-a4') 
       }
     }, 4000);
   }
-}
-
-/**
- * Generate and download official A4 PDF document matching Live Canvas Preview
- */
-export async function downloadInvoicePDF(elementOrId = 'printable-invoice-a4', fileName = 'Invoice.pdf') {
-  const element = typeof elementOrId === 'string' 
-    ? document.getElementById(elementOrId) 
-    : elementOrId;
-
-  if (!element) {
-    throw new Error('Elemen invoice tidak ditemukan');
-  }
-
-  // Preload images
-  await prepareElementImages(element);
-
-  // Render to canvas with safe CORS options and unscaled clone
-  const canvas = await html2canvas(element, {
-    scale: 2, // 2x DPI for crisp text, logos & vectors
-    useCORS: true,
-    allowTaint: false,
-    backgroundColor: '#ffffff',
-    logging: false,
-    scrollY: 0,
-    scrollX: 0,
-    onclone: (clonedDoc) => {
-      // Find the target invoice/form element inside the cloned document
-      const targetId = typeof elementOrId === 'string' ? elementOrId : (element?.id || 'printable-invoice-a4');
-      const clonedTarget = clonedDoc.getElementById(targetId) || 
-        clonedDoc.getElementById('printable-facility-form-a4') || 
-        clonedDoc.getElementById('printable-invoice-a4') || 
-        clonedDoc.querySelector('.printable-a4-sheet') || 
-        clonedDoc.querySelector('[id^="printable-"]');
-      if (clonedTarget) {
-        // Reset any CSS transforms on cloned element and its parents
-        let parent = clonedTarget.parentElement;
-        while (parent && parent.nodeType === 1) {
-          parent.style.transform = 'none';
-          parent.style.zoom = '1';
-          parent.style.filter = 'none';
-          parent.style.backdropFilter = 'none';
-          parent.style.overflow = 'visible';
-          parent = parent.parentElement;
-        }
-
-        clonedTarget.style.transform = 'none';
-        clonedTarget.style.boxShadow = 'none';
-        clonedTarget.style.border = 'none';
-        clonedTarget.style.width = '210mm';
-        clonedTarget.style.height = '297mm';
-        clonedTarget.style.minHeight = '297mm';
-        clonedTarget.style.maxHeight = '297mm';
-        clonedTarget.style.boxSizing = 'border-box';
-        clonedTarget.style.margin = '0 auto';
-        clonedTarget.style.visibility = 'visible';
-        clonedTarget.style.display = 'flex';
-        clonedTarget.style.flexDirection = 'column';
-        clonedTarget.style.justifyContent = 'space-between';
-      }
-    }
-  });
-
-  // Create jsPDF instance (ISO A4: 210mm x 297mm)
-  const pdf = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: 'a4',
-    compress: true
-  });
-
-  const pdfWidth = 210;
-  const pdfHeight = 297;
-  const imgWidth = pdfWidth;
-  const imgHeight = (canvas.height * pdfWidth) / canvas.width;
-
-  // Single page invoice check (standard A4 with 15mm tolerance for sub-pixel differences)
-  if (imgHeight <= pdfHeight + 15) {
-    pdf.addImage(canvas, 'PNG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
-  } else {
-    let heightLeft = imgHeight;
-    let position = 0;
-
-    pdf.addImage(canvas, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-    heightLeft -= pdfHeight;
-
-    while (heightLeft > 5) {
-      position = heightLeft - imgHeight;
-      pdf.addPage();
-      pdf.addImage(canvas, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-      heightLeft -= pdfHeight;
-    }
-  }
-
-  const cleanName = fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`;
-  pdf.save(cleanName);
-  return true;
 }

@@ -480,7 +480,7 @@ router.get('/', (req, res) => {
 
 // ---------- Invoice PDF (AGENTS.md §34) ----------
 // The stored design; visitors (token download) get it without the signature image, like GET /config (§20)
-function invoiceDesign(forStaff) {
+export function invoiceDesign(forStaff) {
   let saved = {};
   try { saved = JSON.parse(db.prepare('SELECT config_json FROM invoice_settings WHERE id = ?').get('default_template')?.config_json || '{}'); } catch (e) { saved = {}; }
   const config = { ...DEFAULT_SYSTEM_CONFIG, ...saved };

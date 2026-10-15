@@ -22,6 +22,7 @@ const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
 const AuditLogPage = lazy(() => import('./pages/admin/AuditLogPage'));
 const MaintenancePage = lazy(() => import('./pages/admin/MaintenancePage'));
 const InvoicePrintPage = lazy(() => import('./pages/print/InvoicePrintPage'));
+const FacilityFormPrintPage = lazy(() => import('./pages/print/FacilityFormPrintPage'));
 
 const PageLoading = () => (
   <div className="h-screen w-full flex items-center justify-center bg-slate-50 text-xs font-semibold text-slate-500" role="status">Memuat…</div>
@@ -47,6 +48,8 @@ function App() {
 
         {/* Invoice sheet alone at A4: the source of the server's PDF and of "Print Invoice" (AGENTS.md §34) */}
         <Route path="/print/invoice/:id" element={<InvoicePrintPage />} />
+        {/* Facility form sheet alone: the source of the server's "Download PDF A4" (AGENTS.md §46) */}
+        <Route path="/print/facility-form" element={<FacilityFormPrintPage />} />
 
         {/* Staff Login */}
         <Route path="/login" element={<LoginPage />} />

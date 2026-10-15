@@ -18,7 +18,8 @@ import {
   Minus
 } from 'lucide-react';
 import FacilityFormA4View from './FacilityFormA4View';
-import { downloadInvoicePDF, printInvoiceElement } from '../../utils/invoicePrintUtils';
+import { printInvoiceElement } from '../../utils/invoicePrintUtils';
+import { downloadFacilityFormPdf } from '../../utils/invoicePdf';
 import { DEFAULT_INVOICE_CONFIG } from '../../utils/invoiceTemplateConfig';
 import { api, getCachedInvoiceConfig } from '../../services/api';
 
@@ -194,15 +195,19 @@ export default function GenerateTenantFacilityModal({
       const safeCompany = manualTenant.companyName ? manualTenant.companyName.replace(/[^a-zA-Z0-9_-]/g, '_') : 'Tenant';
       const fileName = `Formulir_Fasilitas_${safeBooth}_${safeCompany}.pdf`;
 
-      const targetEl = document.getElementById('printable-facility-form-a4');
-      await downloadInvoicePDF(targetEl, fileName);
-
-      if (showToast) {
-        showToast('📄 Dokumen PDF Formulir Fasilitas berhasil diunduh!');
+      // made by the server from the same A4 template (with the kop surat); without a PDF engine there the browser's
+      // print dialog ("Simpan sebagai PDF") gives the same sheet
+      const result = await downloadFacilityFormPdf({
+        tenant: manualTenant, form: activeForm || {}, items: currentItems, mode: formMode, fileName
+      });
+      if (result.success) {
+        if (showToast) showToast('📄 Dokumen PDF Formulir Fasilitas berhasil diunduh!');
+      } else if (result.unavailable) {
+        if (showToast) showToast('PDF belum bisa dibuat server. Pilih "Simpan sebagai PDF" di dialog cetak.');
+        await printInvoiceElement('printable-facility-form-a4');
+      } else if (showToast) {
+        showToast(`⚠️ ${result.error}`);
       }
-    } catch (e) {
-      console.error(e);
-      if (showToast) showToast('⚠️ Gagal membuat file PDF formulir');
     } finally {
       setIsGeneratingPDF(false);
     }

@@ -2,6 +2,8 @@ import express from 'express';
 import db from '../db.js';
 import crypto from 'crypto';
 import { nextInvoiceNumber } from '../utils/contractBilling.js';
+import { renderFacilityFormPdf, printBaseUrl, PdfEngineError } from '../utils/pdfRenderer.js';
+import { invoiceDesign } from './invoiceRoutes.js';
 
 const router = express.Router();
 
@@ -553,6 +555,39 @@ router.post('/requests/:id/generate-invoice', (req, res) => {
   } catch (error) {
     console.error('Error generating invoice for facility request:', error);
     res.status(500).json({ success: false, message: `Gagal membuat invoice fasilitas: ${error.message}` });
+  }
+});
+
+// POST /api/facilities/form-pdf { tenant, form, items, mode, docNumber }: "Download PDF A4" of the facility form, made
+// by the server from the same A4 template (FacilityFormA4View) with the saved design and its kop surat (AGENTS.md §46).
+// The browser cannot make it itself: html2canvas does not read Tailwind v4's oklch() colours (§34). Nothing is stored.
+const pdfNamePart = (v, fallback) => String(v || fallback).replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 60) || fallback;
+router.post('/form-pdf', async (req, res) => {
+  req.skipAudit = true;
+  const { tenant, form, items, mode, docNumber } = req.body || {};
+  if (!form || typeof form !== 'object' || Array.isArray(form)) return res.status(400).json({ success: false, error: 'Data formulir wajib diisi' });
+  const list = Array.isArray(items) ? items : (Array.isArray(form.items) ? form.items : []);
+  if (list.length > 300) return res.status(400).json({ success: false, error: 'Item formulir terlalu banyak (maks. 300)' });
+  const sheet = {
+    tenant: tenant && typeof tenant === 'object' ? tenant : {},
+    form,
+    items: list,
+    mode: mode === 'filled' ? 'filled' : 'blank',
+    docNumber: docNumber ? String(docNumber).slice(0, 80) : ''
+  };
+  try {
+    const pdf = await renderFacilityFormPdf({ sheet, config: invoiceDesign(true), baseUrl: printBaseUrl(req, req.socket?.localPort || process.env.PORT || 5001) });
+    const fileName = `Formulir_Fasilitas_${pdfNamePart(sheet.tenant.boothCode, 'Booth')}_${pdfNamePart(sheet.tenant.companyName, 'Tenant')}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(pdf);
+  } catch (error) {
+    if (error instanceof PdfEngineError && error.code === 'PDF_ENGINE_UNAVAILABLE') {
+      return res.status(503).json({ success: false, code: error.code, error: 'Mesin PDF (Chromium) belum tersedia di server. Gunakan Print A4 lalu "Simpan sebagai PDF".' });
+    }
+    console.error('Facility form PDF error:', error);
+    return res.status(500).json({ success: false, code: 'PDF_RENDER_FAILED', error: 'PDF formulir gagal dibuat. Coba lagi, atau gunakan Print A4.' });
   }
 });
 

@@ -1,9 +1,16 @@
 // Menu Fasilitas (AGENTS.md §46): Sales dan Operasional memakai seluruh menu (form, pengajuan, status, invoice
 // fasilitas, daftar tenant untuk broadcast); invoice fasilitas yang dihapus membuat pengajuannya REJECTED, dan
-// memulihkan invoice itu mengembalikan pengajuan ke INVOICED.
+// memulihkan invoice itu mengembalikan pengajuan ke INVOICED; PDF formulir dibuat server.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startServer, boothObject, createPublishedFloorplan } from './helpers.js';
+import { chromiumPath } from '../src/utils/pdfRenderer.js';
+
+const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist/index.html');
+const canRender = Boolean(chromiumPath()) && fs.existsSync(DIST);
 
 let s;
 const FP = 'FP-TEST-FASILITAS';
@@ -119,4 +126,25 @@ test('ganti nama kategori: daftar dan item semua formulir / template ikut; jumla
 
   const logs = (await s.api('GET', '/audit-logs?category=Fasilitas', undefined, { as: 'superadmin' })).body.logs;
   assert.ok(logs.some(l => /kategori/i.test(l.action) && /Listrik & Pencahayaan → Listrik/.test(l.summary)));
+});
+
+test('PDF formulir fasilitas dibuat server (Download PDF A4): staf menu Fasilitas; tanpa Chromium 503; PDF sungguhan bila tersedia', async () => {
+  const body = { tenant: { boothCode: 'A-01', companyName: 'Kopi Satu', picName: 'Budi' }, form: { title: 'Form Tes', items: ITEMS }, items: ITEMS, mode: 'blank' };
+  assert.equal((await s.api('POST', '/facilities/form-pdf', body)).status, 401, 'pengunjung tidak boleh');
+  assert.equal((await s.api('POST', '/facilities/form-pdf', { items: ITEMS }, { as: 'sales' })).status, 400, 'tanpa data formulir');
+
+  const off = await startServer({ PDF_ENGINE: 'off' });
+  try {
+    const r = await off.api('POST', '/facilities/form-pdf', body, { as: 'operations' });
+    assert.equal(r.status, 503);
+    assert.equal(r.body.code, 'PDF_ENGINE_UNAVAILABLE');
+  } finally { await off.stop(); }
+
+  if (!canRender) return;
+  const login = await s.api('POST', '/auth/login', { email: 'sales@expo.local', password: 'sales123' });
+  const res = await fetch(`${s.base}/facilities/form-pdf`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${login.body.token}` }, body: JSON.stringify(body) });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'application/pdf');
+  assert.match(res.headers.get('content-disposition'), /Formulir_Fasilitas_A-01_Kopi_Satu\.pdf/);
+  assert.equal(Buffer.from(await res.arrayBuffer()).subarray(0, 5).toString(), '%PDF-');
 });
