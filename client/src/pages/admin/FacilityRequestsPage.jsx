@@ -61,6 +61,10 @@ export default function FacilityRequestsPage() {
   });
 
   const [editingItemIdx, setEditingItemIdx] = useState(null);
+  // Item form: pick an existing category, or "+ Buat kategori baru" to type one
+  const [newCategoryMode, setNewCategoryMode] = useState(false);
+  // Items changed (added / edited / deleted) but the form is not saved yet
+  const [itemsDirty, setItemsDirty] = useState(false);
   const [itemModalOpen, setItemModalOpen] = useState(false);
   // Item categories: one list for every form, kept on the server (AGENTS.md §46)
   const [categories, setCategories] = useState([]);
@@ -176,6 +180,7 @@ export default function FacilityRequestsPage() {
       const res = await api.saveFacilityForm(payload);
       if (res && res.success) {
         showToast('✅ Formulir fasilitas berhasil disimpan dan diaktifkan!');
+        setItemsDirty(false);
         loadAllData();
       }
     } catch (e) {
@@ -224,7 +229,8 @@ export default function FacilityRequestsPage() {
   };
 
   // Item Management inside Builder
-  const handleOpenItemModal = (item = null, idx = null) => {
+  const handleOpenItemModal = (item = null, idx = null, presetCategory = '') => {
+    setNewCategoryMode(false);
     if (item && idx !== null) {
       setItemDraft({ ...item });
       setEditingItemIdx(idx);
@@ -232,7 +238,7 @@ export default function FacilityRequestsPage() {
       setItemDraft({
         id: `item_${Date.now()}`,
         name: '',
-        category: 'Listrik & Pencahayaan',
+        category: presetCategory || categories[0] || 'Lainnya',
         unit: 'Unit',
         price: 150000,
         max_qty: 10,
@@ -282,6 +288,7 @@ export default function FacilityRequestsPage() {
     });
 
     setItemModalOpen(false);
+    setItemsDirty(true);
     showToast(editingItemIdx !== null ? 'Item fasilitas diperbarui' : 'Item fasilitas ditambahkan');
   };
 
@@ -290,6 +297,7 @@ export default function FacilityRequestsPage() {
       ...prev,
       items: prev.items.filter((_, i) => i !== idx)
     }));
+    setItemsDirty(true);
     showToast('🗑️ Item fasilitas dihapus');
   };
 
@@ -823,7 +831,7 @@ export default function FacilityRequestsPage() {
 
       {/* MODAL: ADD / EDIT ITEM */}
       {itemModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-[70] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4 border border-slate-200">
             <h3 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100">
               {editingItemIdx !== null ? 'Edit Item Fasilitas' : 'Tambah Fasilitas Baru'}
@@ -843,24 +851,39 @@ export default function FacilityRequestsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label htmlFor="facility-item-category" className="block text-xs font-semibold text-slate-700">Kategori</label>
-                    <button type="button" onClick={() => setCategoryManagerOpen(true)} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer">Kelola Kategori</button>
-                  </div>
-                  <input
-                    id="facility-item-category"
-                    list="facility-category-options"
-                    value={itemDraft.category}
-                    onChange={(e) => setItemDraft({ ...itemDraft, category: e.target.value })}
-                    placeholder="Pilih atau ketik kategori baru"
-                    maxLength={60}
-                    autoComplete="off"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
-                  />
-                  <datalist id="facility-category-options">
-                    {categoryOptions.map(c => <option key={c} value={c} />)}
-                  </datalist>
-                  <p className="text-[10px] text-slate-500 mt-1">Pilih dari daftar, atau ketik nama baru (ikut masuk daftar).</p>
+                  <label htmlFor="facility-item-category" className="block text-xs font-semibold text-slate-700 mb-1">Kategori</label>
+                  {newCategoryMode ? (
+                    <>
+                      <input
+                        id="facility-item-category"
+                        autoFocus
+                        value={itemDraft.category}
+                        onChange={(e) => setItemDraft({ ...itemDraft, category: e.target.value })}
+                        placeholder="Nama kategori baru"
+                        maxLength={60}
+                        autoComplete="off"
+                        className="w-full bg-white border border-indigo-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      />
+                      <button type="button" onClick={() => { setNewCategoryMode(false); setItemDraft({ ...itemDraft, category: categories[0] || '' }); }}
+                        className="mt-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer">Pilih dari daftar</button>
+                    </>
+                  ) : (
+                    <select
+                      id="facility-item-category"
+                      value={itemDraft.category || ''}
+                      onChange={(e) => {
+                        if (e.target.value === '__new__') { setNewCategoryMode(true); setItemDraft({ ...itemDraft, category: '' }); }
+                        else setItemDraft({ ...itemDraft, category: e.target.value });
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                    >
+                      {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                      {itemDraft.category && !categoryOptions.includes(itemDraft.category) && (
+                        <option value={itemDraft.category}>{itemDraft.category} (tidak ada di daftar)</option>
+                      )}
+                      <option value="__new__">+ Buat kategori baru…</option>
+                    </select>
+                  )}
                 </div>
 
                 <div>
@@ -1046,6 +1069,13 @@ export default function FacilityRequestsPage() {
         categories={categories}
         usage={categoryUsage}
         onChange={handleCategoriesChanged}
+        items={builderForm.items}
+        formTitle={builderForm.title}
+        onAddItem={(category) => handleOpenItemModal(null, null, category)}
+        onEditItem={(idx) => handleOpenItemModal(builderForm.items[idx], idx)}
+        onDeleteItem={handleDeleteItem}
+        itemsDirty={itemsDirty}
+        onSaveForm={handleSaveForm}
       />
 
       <GenerateTenantFacilityModal
