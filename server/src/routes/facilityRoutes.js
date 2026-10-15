@@ -250,6 +250,33 @@ router.get('/requests', (req, res) => {
 });
 
 /**
+ * GET /api/facilities/tenants?projectId=<id | global>
+ * Booked booths with their tenant contact, for "Broadcast ke Tenant" and the tenant facility form (AGENTS.md §46).
+ * Only what those need: no prices, discounts or invoices (Operations never sees billing data).
+ */
+router.get('/tenants', (req, res) => {
+  try {
+    const projectId = String(req.query.projectId || 'global');
+    const rows = db.prepare(`
+      SELECT b.floorplan_id, f.title AS project_title, b.code, b.status, b.owner_name, b.pic_name, b.phone
+      FROM booths b JOIN floorplans f ON f.id = b.floorplan_id
+      WHERE b.deleted_at IS NULL AND f.deleted_at IS NULL AND LOWER(b.status) IN ('reserved', 'sold')
+        AND TRIM(COALESCE(b.owner_name, '')) != '' ${projectId === 'global' ? '' : 'AND b.floorplan_id = ?'}
+      ORDER BY f.title, b.code`).all(...(projectId === 'global' ? [] : [projectId]));
+    res.json({
+      success: true,
+      tenants: rows.map(b => ({
+        floorplanId: b.floorplan_id, projectTitle: b.project_title, boothCode: b.code, code: b.code, status: String(b.status).toLowerCase(),
+        tenant: b.owner_name, companyName: b.owner_name, picName: b.pic_name || '', phone: b.phone || ''
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching facility tenants:', error);
+    res.status(500).json({ success: false, message: 'Gagal memuat daftar tenant' });
+  }
+});
+
+/**
  * 6. POST /api/facilities/requests/submit
  * Public endpoint for tenants to submit extra facility orders
  */

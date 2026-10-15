@@ -267,7 +267,8 @@ export default function FacilityRequestsPage() {
   const totalReqCount = requests.length;
   const pendingCount = requests.filter(r => r.status === 'PENDING').length;
   const invoicedCount = requests.filter(r => r.status === 'INVOICED').length;
-  const totalRevenue = requests.reduce((sum, r) => sum + (Number(r.total_amount) || 0), 0);
+  // A rejected request (also one whose facility invoice was deleted, §46) is no revenue
+  const totalRevenue = requests.filter(r => r.status !== 'REJECTED').reduce((sum, r) => sum + (Number(r.total_amount) || 0), 0);
 
   const filteredRequests = requests.filter(r => {
     const matchStatus = statusFilter === 'ALL' || r.status === statusFilter;

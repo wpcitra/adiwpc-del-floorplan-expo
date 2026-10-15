@@ -42,15 +42,8 @@ export default function BroadcastTenantModal({
   const loadTenants = async () => {
     setLoading(true);
     try {
-      // Fetch stats / exhibitors
-      const res = await api.fetchStats(projectId);
-      const list = res?.exhibitorsList || [];
-      
-      // Filter exhibitors that have reserved or sold booths
-      const confirmed = list.filter(e => 
-        (e.status === 'sold' || e.status === 'reserved') && 
-        (e.tenant || e.company_name || e.companyName)
-      );
+      // Booked booths with a tenant (reserved / sold), from the Fasilitas menu's own list (AGENTS.md §46)
+      const confirmed = await api.fetchFacilityTenants(projectId);
 
       setTenants(confirmed);
       // Default select all confirmed tenants
@@ -304,7 +297,7 @@ export default function BroadcastTenantModal({
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-400 truncate">
-                        PIC: <span className="text-slate-300">{t.ownerName || t.pic_name || '-'}</span>
+                        PIC: <span className="text-slate-300">{t.picName || t.ownerName || t.pic_name || '-'}</span>
                         {phone && <span className="ml-2 font-mono text-slate-500">WA: {phone}</span>}
                       </p>
                     </div>

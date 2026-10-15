@@ -8,15 +8,15 @@ export const ROLE_LABELS = {
   developer: 'Developer'
 };
 
-// Sales: only the Studio (view the floorplan and register tenants, no editing) and Data Exhibitor (open / send invoices)
-// Operations: only the Studio (full editing, but no tenant registration) and Denah Operasional
+// Sales: the Studio (view the floorplan and register tenants, no editing), Data Exhibitor (open / send invoices), Fasilitas
+// Operations: the Studio (full editing and tenant registration), Denah Operasional, Fasilitas
 export const PAGE_ACCESS = {
   analytics: ['superadmin', 'finance'],
   floorplan: ['superadmin', 'sales', 'operations'],
   ops: ['superadmin', 'operations'],
   exhibitors: ['superadmin', 'finance', 'sales'],
   invoices: ['superadmin', 'finance'],
-  facilities: ['superadmin', 'finance'],
+  facilities: ['superadmin', 'finance', 'sales', 'operations'],
   settings: ['superadmin'],
   users: ['superadmin'],
   audit: ['superadmin'],

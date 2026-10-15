@@ -121,10 +121,11 @@ const ACCESS_RULES = [
   { methods: WRITE, path: /^\/(categories|brand-categories)(\/.*)?$/, access: OPERATIONS },
   { methods: WRITE, path: /^\/payment-methods(\/.*)?$/, access: [] },
 
-  // Facility portal
+  // Facility portal (tenant forms are public). The Fasilitas menu (forms, requests, status, facility invoice, tenant
+  // list for broadcast) is used by Finance, Sales and Operations too (AGENTS.md §46)
   { methods: ['GET'], path: /^\/facilities\/forms(\/[^/]+)?$/, access: 'public' },
   { methods: ['POST'], path: /^\/facilities\/requests\/submit$/, access: 'public' },
-  { methods: ['POST'], path: /^\/facilities\/requests\/[^/]+\/generate-invoice$/, access: FINANCE },
+  { methods: ['GET', ...WRITE], path: /^\/facilities(\/.*)?$/, access: [...FINANCE, ...SALES, ...OPERATIONS] },
 
   // Denah Operasional: the operations team edits its own layer; sales only views it (overlay in the sales Studio)
   { methods: ['GET'], path: /^\/ops\/[^/]+\/public$/, access: 'public' },
@@ -151,11 +152,12 @@ const ACCESS_RULES = [
 ];
 
 // Operations: Denah Operasional, plus the Studio (floorplan, tiers, brand categories) as an editor, with every
-// Property Inspector feature: tenant registration / biodata / release and the private booth discount. Never the
-// invoice, exhibitor, stats, settings or user pages.
+// Property Inspector feature: tenant registration / biodata / release and the private booth discount, and the
+// Fasilitas menu (§46). Never the invoice, exhibitor, stats, settings or user pages.
 const OPERATIONS_AREA = [
   /^\/ops(\/.*)?$/, /^\/floorplan(\/.*)?$/, /^\/(categories|brand-categories)(\/.*)?$/, /^\/uploads(\/.*)?$/,
   /^\/orders\/(checkout|check-client|registered-clients|update-tenant|detach-tenant)$/, /^\/invoices\/sync-booth-discount$/,
+  /^\/facilities(\/.*)?$/,
   /^\/notifications(\/.*)?$/, /^\/chat(\/.*)?$/, /^\/auth\//, /^\/users\/roles$/, /^\/health$/
 ];
 // Developer: only the Pusat Maintenance (never tenant, price, invoice or user data)

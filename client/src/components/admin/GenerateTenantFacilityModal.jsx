@@ -80,10 +80,8 @@ export default function GenerateTenantFacilityModal({
         setActiveForm(defaultForm);
       }
 
-      // 3. Load registered exhibitors from stats
-      const stats = await api.fetchStats('global');
-      const list = stats?.exhibitorsList || [];
-      const confirmed = list.filter(e => e.tenant || e.company_name || e.companyName || e.brandName || e.company);
+      // 3. Registered tenants (booked booths), from the Fasilitas menu's own list (AGENTS.md §46)
+      const confirmed = await api.fetchFacilityTenants('global');
       setTenants(confirmed);
 
       if (initialTenant) {

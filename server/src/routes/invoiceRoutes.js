@@ -1493,6 +1493,10 @@ router.post('/:id/restore', (req, res) => {
         }
         recalcContract(invoice.floorplan_id, invoice.booth_code, invoice.booth_id);
       }
+      // its facility request is invoiced again
+      if (kind === 'facility') {
+        db.prepare("UPDATE facility_requests SET status = 'INVOICED', updated_at = CURRENT_TIMESTAMP WHERE invoice_id = ? AND status = 'REJECTED' AND deleted_at IS NULL").run(invoice.id);
+      }
     })();
     syncPaymentStatusFromInvoices();
     auditInvoice(req, 'Pulihkan invoice', brief, { reason: invoice.delete_reason || '', deletedBy: invoice.deleted_by || '', deletedAt: invoice.deleted_at });
@@ -1546,6 +1550,10 @@ router.delete('/:id', (req, res) => {
       }
       if (CONTRACT_KINDS.includes(kind) && invoice.floorplan_id && invoice.booth_code) {
         recalcContract(invoice.floorplan_id, invoice.booth_code, invoice.booth_id);
+      }
+      // A deleted facility invoice rejects its request in the Fasilitas menu (out of the facility revenue, §46)
+      if (kind === 'facility') {
+        db.prepare("UPDATE facility_requests SET status = 'REJECTED', updated_at = CURRENT_TIMESTAMP WHERE invoice_id = ? AND deleted_at IS NULL").run(id);
       }
     })();
     syncPaymentStatusFromInvoices();

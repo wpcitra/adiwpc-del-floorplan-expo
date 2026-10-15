@@ -1035,6 +1035,20 @@ export const api = {
     return [];
   },
 
+  // Booked booths with tenant contact for the Fasilitas menu (broadcast, tenant form). No prices (AGENTS.md §46)
+  async fetchFacilityTenants(projectId = 'global') {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/facilities/tenants?projectId=${encodeURIComponent(projectId || 'global')}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) return json.tenants || [];
+      }
+    } catch (e) {
+      console.warn("Failed to fetch facility tenants:", e);
+    }
+    return [];
+  },
+
   // 41. Submit Facility Request (Public Tenant Portal)
   async submitFacilityRequest(data) {
     try {
