@@ -1049,6 +1049,19 @@ export const api = {
     return [];
   },
 
+  // Facility item categories (AGENTS.md §46): { categories, usage } or { success: false, message }
+  async facilityCategories(method = 'GET', path = '', body) {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/facilities/categories${path}`, {
+        method, headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined
+      });
+      const json = await res.json().catch(() => ({}));
+      return res.ok ? json : { success: false, message: json.message || json.error || `Gagal (HTTP ${res.status})` };
+    } catch (e) {
+      return { success: false, message: 'Server tidak dapat dihubungi' };
+    }
+  },
+
   // 41. Submit Facility Request (Public Tenant Portal)
   async submitFacilityRequest(data) {
     try {

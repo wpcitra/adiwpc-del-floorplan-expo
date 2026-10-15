@@ -75,3 +75,48 @@ test('invoice fasilitas dihapus di menu Invoice: pengajuan jadi REJECTED; dipuli
   assert.equal(restore.status, 200, restore.text);
   assert.equal((await requestOf(id)).status, 'INVOICED');
 });
+
+test('kategori fasilitas: awalnya 9 bawaan; daftar bisa diubah (tambah, hapus) oleh staf menu Fasilitas; isian dibersihkan dan divalidasi', async () => {
+  const first = await s.api('GET', '/facilities/categories', undefined, { as: 'sales' });
+  assert.equal(first.status, 200, first.text);
+  assert.equal(first.body.categories.length, 9);
+  assert.ok(first.body.categories.includes('Listrik & Pencahayaan'));
+
+  const next = first.body.categories.filter(c => c !== 'Keamanan & Safety').concat(['  Catering  ']);
+  const put = await s.api('PUT', '/facilities/categories', { categories: next }, { as: 'operations' });
+  assert.equal(put.status, 200, put.text);
+  const saved = (await s.api('GET', '/facilities/categories', undefined, { as: 'finance' })).body.categories;
+  assert.ok(saved.includes('Catering'), 'dirapikan');
+  assert.ok(!saved.includes('Keamanan & Safety'), 'kategori bawaan bisa dihapus');
+  assert.equal(saved.length, 9);
+
+  for (const bad of [[], ['A', 'a'], ['x'.repeat(61)], ['  ']]) {
+    assert.equal((await s.api('PUT', '/facilities/categories', { categories: bad }, { as: 'sales' })).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await s.api('GET', '/facilities/categories')).status, 401, 'pengunjung tidak boleh');
+});
+
+test('ganti nama kategori: daftar dan item semua formulir / template ikut; jumlah pemakaian dilaporkan; tercatat di Log Aktivitas', async () => {
+  const form = await s.api('POST', '/facilities/forms', {
+    project_id: FP, title: 'Form Kategori', is_active: 0,
+    items: [{ id: 'k1', name: 'Lampu Sorot', category: 'Listrik & Pencahayaan', unit: 'Unit', price: 100000 }, { id: 'k2', name: 'Meja', category: 'Furnitur & Meja-Kursi', unit: 'Unit', price: 50000 }]
+  }, { as: 'sales' });
+  assert.equal(form.status, 200, form.text);
+  const usage = (await s.api('GET', '/facilities/categories', undefined, { as: 'sales' })).body.usage;
+  assert.ok(usage['Listrik & Pencahayaan'] >= 1, 'jumlah item pemakai');
+
+  assert.equal((await s.api('POST', '/facilities/categories/rename', { from: 'Listrik & Pencahayaan', to: 'Catering' }, { as: 'sales' })).status, 409, 'nama yang sudah ada ditolak');
+  const ren = await s.api('POST', '/facilities/categories/rename', { from: 'Listrik & Pencahayaan', to: 'Listrik' }, { as: 'sales' });
+  assert.equal(ren.status, 200, ren.text);
+  assert.ok(ren.body.updatedItems >= 1);
+  const cats = (await s.api('GET', '/facilities/categories', undefined, { as: 'sales' })).body.categories;
+  assert.ok(cats.includes('Listrik') && !cats.includes('Listrik & Pencahayaan'));
+  const forms = (await s.api('GET', '/facilities/forms', undefined, { as: 'sales' })).body.forms;
+  const items = forms.flatMap(f => f.items || []);
+  assert.ok(items.some(i => i.name === 'Lampu Sorot' && i.category === 'Listrik'));
+  assert.ok(!items.some(i => i.category === 'Listrik & Pencahayaan'), 'tidak ada item tertinggal dengan nama lama');
+  assert.ok(items.some(i => i.name === 'Meja' && i.category === 'Furnitur & Meja-Kursi'), 'kategori lain tidak tersentuh');
+
+  const logs = (await s.api('GET', '/audit-logs?category=Fasilitas', undefined, { as: 'superadmin' })).body.logs;
+  assert.ok(logs.some(l => /kategori/i.test(l.action) && /Listrik & Pencahayaan → Listrik/.test(l.summary)));
+});

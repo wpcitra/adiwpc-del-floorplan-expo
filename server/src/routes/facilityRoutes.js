@@ -249,6 +249,96 @@ router.get('/requests', (req, res) => {
   }
 });
 
+// ---------- Item categories (AGENTS.md §46): one list for every form, stored in maintenance_settings ----------
+const DEFAULT_FACILITY_CATEGORIES = [
+  'Listrik & Pencahayaan', 'Furnitur & Meja-Kursi', 'Sanitasi & Air', 'Konstruksi & Karpet', 'Jaringan & IT',
+  'Multimedia & Display', 'Kebersihan & Layanan', 'Aksesoris & Branding', 'Keamanan & Safety'
+];
+const CATEGORY_KEY = 'facility_categories';
+const cleanCategory = (v) => String(v ?? '').trim().replace(/\s+/g, ' ');
+const readCategories = () => {
+  const row = db.prepare('SELECT value FROM maintenance_settings WHERE key = ?').get(CATEGORY_KEY);
+  const list = safeJsonParse(row?.value, null);
+  return Array.isArray(list) ? list : DEFAULT_FACILITY_CATEGORIES;
+};
+const saveCategories = (list, user) => db.prepare(`
+  INSERT INTO maintenance_settings (key, value, updated_by, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP
+`).run(CATEGORY_KEY, JSON.stringify(list), user?.name || '');
+// null when the list is usable (1-50 names, each 1-60 characters, no duplicates ignoring case), else the reason
+function categoryListProblem(list) {
+  if (!Array.isArray(list) || !list.length) return 'Minimal satu kategori.';
+  if (list.length > 50) return 'Maksimal 50 kategori.';
+  if (list.some(c => !c)) return 'Nama kategori tidak boleh kosong.';
+  if (list.some(c => c.length > 60)) return 'Nama kategori maksimal 60 karakter.';
+  const seen = new Set();
+  for (const c of list) { const k = c.toLowerCase(); if (seen.has(k)) return `Kategori "${c}" tercantum dua kali.`; seen.add(k); }
+  return null;
+}
+// How many items of the saved forms / templates use each category
+function categoryUsage() {
+  const usage = {};
+  db.prepare('SELECT items_json FROM facility_forms').all()
+    .forEach(f => safeJsonParse(f.items_json, []).forEach(i => { const c = cleanCategory(i.category); if (c) usage[c] = (usage[c] || 0) + 1; }));
+  return usage;
+}
+
+// GET /api/facilities/categories: the list (the 9 built-in ones until it is first changed) and the item count per name
+router.get('/categories', (req, res) => {
+  try {
+    res.json({ success: true, categories: readCategories(), usage: categoryUsage() });
+  } catch (error) {
+    console.error('Error fetching facility categories:', error);
+    res.status(500).json({ success: false, message: 'Gagal memuat kategori fasilitas' });
+  }
+});
+
+// PUT /api/facilities/categories { categories }: the whole list (add, delete, order). A deleted name only leaves the
+// list: items that use it keep it until they are edited.
+router.put('/categories', (req, res) => {
+  try {
+    const list = (Array.isArray(req.body?.categories) ? req.body.categories : []).map(cleanCategory);
+    const problem = categoryListProblem(list);
+    if (problem) return res.status(400).json({ success: false, message: problem });
+    saveCategories(list, req.user);
+    res.json({ success: true, categories: list, usage: categoryUsage() });
+  } catch (error) {
+    console.error('Error saving facility categories:', error);
+    res.status(500).json({ success: false, message: 'Gagal menyimpan kategori fasilitas' });
+  }
+});
+
+// POST /api/facilities/categories/rename { from, to }: renames the category in the list AND in the items of every saved
+// form and template, in one transaction (requests already sent by tenants keep what they ordered)
+router.post('/categories/rename', (req, res) => {
+  try {
+    const from = cleanCategory(req.body?.from);
+    const to = cleanCategory(req.body?.to);
+    if (!from || !to) return res.status(400).json({ success: false, message: 'Nama lama dan nama baru wajib diisi.' });
+    if (to.length > 60) return res.status(400).json({ success: false, message: 'Nama kategori maksimal 60 karakter.' });
+    const list = readCategories();
+    if (list.some(c => c.toLowerCase() === to.toLowerCase() && c.toLowerCase() !== from.toLowerCase())) {
+      return res.status(409).json({ success: false, code: 'CATEGORY_EXISTS', message: `Kategori "${to}" sudah ada.` });
+    }
+    let updatedItems = 0;
+    db.transaction(() => {
+      const next = list.some(c => c === from) ? list.map(c => (c === from ? to : c)) : [...list, to];
+      saveCategories(next, req.user);
+      const update = db.prepare('UPDATE facility_forms SET items_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+      db.prepare('SELECT id, items_json FROM facility_forms').all().forEach(f => {
+        const items = safeJsonParse(f.items_json, []);
+        let changed = false;
+        items.forEach(i => { if (cleanCategory(i.category) === from) { i.category = to; changed = true; updatedItems += 1; } });
+        if (changed) update.run(JSON.stringify(items), f.id);
+      });
+    })();
+    res.json({ success: true, categories: readCategories(), usage: categoryUsage(), updatedItems });
+  } catch (error) {
+    console.error('Error renaming facility category:', error);
+    res.status(500).json({ success: false, message: 'Gagal mengganti nama kategori' });
+  }
+});
+
 /**
  * GET /api/facilities/tenants?projectId=<id | global>
  * Booked booths with their tenant contact, for "Broadcast ke Tenant" and the tenant facility form (AGENTS.md §46).

@@ -24,17 +24,13 @@ import {
   Check,
   Building2,
   Phone,
-  MessageSquare
+  MessageSquare,
+  Tags
 } from 'lucide-react';
 import { api } from '../../services/api';
 import BroadcastTenantModal from '../../components/admin/BroadcastTenantModal';
 import GenerateTenantFacilityModal from '../../components/admin/GenerateTenantFacilityModal';
-
-// Suggested facility categories; any other name can be typed and is then suggested too (taken from the saved items)
-const DEFAULT_FACILITY_CATEGORIES = [
-  'Listrik & Pencahayaan', 'Furnitur & Meja-Kursi', 'Sanitasi & Air', 'Konstruksi & Karpet', 'Jaringan & IT',
-  'Multimedia & Display', 'Kebersihan & Layanan', 'Aksesoris & Branding', 'Keamanan & Safety'
-];
+import FacilityCategoryManager from '../../components/admin/FacilityCategoryManager';
 
 export default function FacilityRequestsPage() {
   const [activeTab, setActiveTab] = useState('requests'); // 'requests' | 'builder'
@@ -66,6 +62,10 @@ export default function FacilityRequestsPage() {
 
   const [editingItemIdx, setEditingItemIdx] = useState(null);
   const [itemModalOpen, setItemModalOpen] = useState(false);
+  // Item categories: one list for every form, kept on the server (AGENTS.md §46)
+  const [categories, setCategories] = useState([]);
+  const [categoryUsage, setCategoryUsage] = useState({});
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
   const [itemDraft, setItemDraft] = useState({
     id: '',
     name: '',
@@ -92,10 +92,12 @@ export default function FacilityRequestsPage() {
   const loadAllData = async () => {
     setLoading(true);
     try {
-      const [allForms, allReqs] = await Promise.all([
+      const [allForms, allReqs, cats] = await Promise.all([
         api.fetchFacilityForms(),
-        api.fetchFacilityRequests()
+        api.fetchFacilityRequests(),
+        api.facilityCategories()
       ]);
+      if (cats?.success) { setCategories(cats.categories || []); setCategoryUsage(cats.usage || {}); }
 
       setForms(allForms || []);
       setRequests(allReqs || []);
@@ -241,12 +243,22 @@ export default function FacilityRequestsPage() {
     setItemModalOpen(true);
   };
 
-  // Every category already used (built-in suggestions, saved forms and templates, this form), without duplicates
-  const categoryOptions = [...new Set([
-    ...DEFAULT_FACILITY_CATEGORIES,
-    ...forms.flatMap(f => (Array.isArray(f.items) ? f.items : []).map(i => i.category)),
-    ...builderForm.items.map(i => i.category)
-  ].map(c => String(c || '').trim()).filter(Boolean))];
+  // The managed list (Kelola Kategori); a name typed on an item joins it when the item is saved
+  const categoryOptions = categories;
+
+  // After "Kelola Kategori": the new list, and a renamed category follows in the form being edited (the server already
+  // renamed it in every saved form and template)
+  const handleCategoriesChanged = (res, change) => {
+    setCategories(res.categories || []);
+    setCategoryUsage(res.usage || {});
+    const renamed = change?.renamed;
+    if (!renamed) return;
+    const follow = (items) => (Array.isArray(items) ? items : []).map(i => (String(i.category || '').trim() === renamed.from ? { ...i, category: renamed.to } : i));
+    setBuilderForm(prev => ({ ...prev, items: follow(prev.items) }));
+    setForms(prev => prev.map(f => ({ ...f, items: follow(f.items) })));
+    setItemDraft(prev => (String(prev.category || '').trim() === renamed.from ? { ...prev, category: renamed.to } : prev));
+    showToast(`Kategori "${renamed.from}" diganti menjadi "${renamed.to}"${res.updatedItems ? ` (${res.updatedItems} item ikut berubah)` : ''}`);
+  };
 
   const handleSaveItem = () => {
     if (!itemDraft.name.trim()) {
@@ -254,6 +266,10 @@ export default function FacilityRequestsPage() {
       return;
     }
     const saved = { ...itemDraft, category: String(itemDraft.category || '').trim().replace(/\s+/g, ' ') || 'Lainnya' };
+    if (!categories.some(c => c.toLowerCase() === saved.category.toLowerCase())) {
+      // a new category typed on the item joins the list
+      api.facilityCategories('PUT', '', { categories: [...categories, saved.category] }).then(res => { if (res?.success) handleCategoriesChanged(res); });
+    }
 
     setBuilderForm(prev => {
       const items = [...prev.items];
@@ -720,14 +736,24 @@ export default function FacilityRequestsPage() {
                 <p className="text-xs text-slate-500">Tentukan harga dan kuantitas maksimal yang dapat dipesan tenant.</p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => handleOpenItemModal()}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer active:scale-95"
-              >
-                <Plus size={14} />
-                <span>Tambah Fasilitas Baru</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCategoryManagerOpen(true)}
+                  className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer active:scale-[0.97]"
+                >
+                  <Tags size={14} />
+                  <span>Kelola Kategori</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenItemModal()}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer active:scale-95"
+                >
+                  <Plus size={14} />
+                  <span>Tambah Fasilitas Baru</span>
+                </button>
+              </div>
             </div>
 
             {/* Items Table */}
@@ -817,7 +843,10 @@ export default function FacilityRequestsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="facility-item-category" className="block text-xs font-semibold text-slate-700 mb-1">Kategori</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="facility-item-category" className="block text-xs font-semibold text-slate-700">Kategori</label>
+                    <button type="button" onClick={() => setCategoryManagerOpen(true)} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer">Kelola Kategori</button>
+                  </div>
                   <input
                     id="facility-item-category"
                     list="facility-category-options"
@@ -831,7 +860,7 @@ export default function FacilityRequestsPage() {
                   <datalist id="facility-category-options">
                     {categoryOptions.map(c => <option key={c} value={c} />)}
                   </datalist>
-                  <p className="text-[10px] text-slate-500 mt-1">Pilih dari daftar, atau ketik nama kategori baru (misalnya Catering).</p>
+                  <p className="text-[10px] text-slate-500 mt-1">Pilih dari daftar, atau ketik nama baru (ikut masuk daftar).</p>
                 </div>
 
                 <div>
@@ -1011,6 +1040,14 @@ export default function FacilityRequestsPage() {
       />
 
       {/* TENANT FORM GENERATOR (PDF & WA) MODAL */}
+      <FacilityCategoryManager
+        isOpen={categoryManagerOpen}
+        onClose={() => setCategoryManagerOpen(false)}
+        categories={categories}
+        usage={categoryUsage}
+        onChange={handleCategoriesChanged}
+      />
+
       <GenerateTenantFacilityModal
         isOpen={isGenerateTenantModalOpen}
         onClose={() => {
