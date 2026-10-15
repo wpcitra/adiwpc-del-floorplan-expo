@@ -18,7 +18,8 @@ export default function FacilityFormA4View({
   selectedItems = [],
   mode = 'blank', // 'blank' (checklist kosong) | 'filled' (draf pesanan terisi)
   companyConfig = null,
-  innerRef = null
+  innerRef = null,
+  docNumber: docNumberProp = '' // e.g. the request id on the tenant's submission receipt
 }) {
   const localRef = useRef(null);
   const printRef = innerRef || localRef;
@@ -92,7 +93,7 @@ export default function FacilityFormA4View({
   const picName = tenant.picName || tenant.ownerName || tenant.pic_name || 'Bpk/Ibu PIC Exhibitor';
   const phone = tenant.phone || tenant.client_phone || '-';
   const email = tenant.email || tenant.client_email || '-';
-  const docNumber = `FORM/FAC/${new Date().getFullYear()}/${boothCode}`;
+  const docNumber = docNumberProp || `FORM/FAC/${new Date().getFullYear()}/${boothCode}`;
 
   // Calculate total if in filled mode
   const totalAmount = mode === 'filled'

@@ -1,30 +1,48 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { 
-  Building2, 
-  PackageCheck, 
-  Calendar, 
-  Clock, 
-  Plus, 
-  Minus, 
-  CheckCircle2, 
-  Send, 
-  FileText, 
-  Zap, 
-  Layers, 
-  Sparkles, 
-  Info, 
-  AlertCircle,
-  Phone,
-  Mail,
-  User,
-  MapPin,
-  Check,
-  Download,
-  Printer,
-  ArrowLeft
-} from 'lucide-react';
+import { Calendar, Plus, Minus, CheckCircle2, Send, AlertCircle, ArrowLeft, Printer, Info, PackageOpen, RotateCcw } from 'lucide-react';
 import { api } from '../../services/api';
+import FacilityFormA4View from '../../components/admin/FacilityFormA4View';
+import { printInvoiceElement } from '../../utils/invoicePrintUtils';
+
+// Tenant portal "Formulir Fasilitas Tambahan" (/facility-request). Light, single accent, 16px inputs on phones (no
+// iOS zoom), a bottom bar with the total and the submit button below lg. The submission receipt is printed from the
+// existing A4 template (FacilityFormA4View, filled) through printInvoiceElement: window.print() on this page printed
+// a blank sheet, because the print CSS shows only the printable-* sheets.
+const rupiah = (n) => `Rp ${Math.round(Number(n) || 0).toLocaleString('id-ID')}`;
+const longDate = (d) => {
+  const date = new Date(d);
+  return Number.isNaN(date.getTime()) ? d : date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+};
+const press = 'transition-transform duration-150 ease-out active:scale-[0.97] [touch-action:manipulation] select-none';
+const inputClass = 'w-full h-11 rounded-xl border border-slate-300 bg-white px-3.5 text-base sm:text-sm text-slate-900 placeholder:text-slate-400 shadow-xs focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/15 transition-[border-color,box-shadow] duration-150';
+
+function Field({ label, required, hint, children }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">
+        {label}{required && <span className="text-rose-600" aria-hidden="true"> *</span>}
+      </span>
+      <div className="mt-1.5">{children}</div>
+      {hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
+    </label>
+  );
+}
+
+function Section({ step, title, desc, children, flush = false }) {
+  return (
+    <section className={`rounded-2xl bg-white ring-1 ring-slate-200 ${flush ? '' : 'p-5 sm:p-6'}`}>
+      <header className={`flex gap-3 ${flush ? 'p-5 sm:p-6 pb-4 sm:pb-4' : 'mb-5'}`}>
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-semibold text-white">{step}</span>
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+          {desc && <p className="mt-0.5 text-sm text-slate-500">{desc}</p>}
+        </div>
+      </header>
+      {children}
+    </section>
+  );
+}
 
 export default function PublicFacilityRequestPage() {
   const [searchParams] = useSearchParams();
@@ -35,13 +53,13 @@ export default function PublicFacilityRequestPage() {
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState('ALL');
-  
+
   // Tenant Form Information
   const [boothCode, setBoothCode] = useState(boothParam);
   const [companyName, setCompanyName] = useState(companyParam);
   const [picName, setPicName] = useState('');
   const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
+  const [email] = useState('');
   const [notes, setNotes] = useState('');
 
   // Selected item quantities: { [itemId]: qty }
@@ -49,10 +67,16 @@ export default function PublicFacilityRequestPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedData, setSubmittedData] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [printing, setPrinting] = useState(false);
+  const errorRef = useRef(null);
 
   useEffect(() => {
     loadForm();
-  }, [formIdParam]);
+  }, [formIdParam]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (errorMessage) errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [errorMessage]);
 
   const loadForm = async () => {
     setLoading(true);
@@ -76,20 +100,19 @@ export default function PublicFacilityRequestPage() {
   };
 
   const items = form?.items || [];
-  
-  // Categories derived from items
-  const categories = ['ALL', ...new Set(items.map(i => i.category || 'Lainnya'))];
+  const categoryCounts = items.reduce((acc, i) => {
+    const c = i.category || 'Lainnya';
+    acc[c] = (acc[c] || 0) + 1;
+    return acc;
+  }, {});
+  const categories = ['ALL', ...Object.keys(categoryCounts)];
 
   const handleQtyChange = (itemId, change) => {
     const item = items.find(i => i.id === itemId);
     const max = item?.max_qty || 99;
     const current = itemQuantities[itemId] || 0;
     const next = Math.max(0, Math.min(max, current + change));
-    
-    setItemQuantities(prev => ({
-      ...prev,
-      [itemId]: next
-    }));
+    setItemQuantities(prev => ({ ...prev, [itemId]: next }));
   };
 
   // Calculations
@@ -108,26 +131,11 @@ export default function PublicFacilityRequestPage() {
     e.preventDefault();
     setErrorMessage('');
 
-    if (!boothCode.trim()) {
-      setErrorMessage('Nomor / Kode Booth wajib diisi');
-      return;
-    }
-    if (!companyName.trim()) {
-      setErrorMessage('Nama Perusahaan / Brand wajib diisi');
-      return;
-    }
-    if (!picName.trim()) {
-      setErrorMessage('Nama PIC Kontak wajib diisi');
-      return;
-    }
-    if (!phone.trim()) {
-      setErrorMessage('Nomor WhatsApp / Telepon wajib diisi untuk koordinasi teknis');
-      return;
-    }
-    if (selectedItemsList.length === 0) {
-      setErrorMessage('Silakan pilih minimal 1 item fasilitas tambahan');
-      return;
-    }
+    if (!boothCode.trim()) return setErrorMessage('Nomor / kode booth wajib diisi.');
+    if (!companyName.trim()) return setErrorMessage('Nama perusahaan / brand wajib diisi.');
+    if (!picName.trim()) return setErrorMessage('Nama PIC wajib diisi.');
+    if (!phone.trim()) return setErrorMessage('Nomor WhatsApp wajib diisi untuk koordinasi teknis.');
+    if (selectedItemsList.length === 0) return setErrorMessage('Pilih minimal 1 fasilitas.');
 
     setIsSubmitting(true);
     try {
@@ -148,498 +156,342 @@ export default function PublicFacilityRequestPage() {
       if (res && res.success) {
         setSubmittedData({
           ...res.request,
-          eventTitle: form?.event_title || 'Indonesia International Expo 2026'
+          eventTitle: form?.event_title || ''
         });
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
-        setErrorMessage(res?.message || 'Terjadi kesalahan saat mengirim pengajuan');
+        setErrorMessage(res?.message || 'Pengajuan belum terkirim. Coba lagi.');
       }
     } catch (err) {
       console.error(err);
-      setErrorMessage('Gagal menghubungi server. Silakan coba beberapa saat lagi.');
+      setErrorMessage('Server tidak dapat dihubungi. Coba lagi beberapa saat lagi.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const filteredItems = items.filter(item => {
-    if (selectedCategory === 'ALL') return true;
-    return item.category === selectedCategory;
-  });
+  // The receipt is the existing A4 facility form, filled with this submission
+  const handlePrintReceipt = async () => {
+    setPrinting(true);
+    try {
+      await printInvoiceElement('printable-facility-form-a4');
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  const startAnother = () => {
+    setSubmittedData(null);
+    setItemQuantities({});
+    setNotes('');
+    setErrorMessage('');
+    window.scrollTo({ top: 0 });
+  };
+
+  const filteredItems = items.filter(item => selectedCategory === 'ALL' || (item.category || 'Lainnya') === selectedCategory);
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-slate-300">
-        <div className="w-10 h-10 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="text-sm font-medium">Memuat formulir fasilitas tambahan...</p>
-      </div>
+      <main className="min-h-[100dvh] bg-slate-50 px-4 py-10" aria-busy="true">
+        <div className="mx-auto max-w-5xl space-y-4 animate-pulse">
+          <div className="h-28 rounded-2xl bg-slate-200/70" />
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="lg:col-span-2 space-y-4">
+              <div className="h-48 rounded-2xl bg-slate-200/70" />
+              <div className="h-72 rounded-2xl bg-slate-200/70" />
+            </div>
+            <div className="h-64 rounded-2xl bg-slate-200/70" />
+          </div>
+          <p className="sr-only">Memuat formulir fasilitas...</p>
+        </div>
+      </main>
     );
   }
 
-  if (!form && !loading) {
+  if (!form) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
-        <AlertCircle size={44} className="text-amber-500 mb-3" />
-        <h2 className="text-lg font-bold text-white mb-1">Formulir Tidak Ditemukan</h2>
-        <p className="text-sm text-slate-400 max-w-md mb-6">
-          Formulir pemesanan fasilitas belum dipublikasikan oleh panitia atau tautan yang Anda buka tidak valid.
+      <main className="min-h-[100dvh] bg-slate-50 flex flex-col items-center justify-center px-6 text-center">
+        <AlertCircle size={40} className="text-amber-500 mb-3" />
+        <h1 className="text-lg font-semibold text-slate-900">Formulir belum tersedia</h1>
+        <p className="mt-1 max-w-md text-sm text-slate-600">
+          Panitia belum membuka formulir fasilitas tambahan, atau tautan yang Anda buka sudah tidak berlaku.
         </p>
-        <Link 
-          to="/"
-          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-2"
-        >
-          <ArrowLeft size={14} />
-          <span>Kembali ke Denah Expo</span>
+        <Link to="/" className={`mt-6 inline-flex h-11 items-center gap-2 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800 ${press}`}>
+          <ArrowLeft size={16} /> Kembali ke denah
         </Link>
-      </div>
+      </main>
     );
   }
 
-  // Confirmation Success View
+  // Submission receipt
   if (submittedData) {
+    const receiptItems = submittedData.items || [];
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 py-10 px-4 sm:px-6 flex flex-col items-center">
-        <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl animate-fadeIn">
-          <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto mb-5 shadow-lg shadow-emerald-500/10">
-            <CheckCircle2 size={36} />
-          </div>
-
-          <div className="text-center space-y-1 mb-8">
-            <span className="text-xs font-bold uppercase tracking-widest text-emerald-400">Pengajuan Berhasil Terkirim</span>
-            <h1 className="text-2xl font-black text-white tracking-tight">
-              Permintaan Fasilitas Tambahan Diterima
-            </h1>
-            <p className="text-xs text-slate-400 max-w-md mx-auto pt-1">
-              Terima kasih, formulir Anda telah masuk ke sistem operasional pameran. Tim panitia akan memverifikasi dan menerbitkan invoice resmi.
+      <main className="min-h-[100dvh] bg-slate-50 px-4 py-8 sm:py-12">
+        <div className="mx-auto max-w-xl">
+          <div className="rounded-2xl bg-white p-6 sm:p-8 ring-1 ring-slate-200">
+            <CheckCircle2 size={44} className="text-emerald-600" />
+            <h1 className="mt-4 text-2xl font-semibold tracking-tight text-slate-900 text-balance">Pengajuan fasilitas terkirim</h1>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+              Panitia akan memeriksa pesanan Anda, lalu menerbitkan invoice. Simpan bukti pengajuan di bawah ini.
             </p>
-          </div>
 
-          {/* Details Card */}
-          <div className="bg-slate-950/80 rounded-2xl border border-slate-800 p-5 space-y-4 mb-6">
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-500 block">ID Permintaan:</span>
-                <span className="font-mono font-bold text-xs text-indigo-400">{submittedData.id}</span>
+            <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-4 border-y border-slate-200 py-5 text-sm">
+              <div className="col-span-2 sm:col-span-1">
+                <dt className="text-xs text-slate-500">Nomor pengajuan</dt>
+                <dd className="mt-0.5 font-mono text-[13px] font-semibold text-slate-900 break-all">{submittedData.id}</dd>
               </div>
-              <div className="text-right">
-                <span className="text-[10px] uppercase font-bold text-slate-500 block">Status:</span>
-                <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  <Clock size={12} /> MENUNGGU VERIFIKASI
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 text-xs">
-              <div>
-                <span className="text-slate-500 block text-[11px]">Booth & Tenant:</span>
-                <p className="font-bold text-slate-200">
-                  Booth #{submittedData.booth_code} • {submittedData.company_name}
-                </p>
+              <div className="col-span-2 sm:col-span-1">
+                <dt className="text-xs text-slate-500">Status</dt>
+                <dd className="mt-1">
+                  <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200">Menunggu verifikasi</span>
+                </dd>
               </div>
               <div>
-                <span className="text-slate-500 block text-[11px]">PIC & Kontak:</span>
-                <p className="font-bold text-slate-200">
-                  {submittedData.pic_name} ({submittedData.phone || '-'})
-                </p>
+                <dt className="text-xs text-slate-500">Booth</dt>
+                <dd className="mt-0.5 font-semibold text-slate-900">{submittedData.booth_code}</dd>
               </div>
-            </div>
+              <div>
+                <dt className="text-xs text-slate-500">Brand</dt>
+                <dd className="mt-0.5 font-semibold text-slate-900 break-words">{submittedData.company_name}</dd>
+              </div>
+              <div className="col-span-2">
+                <dt className="text-xs text-slate-500">PIC</dt>
+                <dd className="mt-0.5 text-slate-900">{submittedData.pic_name}{submittedData.phone ? ` · ${submittedData.phone}` : ''}</dd>
+              </div>
+            </dl>
 
-            {/* Selected items table */}
-            <div className="pt-2 border-t border-slate-800/80">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-2">
-                Rincian Fasilitas Tambahan:
-              </span>
-              <div className="space-y-2">
-                {submittedData.items.map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between text-xs bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
-                    <div>
-                      <span className="font-bold text-slate-200 block">{item.name}</span>
-                      <span className="text-[11px] text-slate-400">
-                        {item.qty} {item.unit || 'unit'} x Rp {(Number(item.price) || 0).toLocaleString('id-ID')}
-                      </span>
-                    </div>
-                    <span className="font-mono font-bold text-slate-100">
-                      Rp {((Number(item.price) || 0) * (Number(item.qty) || 1)).toLocaleString('id-ID')}
-                    </span>
+            <ul className="divide-y divide-slate-100 py-2 text-sm">
+              {receiptItems.map((item, idx) => (
+                <li key={idx} className="flex items-start justify-between gap-4 py-2.5">
+                  <div className="min-w-0">
+                    <p className="font-medium text-slate-900">{item.name}</p>
+                    <p className="text-xs text-slate-500 tabular-nums">{item.qty} {item.unit || 'unit'} × {rupiah(item.price)}</p>
                   </div>
-                ))}
-              </div>
-
-              <div className="pt-3 mt-3 border-t border-slate-800 flex items-center justify-between text-sm">
-                <span className="font-bold text-slate-300">Total Biaya Fasilitas:</span>
-                <span className="font-mono font-black text-emerald-400 text-base">
-                  Rp {(submittedData.total_amount || 0).toLocaleString('id-ID')}
-                </span>
-              </div>
+                  <span className="shrink-0 font-semibold text-slate-900 tabular-nums">{rupiah((Number(item.price) || 0) * (Number(item.qty) || 1))}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="flex items-baseline justify-between border-t border-slate-200 pt-4">
+              <span className="text-sm font-medium text-slate-600">Total</span>
+              <span className="text-xl font-semibold text-slate-900 tabular-nums">{rupiah(submittedData.total_amount)}</span>
             </div>
 
             {submittedData.notes && (
-              <div className="pt-2 border-t border-slate-800/80 text-xs">
-                <span className="text-slate-500 block text-[11px]">Catatan / Instruksi Khusus:</span>
-                <p className="text-slate-300 italic">{submittedData.notes}</p>
+              <div className="mt-5 rounded-xl bg-slate-50 p-3.5 text-sm">
+                <p className="text-xs text-slate-500">Catatan untuk panitia</p>
+                <p className="mt-0.5 whitespace-pre-line text-slate-700">{submittedData.notes}</p>
               </div>
             )}
+
+            <div className="mt-6 grid gap-2.5 sm:grid-cols-2">
+              <button type="button" onClick={handlePrintReceipt} disabled={printing}
+                className={`inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 ${press}`}>
+                <Printer size={17} /> {printing ? 'Menyiapkan…' : 'Unduh / cetak bukti'}
+              </button>
+              <button type="button" onClick={startAnother}
+                className={`inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50 ${press}`}>
+                <RotateCcw size={16} /> Ajukan fasilitas lain
+              </button>
+            </div>
+            <p className="mt-3 text-center text-xs text-slate-500">Untuk menyimpan sebagai PDF, pilih “Simpan sebagai PDF” di jendela cetak.</p>
           </div>
 
-          {/* Action buttons */}
-          <div className="flex flex-col sm:flex-row items-center gap-3">
-            <button
-              type="button"
-              onClick={() => window.print()}
-              className="w-full sm:flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 transition-all flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Printer size={15} />
-              <span>Cetak Bukti Pengajuan</span>
-            </button>
-            <Link
-              to="/"
-              className="w-full sm:flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 text-center"
-            >
-              <span>Kembali ke Denah Pameran</span>
-            </Link>
-          </div>
+          <Link to="/" className="mt-5 inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-900">
+            <ArrowLeft size={15} /> Kembali ke denah pameran
+          </Link>
         </div>
-      </div>
+
+        {/* The A4 receipt (existing template) that is printed; kept off screen */}
+        <div aria-hidden="true" className="fixed left-[-10000px] top-0">
+          <FacilityFormA4View
+            mode="filled"
+            form={form}
+            selectedItems={receiptItems}
+            docNumber={submittedData.id}
+            tenant={{ boothCode: submittedData.booth_code, companyName: submittedData.company_name, picName: submittedData.pic_name, phone: submittedData.phone, email: submittedData.email }}
+          />
+        </div>
+      </main>
     );
   }
 
+  const termsBlock = form.terms_notes && (
+    <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+      <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-900"><Info size={15} className="text-slate-400" /> Syarat & ketentuan</p>
+      <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-600">{form.terms_notes}</p>
+    </div>
+  );
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 py-8 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-5xl mx-auto space-y-6">
-        
-        {/* Top Header Card */}
-        <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-slate-900 border border-indigo-900/40 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
-          <div className="absolute right-0 top-0 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none"></div>
-          
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  Portal Exhibitor & Tenant
-                </span>
-                <span className="text-xs text-slate-400">•</span>
-                <span className="text-xs text-slate-300 font-medium">{form.event_title}</span>
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                {form.title}
-              </h1>
-              <p className="text-xs sm:text-sm text-slate-400 max-w-2xl leading-relaxed">
-                {form.description || 'Silakan pilih fasilitas penunjang booth pameran Anda. Tim panitia operasional akan menyiapkan seluruh pesanan sebelum hari persiapan (loading-in).'}
-              </p>
-            </div>
-
-            {form.deadline_date && (
-              <div className="bg-slate-900/90 border border-slate-800 px-4 py-3 rounded-2xl flex items-center gap-3 shrink-0 shadow-lg">
-                <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center">
-                  <Calendar size={18} />
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Batas Pengajuan:</span>
-                  <span className="text-xs font-bold text-rose-400">{form.deadline_date}</span>
-                </div>
-              </div>
-            )}
+    <main className="min-h-[100dvh] bg-slate-50 pb-28 lg:pb-12">
+      {/* Header */}
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 sm:px-6 sm:py-8 md:flex-row md:items-end md:justify-between">
+          <div className="max-w-2xl">
+            {form.event_title && <p className="text-sm font-medium text-indigo-700">{form.event_title}</p>}
+            <h1 className="mt-1 text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900 text-balance">{form.title}</h1>
+            <p className="mt-2 text-sm sm:text-[15px] leading-relaxed text-slate-600 text-pretty">
+              {form.description || 'Pilih fasilitas tambahan untuk booth Anda. Panitia menyiapkannya sebelum loading-in.'}
+            </p>
           </div>
+          {form.deadline_date && (
+            <div className="inline-flex shrink-0 items-center gap-2.5 self-start rounded-xl bg-rose-50 px-3.5 py-2.5 ring-1 ring-rose-200 md:self-auto">
+              <Calendar size={17} className="text-rose-600" />
+              <div className="leading-tight">
+                <p className="text-xs text-rose-700">Batas pengajuan</p>
+                <p className="text-sm font-semibold text-rose-900">{longDate(form.deadline_date)}</p>
+              </div>
+            </div>
+          )}
         </div>
+      </header>
 
-        {/* Error Alert if any */}
-        {errorMessage && (
-          <div className="p-4 bg-rose-950/60 border border-rose-800 rounded-2xl flex items-center gap-3 text-xs text-rose-200 animate-fadeIn">
-            <AlertCircle size={18} className="text-rose-400 shrink-0" />
-            <span>{errorMessage}</span>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          
-          {/* Main Area: Tenant Info + Item Catalog (Col span 2) */}
-          <div className="lg:col-span-2 space-y-6">
-            
-            {/* Step 1: Identitas Tenant */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
-              <div className="flex items-center gap-2.5 pb-3 border-b border-slate-800">
-                <div className="w-7 h-7 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center text-xs font-bold">
-                  1
-                </div>
-                <h2 className="text-sm font-bold text-white">Identitas Tenant & Stan Pameran</h2>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Nomor / Kode Booth <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Contoh: A-01, B-05, VIP-01"
-                    value={boothCode}
-                    onChange={(e) => setBoothCode(e.target.value.toUpperCase())}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs font-bold text-indigo-300 uppercase placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Nama Perusahaan / Brand <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="PT / CV / Nama Brand Pameran"
-                    value={companyName}
-                    onChange={(e) => setCompanyName(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Nama PIC Penanggung Jawab <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Nama lengkap PIC lapangan"
-                    value={picName}
-                    onChange={(e) => setPicName(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    No. WhatsApp / Telepon <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="tel"
-                    required
-                    placeholder="0812xxxx (untuk konfirmasi panitia)"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-              </div>
+      <form id="facility-request-form" onSubmit={handleSubmit} noValidate className="mx-auto mt-6 grid max-w-5xl grid-cols-1 items-start gap-6 px-4 sm:px-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          {errorMessage && (
+            <div ref={errorRef} role="alert" className="flex items-start gap-2.5 rounded-xl bg-rose-50 p-3.5 text-sm text-rose-800 ring-1 ring-rose-200">
+              <AlertCircle size={18} className="mt-px shrink-0 text-rose-600" />
+              <span>{errorMessage}</span>
             </div>
+          )}
 
-            {/* Step 2: Katalog Fasilitas Tambahan */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center text-xs font-bold">
-                    2
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-bold text-white">Pilih Fasilitas Tambahan</h2>
-                    <p className="text-[11px] text-slate-400">Atur jumlah unit fasilitas yang Anda perlukan untuk booth.</p>
-                  </div>
-                </div>
+          {/* Step 1 */}
+          <Section step={1} title="Data booth Anda" desc="Dipakai panitia untuk konfirmasi dan pemasangan.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Nomor booth" required>
+                <input type="text" value={boothCode} onChange={(e) => setBoothCode(e.target.value.toUpperCase())} placeholder="Contoh: A-01"
+                  autoCapitalize="characters" autoCorrect="off" spellCheck={false} className={`${inputClass} font-semibold uppercase placeholder:normal-case placeholder:font-normal`} />
+              </Field>
+              <Field label="Nama perusahaan / brand" required>
+                <input type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="Nama brand di booth" autoComplete="organization" className={inputClass} />
+              </Field>
+              <Field label="Nama PIC" required>
+                <input type="text" value={picName} onChange={(e) => setPicName(e.target.value)} placeholder="Penanggung jawab di lapangan" autoComplete="name" className={inputClass} />
+              </Field>
+              <Field label="No. WhatsApp" required hint="Panitia menghubungi nomor ini untuk konfirmasi.">
+                <input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0812xxxxxxxx" autoComplete="tel" className={inputClass} />
+              </Field>
+            </div>
+          </Section>
 
-                {/* Category Pills Filter */}
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 custom-scrollbar">
-                  {categories.map(cat => (
-                    <button
-                      key={cat}
-                      type="button"
-                      onClick={() => setSelectedCategory(cat)}
-                      className={`px-3 py-1 rounded-xl text-[11px] font-semibold transition-all whitespace-nowrap cursor-pointer ${
-                        selectedCategory === cat
-                          ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
-                      }`}
-                    >
-                      {cat === 'ALL' ? 'Semua Kategori' : cat}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Items Grid */}
-              <div className="space-y-3">
-                {filteredItems.map(item => {
-                  const qty = itemQuantities[item.id] || 0;
-                  const price = Number(item.price) || 0;
-                  const itemSubtotal = qty * price;
-                  const isSelected = qty > 0;
-
+          {/* Step 2 */}
+          <Section step={2} title="Pilih fasilitas" desc="Atur jumlah setiap fasilitas yang Anda perlukan." flush>
+            {categories.length > 2 && (
+              <div className="-mt-1 flex gap-2 overflow-x-auto px-5 pb-4 sm:flex-wrap sm:px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="tablist" aria-label="Kategori fasilitas">
+                {categories.map(cat => {
+                  const active = selectedCategory === cat;
                   return (
-                    <div
-                      key={item.id}
-                      className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                        isSelected
-                          ? 'bg-indigo-950/30 border-indigo-500/50 shadow-md shadow-indigo-500/5'
-                          : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="space-y-1 flex-1 pr-2">
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-xs sm:text-sm font-bold text-white">{item.name}</h3>
-                          {item.category && (
-                            <span className="text-[9px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 font-medium">
-                              {item.category}
-                            </span>
-                          )}
-                        </div>
-                        {item.description && (
-                          <p className="text-[11px] text-slate-400 leading-relaxed">{item.description}</p>
-                        )}
-                        <div className="pt-1 flex items-center gap-3 text-xs">
-                          <span className="font-mono font-bold text-emerald-400">
-                            Rp {price.toLocaleString('id-ID')}
-                          </span>
-                          <span className="text-slate-500 text-[11px]">/ {item.unit || 'Unit'}</span>
-                          {item.max_qty && (
-                            <span className="text-[10px] text-slate-500 italic">
-                              (Maks: {item.max_qty} {item.unit || 'unit'})
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Quantity Stepper & Subtotal */}
-                      <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800">
-                        {isSelected && (
-                          <div className="text-left sm:text-right">
-                            <span className="text-[9px] uppercase font-bold text-slate-500 block">Subtotal:</span>
-                            <span className="font-mono font-bold text-xs text-slate-200">
-                              Rp {itemSubtotal.toLocaleString('id-ID')}
-                            </span>
-                          </div>
-                        )}
-
-                        <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 p-1 rounded-xl">
-                          <button
-                            type="button"
-                            onClick={() => handleQtyChange(item.id, -1)}
-                            disabled={qty === 0}
-                            className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
-                          >
-                            <Minus size={14} />
-                          </button>
-                          
-                          <span className="w-9 text-center font-mono font-bold text-xs text-white">
-                            {qty}
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={() => handleQtyChange(item.id, 1)}
-                            disabled={qty >= (item.max_qty || 99)}
-                            className="w-8 h-8 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer shadow-sm"
-                          >
-                            <Plus size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                    <button key={cat} type="button" role="tab" aria-selected={active} onClick={() => setSelectedCategory(cat)}
+                      className={`h-9 shrink-0 whitespace-nowrap rounded-full px-3.5 text-sm font-medium ${press} ${active ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>
+                      {cat === 'ALL' ? `Semua (${items.length})` : `${cat} (${categoryCounts[cat]})`}
+                    </button>
                   );
                 })}
               </div>
-            </div>
-
-            {/* Step 3: Catatan Penempatan Teknis */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center text-xs font-bold">
-                  3
-                </div>
-                <div>
-                  <h2 className="text-sm font-bold text-white">Instruksi & Catatan Khusus Penempatan</h2>
-                  <p className="text-[11px] text-slate-400">Jelaskan letak penempatan colokan, posisi meja, atau permintaan teknis lainnya.</p>
-                </div>
-              </div>
-
-              <textarea
-                rows={3}
-                placeholder="Contoh: Titik colokan mohon ditaruh di dinding belakang sebelah kanan. Meja diletakkan di depan dekat lorong."
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 leading-relaxed"
-              />
-            </div>
-          </div>
-
-          {/* Right Sidebar: Order Summary & Checkout (Col span 1) */}
-          <div className="lg:sticky lg:top-8 space-y-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-5">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <h3 className="text-sm font-bold text-white">Ringkasan Pesanan</h3>
-                <span className="text-xs font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-lg border border-indigo-500/20">
-                  {totalQty} Item
-                </span>
-              </div>
-
-              {/* Selected items breakdown */}
-              {selectedItemsList.length === 0 ? (
-                <div className="py-8 text-center text-slate-500 text-xs">
-                  <PackageCheck size={28} className="mx-auto text-slate-600 mb-2 opacity-50" />
-                  <p className="font-semibold text-slate-400">Belum Ada Fasilitas Dipilih</p>
-                  <p className="text-[11px] mt-1 text-slate-600">Gunakan tombol (+) pada katalog fasilitas untuk menambahkan pesanan.</p>
-                </div>
-              ) : (
-                <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
-                  {selectedItemsList.map((item, idx) => (
-                    <div key={idx} className="flex items-start justify-between text-xs py-1.5 border-b border-slate-800/60 last:border-0">
-                      <div className="pr-2">
-                        <span className="font-semibold text-slate-200 block text-[11px] line-clamp-1">{item.name}</span>
-                        <span className="text-[10px] text-slate-400">{item.qty} {item.unit || 'unit'} x Rp {Number(item.price).toLocaleString('id-ID')}</span>
-                      </div>
-                      <span className="font-mono font-bold text-slate-200 text-xs shrink-0">
-                        Rp {item.total.toLocaleString('id-ID')}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Grand Total */}
-              <div className="pt-4 border-t border-slate-800 space-y-1">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-xs text-slate-400 font-medium">Total Tagihan:</span>
-                  <span className="text-lg font-black font-mono text-emerald-400">
-                    Rp {totalAmount.toLocaleString('id-ID')}
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-500 leading-relaxed">
-                  *Harga di atas resmi dari panitia expo dan akan diterbitkan invoice resmi A4.
-                </p>
-              </div>
-
-              {/* Submit Button */}
-              <button
-                type="submit"
-                disabled={isSubmitting || selectedItemsList.length === 0}
-                className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {isSubmitting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    <span>Mengirimkan Pesanan...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send size={15} />
-                    <span>Kirimkan Formulir Fasilitas</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Terms and Conditions Card */}
-            {form.terms_notes && (
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 text-[11px] text-slate-400 space-y-1.5">
-                <div className="flex items-center gap-1.5 font-bold text-slate-300">
-                  <Info size={13} className="text-indigo-400 shrink-0" />
-                  <span>Syarat & Ketentuan Panitia:</span>
-                </div>
-                <p className="whitespace-pre-line leading-relaxed text-slate-400">{form.terms_notes}</p>
-              </div>
             )}
-          </div>
-        </form>
 
+            {filteredItems.length === 0 ? (
+              <div className="flex flex-col items-center px-6 py-12 text-center">
+                <PackageOpen size={32} className="text-slate-300" />
+                <p className="mt-2 text-sm text-slate-500">Belum ada fasilitas di kategori ini.</p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-slate-100 border-t border-slate-100">
+                {filteredItems.map(item => {
+                  const qty = itemQuantities[item.id] || 0;
+                  const price = Number(item.price) || 0;
+                  const max = item.max_qty || 99;
+                  return (
+                    <li key={item.id} className={`flex items-start gap-4 px-5 py-4 sm:px-6 transition-colors duration-150 ${qty > 0 ? 'bg-indigo-50/60' : ''}`}>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-[15px] font-semibold text-slate-900">{item.name}</h3>
+                        {selectedCategory === 'ALL' && item.category && <p className="text-xs text-slate-500">{item.category}</p>}
+                        {item.description && <p className="mt-1 text-sm leading-relaxed text-slate-600">{item.description}</p>}
+                        <p className="mt-2 text-sm">
+                          <span className="font-semibold text-slate-900 tabular-nums">{rupiah(price)}</span>
+                          <span className="text-slate-500"> / {item.unit || 'unit'}</span>
+                          {item.max_qty ? <span className="text-slate-400"> · maks. {item.max_qty}</span> : null}
+                        </p>
+                        {qty > 0 && <p className="mt-1 text-xs font-medium text-indigo-700 tabular-nums">Subtotal {rupiah(qty * price)}</p>}
+                      </div>
+                      <div className="flex shrink-0 items-center rounded-xl bg-white ring-1 ring-slate-300">
+                        <button type="button" onClick={() => handleQtyChange(item.id, -1)} disabled={qty === 0} aria-label={`Kurangi ${item.name}`}
+                          className={`grid size-10 place-items-center rounded-l-xl text-slate-700 hover:bg-slate-50 disabled:text-slate-300 disabled:hover:bg-transparent ${press}`}>
+                          <Minus size={16} />
+                        </button>
+                        <output aria-live="polite" aria-label={`Jumlah ${item.name}`} className="w-8 text-center text-sm font-semibold text-slate-900 tabular-nums">{qty}</output>
+                        <button type="button" onClick={() => handleQtyChange(item.id, 1)} disabled={qty >= max} aria-label={`Tambah ${item.name}`}
+                          className={`grid size-10 place-items-center rounded-r-xl text-indigo-700 hover:bg-indigo-50 disabled:text-indigo-300 disabled:hover:bg-transparent ${press}`}>
+                          <Plus size={16} />
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Section>
+
+          {/* Step 3 */}
+          <Section step={3} title="Catatan untuk panitia" desc="Opsional: letak colokan, posisi meja, atau permintaan teknis lain.">
+            <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)}
+              placeholder="Contoh: colokan di dinding belakang sebelah kanan, meja di depan dekat lorong."
+              className="w-full rounded-xl border border-slate-300 bg-white p-3.5 text-base sm:text-sm leading-relaxed text-slate-900 placeholder:text-slate-400 shadow-xs focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/15" />
+          </Section>
+
+          <div className="lg:hidden">{termsBlock}</div>
+        </div>
+
+        {/* Summary (desktop) */}
+        <aside className="hidden space-y-4 lg:sticky lg:top-6 lg:block">
+          <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-900">Ringkasan</h2>
+              <span className="text-sm text-slate-500 tabular-nums">{totalQty} item</span>
+            </div>
+            {selectedItemsList.length === 0 ? (
+              <p className="mt-4 rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">Belum ada fasilitas dipilih. Tekan + pada fasilitas yang Anda perlukan.</p>
+            ) : (
+              <ul className="mt-3 max-h-72 divide-y divide-slate-100 overflow-y-auto overscroll-contain text-sm">
+                {selectedItemsList.map(item => (
+                  <li key={item.id} className="flex items-start justify-between gap-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-slate-900">{item.name}</p>
+                      <p className="text-xs text-slate-500 tabular-nums">{item.qty} × {rupiah(item.price)}</p>
+                    </div>
+                    <span className="shrink-0 font-medium text-slate-900 tabular-nums">{rupiah(item.total)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-4 flex items-baseline justify-between border-t border-slate-200 pt-4">
+              <span className="text-sm text-slate-600">Total</span>
+              <span className="text-xl font-semibold text-slate-900 tabular-nums">{rupiah(totalAmount)}</span>
+            </div>
+            <button type="submit" disabled={isSubmitting}
+              className={`mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 ${press}`}>
+              <Send size={16} /> {isSubmitting ? 'Mengirim…' : 'Kirim pengajuan'}
+            </button>
+            <p className="mt-2.5 text-xs leading-relaxed text-slate-500">Harga resmi panitia. Invoice diterbitkan setelah pengajuan diperiksa.</p>
+          </div>
+          {termsBlock}
+        </aside>
+      </form>
+
+      {/* Bottom bar (phone / tablet): total + submit always in reach */}
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden pb-[env(safe-area-inset-bottom)]">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
+          <div className="min-w-0 flex-1 leading-tight">
+            <p className="text-xs text-slate-500 tabular-nums">{totalQty} item dipilih</p>
+            <p className="text-lg font-semibold text-slate-900 tabular-nums">{rupiah(totalAmount)}</p>
+          </div>
+          <button type="submit" form="facility-request-form" disabled={isSubmitting}
+            className={`inline-flex h-12 shrink-0 items-center gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 ${press}`}>
+            <Send size={16} /> {isSubmitting ? 'Mengirim…' : 'Kirim'}
+          </button>
+        </div>
       </div>
-    </div>
+    </main>
   );
 }
