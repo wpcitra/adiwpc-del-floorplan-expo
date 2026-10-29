@@ -24,7 +24,7 @@ export default function GeminiAgentSettings({ gemini, onStatus }) {
 
   const configured = Boolean(gemini?.configured);
   const locked = gemini?.source === 'environment';
-  const defaultModel = gemini?.defaultModel || 'gemini-flash-latest';
+  const defaultModel = gemini?.defaultModel || 'gemini-3.5-flash';
 
   useEffect(() => {
     if (!configured) { setModels([]); setModelsError(''); return; }
@@ -69,9 +69,9 @@ export default function GeminiAgentSettings({ gemini, onStatus }) {
     else setNotice({ type: 'error', text: res.error || 'Agen belum bisa menjawab.' });
   };
 
-  // The dropdown: the "latest" alias first, then the models the key can use, and the saved one if Google no longer lists it
+  // The dropdown: the recommended default first, then the models the key can use, and the saved one if Google no longer lists it
   const modelOptions = [
-    { id: defaultModel, name: 'Otomatis: Flash terbaru (ada kuota gratis)' },
+    { id: defaultModel, name: 'Bawaan, disarankan' },
     ...models.filter(m => m.id !== defaultModel)
   ];
   if (gemini?.model && !modelOptions.some(m => m.id === gemini.model)) modelOptions.push({ id: gemini.model, name: gemini.model });
@@ -156,9 +156,10 @@ export default function GeminiAgentSettings({ gemini, onStatus }) {
               <select id="gemini-model" value={gemini.model} disabled={Boolean(busy)}
                 onChange={(e) => run('model', () => api.waSettings('PUT', '/gemini', { model: e.target.value }), 'Model Gemini diganti.')}
                 className={`${input} cursor-pointer disabled:opacity-60`}>
-                {modelOptions.map(m => <option key={m.id} value={m.id}>{m.id === defaultModel ? m.name : `${m.name} (${m.id})`}</option>)}
+                {modelOptions.map(m => <option key={m.id} value={m.id}>{`${m.name} (${m.id})`}</option>)}
               </select>
-              {modelsError && <p className="text-[11px] text-amber-700 mt-1">{modelsError}</p>}
+              {modelsError ? <p className="text-[11px] text-amber-700 mt-1">{modelsError}</p>
+                : <p className="text-[11px] text-slate-500 mt-1">Kalau agen lambat, tidak menjawab, atau kuotanya habis, pilih model lain lalu coba tanya lagi. Model "lite" paling hemat kuota.</p>}
             </div>
             <div className="flex gap-2">
               <button type="button" disabled={Boolean(busy)}

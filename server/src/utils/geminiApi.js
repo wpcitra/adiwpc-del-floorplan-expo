@@ -4,8 +4,11 @@
 // GEMINI_API_URL points the tests at a local mock; production uses https://generativelanguage.googleapis.com.
 const apiBase = () => (process.env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
 
-// The "latest" alias follows Google's newest Flash model, which has a free tier
-export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest';
+// A fixed model, not an alias: "gemini-flash-latest" moves to Google's newest Flash on its own and once never answered
+// (90 s, no reply) while gemini-3.5-flash answered the same request in 3 s. The admin can pick another model in Setting.
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
+// How long one call may take; a model that does not answer must not keep the staff member waiting (tests set it short)
+const TIMEOUT_MS = () => Number(process.env.GEMINI_TIMEOUT_MS) || 30000;
 export const getGeminiKey = () => String(process.env.GEMINI_API_KEY || '').trim();
 // No spaces, quotes or line breaks (it is written to the env file). Older keys look like "AIza…"; the "auth keys" AI
 // Studio creates since 28 May 2026 contain dots ("AQ.…"), so dots are allowed.
@@ -23,7 +26,7 @@ function describeFailure(status, body) {
   if (status === 403) return { code: 'FORBIDDEN', message: `API key ditolak Google: belum dibatasi atau tanpa izin. Di Google AI Studio buka API Keys, arahkan ke label "Unrestricted", klik Add restrictions > Restrict to Gemini API only, lalu simpan key-nya lagi di sini. Atau buat key baru di AI Studio.${google}` };
   if (status === 429) return { code: 'QUOTA', message: 'Kuota Gemini sedang habis (batas paket gratis / per menit). Coba lagi beberapa saat lagi.' };
   if (status === 404) return { code: 'MODEL', message: 'Model Gemini tidak ditemukan. Pilih model lain di Setting > Integrasi WhatsApp.' };
-  if (status >= 500) return { code: 'UNAVAILABLE', message: 'Layanan Gemini sedang gangguan. Coba lagi nanti.' };
+  if (status >= 500) return { code: 'UNAVAILABLE', message: `Layanan Gemini sedang gangguan. Coba lagi nanti, atau pilih model lain di Setting > Integrasi WhatsApp.${google}` };
   return { code: 'API_ERROR', message: `Gemini menolak permintaan (HTTP ${status}).${google}` };
 }
 
@@ -37,6 +40,7 @@ async function call(path, { key, body, timeout }) {
       signal: AbortSignal.timeout(timeout)
     });
   } catch (e) {
+    if (e?.name === 'TimeoutError') return { ok: false, code: 'TIMEOUT', message: `Model Gemini tidak menjawab dalam ${Math.round(timeout / 1000)} detik. Coba lagi, atau pilih model lain di Setting > Integrasi WhatsApp.` };
     return { ok: false, code: 'NETWORK', message: 'Server tidak dapat menghubungi Gemini (periksa koneksi internet).' };
   }
   let json = null;
@@ -60,7 +64,7 @@ export function generateContent({ model, system, tools, contents, key = getGemin
   if (!key) return Promise.resolve({ ok: false, code: 'NO_KEY', message: 'API key Gemini belum diisi.' });
   return call(`/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     key,
-    timeout: 60000,
+    timeout: TIMEOUT_MS(),
     body: { systemInstruction: { parts: [{ text: system }] }, contents, ...(tools?.length ? { tools: [{ functionDeclarations: tools }] } : {}) }
   });
 }

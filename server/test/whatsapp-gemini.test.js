@@ -48,6 +48,7 @@ before(async () => {
       ] });
     }
     const m = /^\/v1beta\/models\/([^/:]+):generateContent$/.exec(req.url);
+    if (req.method === 'POST' && m?.[1] === 'model-diam') return; // a model that never answers (the "latest" alias once did this)
     if (req.method === 'POST' && m) {
       geminiCalls.push({ model: m[1], key, body: JSON.parse(raw) });
       const next = replies.shift() || modelSays('(tidak ada jawaban tiruan)');
@@ -57,7 +58,7 @@ before(async () => {
   });
   s = await startServer({
     FONNTE_TOKEN: 'tok-fonnte', FONNTE_WEBHOOK_SECRET: SECRET, FONNTE_API_URL: `http://127.0.0.1:${wa.address().port}`,
-    GEMINI_API_URL: `http://127.0.0.1:${gm.address().port}`
+    GEMINI_API_URL: `http://127.0.0.1:${gm.address().port}`, GEMINI_TIMEOUT_MS: '1500'
   });
   await createPublishedFloorplan(s.api, FP, ['A-01', 'A-02', 'A-03'].map((c, i) => boothObject(c, { left: i * 300, top: 0 })));
   const reg = await s.api('POST', '/orders/checkout', { floorplanId: FP, boothCodes: ['A-01'], fullName: 'Budi', brandName: 'Kopi Satu', brandCategory: 'F&B', phone: '081200000001', bookingType: 'booking', deferInvoice: true }, { as: 'sales' });
@@ -69,7 +70,7 @@ before(async () => {
   const key = await s.api('PUT', '/maintenance/whatsapp/gemini', { apiKey: GOOD_KEY }, { as: 'superadmin' });
   assert.equal(key.status, 200, key.text);
 });
-after(async () => { await s?.stop(); wa?.close(); gm?.close(); });
+after(async () => { await s?.stop(); wa?.close(); gm?.closeAllConnections(); gm?.close(); });
 
 let counter = 0;
 // Send one WhatsApp message from `sender` and return the text of the reply
@@ -94,7 +95,7 @@ test('pengaturan Gemini: hanya Super Admin; kunci hanya-tulis (4 huruf terakhir)
   assert.equal(st.configured, true);
   assert.equal(st.hint, '…0001');
   assert.equal(st.enabled, true);
-  assert.equal(st.model, 'gemini-flash-latest');
+  assert.equal(st.model, 'gemini-3.5-flash', 'default = model tetap, bukan alias "latest" yang bisa macet');
   const full = await s.api('GET', '/maintenance/whatsapp', undefined, { as: 'superadmin' });
   assert.ok(!full.text.includes(GOOD_KEY), 'kunci tidak pernah dikirim balik');
 
@@ -214,6 +215,17 @@ test('coba tanya dari halaman Setting: hanya alat baca, jawabannya kembali ke ha
   assert.ok(names.includes('booth_tersedia'));
   assert.ok(!names.includes('siapkan_booking') && !names.includes('siapkan_invoice'), 'tanpa alat yang menyiapkan aksi');
   assert.equal((await s.api('POST', '/maintenance/whatsapp/gemini/test', { question: 'x' }, { as: 'sales' })).status, 403);
+});
+
+test('model yang tidak menjawab: berhenti setelah batas waktu dengan pesan untuk memilih model lain', async () => {
+  assert.equal((await s.api('PUT', '/maintenance/whatsapp/gemini', { model: 'model-diam' }, { as: 'superadmin' })).status, 200);
+  const t0 = Date.now();
+  const r = await s.api('POST', '/maintenance/whatsapp/gemini/test', { question: 'halo' }, { as: 'superadmin' });
+  assert.equal(r.status, 502, r.text);
+  assert.match(r.body.error, /tidak menjawab/);
+  assert.match(r.body.error, /model lain/);
+  assert.ok(Date.now() - t0 < 10000, 'tidak menunggu lebih dari batas waktu');
+  assert.equal((await s.api('PUT', '/maintenance/whatsapp/gemini', { model: 'gemini-3-flash-preview' }, { as: 'superadmin' })).status, 200);
 });
 
 test('agen dimatikan lalu kunci dihapus: pesan bebas dijawab MENU tanpa memanggil Gemini', async () => {
