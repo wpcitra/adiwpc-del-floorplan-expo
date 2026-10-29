@@ -1,6 +1,6 @@
 import db from '../db.js';
 import { boothSummary } from '../routes/boothActionRoutes.js';
-import { findBooth } from './contractBilling.js';
+import { findBooth, getContract } from './contractBilling.js';
 import { createSession, hashToken } from '../middleware/auth.js';
 import { writeAuditLog } from '../middleware/audit.js';
 import { invoiceDates } from '../../../shared/invoiceDates.js';
@@ -66,6 +66,8 @@ const menuText = (fp) => [
   '- BOOTH A-12 : detail satu booth',
   '- CARI kopi : cari tenant / brand',
   '- RINGKASAN : ringkasan project',
+  '- LUNAS : booth yang sudah lunas',
+  '- RESERVED : booth yang belum lunas (DP, belum bayar, belum ada invoice)',
   '- BOOKING A-12 : booking booth (Sales / Super Admin)',
   '- INVOICE A-12 : kirim PDF invoice booth (dibuat dulu bila belum ada)',
   'Booking dan invoice baru disimpan setelah Anda membalas YA.'
@@ -134,6 +136,49 @@ function summaryText(fp) {
     ...Object.entries(count).map(([label, n]) => `- ${label}: ${n}`),
     `- Invoice: ${money.n} · tagihan ${rupiah(money.total)} · sudah dibayar ${rupiah(money.paid)}`
   ].join('\n');
+}
+
+// ---------- Booked booths by payment (the contract status of AGENTS.md §14, as on the Dashboard) ----------
+const MAX_LIST = 60;
+function bookedByPayment(fp) {
+  const booths = db.prepare(`
+    SELECT id, code, status, owner_name FROM booths
+    WHERE floorplan_id = ? AND deleted_at IS NULL AND (LOWER(status) IN ('reserved', 'booked', 'sold') OR TRIM(COALESCE(owner_name, '')) != '')
+    ORDER BY code`).all(fp.id);
+  const groups = { lunas: [], soldNoInvoice: [], dp: [], unpaid: [], unbilled: [] };
+  for (const b of booths) {
+    const c = getContract(fp.id, b.code, b.id);
+    const row = { code: b.code, tenant: String(b.owner_name || c.ownerName || '').trim() || '(tanpa nama)', c };
+    if (c.status === 'PAID') groups.lunas.push(row);
+    else if (c.status === 'PARTIAL') groups.dp.push(row);
+    else if (c.status === 'UNPAID' || c.status === 'PENDING') groups.unpaid.push(row);
+    else if (lower(b.status) === 'sold') groups.soldNoInvoice.push(row);
+    else groups.unbilled.push(row); // booked, no live invoice yet
+  }
+  return groups;
+}
+
+// which: lunas | reserved (= dp + belum_bayar + belum_ditagih) | dp | belum_bayar | belum_ditagih | semua
+function paymentListText(fp, which) {
+  const w = lower(which) || 'semua';
+  const g = bookedByPayment(fp);
+  const sections = [];
+  let count = 0;
+  const add = (title, rows, line) => {
+    if (!rows.length) return;
+    count += rows.length;
+    sections.push(`${title} (${rows.length}):`, ...rows.slice(0, MAX_LIST).map(line), ...(rows.length > MAX_LIST ? [`…dan ${rows.length - MAX_LIST} booth lainnya.`] : []));
+  };
+  if (['lunas', 'semua'].includes(w)) {
+    add('Lunas', g.lunas, r => `- ${r.code} · ${r.tenant} · ${rupiah(r.c.contractTotal)}`);
+    add('Sold tanpa invoice tercatat (cek pembayarannya)', g.soldNoInvoice, r => `- ${r.code} · ${r.tenant}`);
+  }
+  if (['reserved', 'dp', 'semua'].includes(w)) add('DP / dibayar sebagian', g.dp, r => `- ${r.code} · ${r.tenant} · dibayar ${rupiah(r.c.paid)} dari ${rupiah(r.c.contractTotal)}, sisa ${rupiah(r.c.remaining)}`);
+  if (['reserved', 'belum_bayar', 'semua'].includes(w)) add('Invoice terbit, belum dibayar', g.unpaid, r => `- ${r.code} · ${r.tenant} · tagihan ${rupiah(r.c.contractTotal)}`);
+  if (['reserved', 'belum_ditagih', 'semua'].includes(w)) add('Belum ada invoice', g.unbilled, r => `- ${r.code} · ${r.tenant}`);
+  const label = { lunas: 'lunas', reserved: 'reserved (belum lunas)', dp: 'DP', belum_bayar: 'invoice belum dibayar', belum_ditagih: 'belum ada invoice', semua: 'terisi' }[w] || w;
+  if (!count) return `Tidak ada booth ${label} di project ${fp.title}.`;
+  return [`Booth ${label} · ${fp.title}: ${count} booth`, ...sections].join('\n');
 }
 
 // ---------- Booking (asked one question at a time) and invoice ----------
@@ -358,6 +403,11 @@ const READ_TOOLS = [
   { name: 'detail_booth', description: 'Detail satu booth: status, ukuran, tenant, PIC, harga, diskon, rencana bayar, invoice dan pembayaran.', parameters: { type: 'OBJECT', properties: { nomor_booth: str('Nomor booth, misalnya A-12') }, required: ['nomor_booth'] } },
   { name: 'cari_tenant', description: 'Cari booth berdasarkan nama tenant / brand atau nomor booth (maksimal 15 hasil).', parameters: { type: 'OBJECT', properties: { kata: str('Nama tenant / brand atau nomor booth') }, required: ['kata'] } },
   { name: 'ringkasan_project', description: 'Jumlah booth per status dan total tagihan / uang yang sudah dibayar di project.' },
+  {
+    name: 'daftar_booth',
+    description: 'Daftar nomor booth dan nama tenant menurut status pembayaran: lunas, reserved (belum lunas: DP, invoice belum dibayar, belum ada invoice), atau semua booth yang terisi. Termasuk jumlah dibayar dan sisa tagihan.',
+    parameters: { type: 'OBJECT', properties: { status: { type: 'STRING', enum: ['lunas', 'reserved', 'dp', 'belum_bayar', 'belum_ditagih', 'semua'], description: 'Kelompok booth' } }, required: ['status'] }
+  },
   { name: 'cari_invoice', description: 'Cek invoice: sudah dibuat atau belum, nomor, jenis (DP / Pelunasan / Penuh / Fasilitas), total dan status bayar. Cari dengan nomor booth, nomor invoice, atau nama tenant.', parameters: { type: 'OBJECT', properties: { kata: str('Nomor booth, nomor invoice, atau nama tenant') }, required: ['kata'] } }
 ];
 const ACTION_TOOLS = [
@@ -388,7 +438,7 @@ const ACTION_TOOLS = [
 
 const systemPrompt = (user, fp) => `Anda asisten untuk staf penyelenggara pameran di aplikasi denah pameran (lewat WhatsApp atau chat di aplikasi).
 Yang bertanya: ${user.name} (${ROLE_NAME[user.role] || user.role}). Project: ${fp.title}. Hari ini: ${new Date().toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'long', year: 'numeric' })}.
-Anda bisa membaca data lewat alat (booth tersedia, detail booth, cari tenant, ringkasan) dan MENYIAPKAN booking booth (siapkan_booking) atau invoice (siapkan_invoice).
+Anda bisa membaca data lewat alat (booth tersedia, detail booth, cari tenant, ringkasan, daftar booth lunas / reserved, cek invoice) dan MENYIAPKAN booking booth (siapkan_booking) atau invoice (siapkan_invoice).
 Menyiapkan BUKAN menyimpan: sistem sendiri yang mengirim ringkasan dan baru menyimpan setelah staf membalas YA. Jangan pernah bilang sesuatu sudah tersimpan atau terbit.
 Booking butuh: nomor booth, nama brand / tenant, nama PIC, nomor WhatsApp tenant, kategori brand, dan rencana bayar (penuh, atau DP berapa persen). Kalau ada yang kurang, tanyakan dulu; jangan mengarang.
 Invoice dibuat untuk booth yang sudah dibooking (DP bila rencana bayarnya DP, selain itu Penuh). Untuk mengecek apakah invoice sudah ada pakai cari_invoice; untuk mengirim PDF invoice yang sudah ada pakai kirim_pdf_invoice (langsung, tanpa YA). Kalau diminta "buatkan / kirim invoice", cek dulu: sudah ada berarti kirim PDF-nya, belum ada berarti siapkan_invoice.
@@ -406,6 +456,7 @@ const toolHandlers = (user, fp, channel) => ({
   detail_booth: ({ nomor_booth }) => ({ result: boothText(fp, String(nomor_booth || ''), user.role) }),
   cari_tenant: ({ kata }) => ({ result: searchText(fp, String(kata || '')) }),
   ringkasan_project: () => ({ result: summaryText(fp) }),
+  daftar_booth: ({ status }) => ({ result: paymentListText(fp, String(status || 'semua')) }),
   cari_invoice: ({ kata }) => ({ result: invoiceListText(fp, String(kata || '')) }),
   kirim_pdf_invoice: ({ nomor }) => sendInvoicePdfs(user, fp, String(nomor || ''), channel),
   siapkan_booking: (a) => asFinal(bookingRequest(user, fp,
@@ -425,7 +476,7 @@ const SIZE_RE = /^\d+(?:[.,]\d+)?\s*[x×]\s*\d+(?:[.,]\d+)?\s*m?$/i;
 function isCommand(cmd, rest, fp) {
   const r = String(rest || '').trim();
   switch (cmd) {
-    case 'menu': case 'ringkasan': return !r;
+    case 'menu': case 'ringkasan': case 'lunas': case 'reserved': case 'reserve': return !r;
     case 'tersedia': case 'kosong': return !r || SIZE_RE.test(r);
     case 'booth': return Boolean(r && findBooth(fp.id, r.replace(/^#/, ''), ''));
     case 'invoice': return Boolean(r && (findBooth(fp.id, r.replace(/^#/, ''), '') || findInvoices(fp, r).some(i => lower(i.invoice_number) === lower(r))));
@@ -463,6 +514,8 @@ export async function answerStaff(user, text, channel = 'WhatsApp') {
     case 'booth': return boothText(fp, rest, user.role);
     case 'cari': return searchText(fp, rest);
     case 'ringkasan': return summaryText(fp);
+    case 'lunas': return paymentListText(fp, 'lunas');
+    case 'reserved': case 'reserve': return paymentListText(fp, 'reserved');
     case 'booking': return startBooking(user, fp, rest, channel);
     case 'invoice': {
       // already there: its PDF; otherwise the first invoice is prepared and waits for YA

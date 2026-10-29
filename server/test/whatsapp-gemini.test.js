@@ -283,6 +283,32 @@ test('cek invoice dan kirim PDF invoice lewat obrolan: sudah / belum ada, PDF la
   assert.ok(sent.slice(-2).some(m => m.file) || /PDF/.test(wa), 'PDF terkirim sebagai file, atau alasannya dikabarkan');
 });
 
+test('daftar booth per status bayar: lunas, dan reserved (DP / belum bayar / belum ada invoice), lewat Gemini dan kata perintah', async () => {
+  const inv = (await s.api('GET', '/invoices', undefined, { as: 'finance' })).body.invoices.find(i => i.floorplan_id === FP && i.booth_code === 'A-03');
+  const paid = await s.api('POST', `/invoices/${inv.id}/status`, { status: 'PAID' }, { as: 'finance' });
+  assert.equal(paid.status, 200, paid.text);
+  const lastToolAnswer = () => JSON.stringify(geminiCalls.at(-1).body.contents.at(-1).parts[0].functionResponse.response);
+
+  replies.push(modelCalls('daftar_booth', { status: 'lunas' }), modelSays('Yang lunas: A-03.'));
+  assert.equal(texts(await chatWeb('booth mana saja yang sudah lunas?')), 'Yang lunas: A-03.');
+  assert.match(lastToolAnswer(), /A-03 · Roti Tiga/);
+  assert.doesNotMatch(lastToolAnswer(), /A-01|A-02/);
+
+  replies.push(modelCalls('daftar_booth', { status: 'reserved' }), modelSays('Masih reserve: A-01, A-02.'));
+  await chatWeb('yang masih reserve apa saja?');
+  const reserved = lastToolAnswer();
+  assert.match(reserved, /A-01 · Kopi Satu/);
+  assert.match(reserved, /A-02 · Teh Dua/);
+  assert.match(reserved, /Belum ada invoice/);
+  assert.doesNotMatch(reserved, /A-03/);
+
+  // the same lists without AI
+  assert.match(await say(SALES, 'LUNAS'), /A-03 · Roti Tiga/);
+  const r = await say(SALES, 'RESERVED');
+  assert.match(r, /A-01 · Kopi Satu/);
+  assert.doesNotMatch(r, /A-03/);
+});
+
 test('model utama diam atau sedang penuh: pertanyaan yang sama dijawab model cadangan', async () => {
   // a model that never answers: stopped after the time limit, then the fallback answers
   assert.equal((await s.api('PUT', '/maintenance/whatsapp/gemini', { model: 'model-diam' }, { as: 'superadmin' })).status, 200);
