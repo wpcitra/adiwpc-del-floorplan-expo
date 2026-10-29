@@ -12,6 +12,8 @@ const SALES = '6281234567890';
 const FINANCE = '6281311112222';
 const GOOD_KEY = 'AIzaTesKunciGeminiBenar0001';
 const BAD_KEY = 'AIzaTesKunciGeminiSalah0002';
+const AUTH_KEY = 'AQ.Ab8RN6TesKunciAuthBaru-Google.0003'; // new AI Studio "auth key" format (dots)
+const OPEN_KEY = 'AIzaTesKunciTanpaBatasan0004'; // a standard key without restrictions: Google answers 403
 let s;
 let wa;
 let gm;
@@ -38,6 +40,7 @@ before(async () => {
     const key = req.headers['x-goog-api-key'];
     const send = (status, body) => { res.statusCode = status; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(body)); };
     if (key === BAD_KEY) return send(400, { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'API key not valid. Please pass a valid API key.', details: [{ reason: 'API_KEY_INVALID' }] } });
+    if (key === OPEN_KEY) return send(403, { error: { code: 403, status: 'PERMISSION_DENIED', message: 'Requests from unrestricted API keys are not allowed.' } });
     if (req.method === 'GET' && req.url.startsWith('/v1beta/models')) {
       return send(200, { models: [
         { name: 'models/gemini-3-flash-preview', displayName: 'Gemini 3 Flash', supportedGenerationMethods: ['generateContent', 'countTokens'] },
@@ -101,6 +104,17 @@ test('pengaturan Gemini: hanya Super Admin; kunci hanya-tulis (4 huruf terakhir)
   assert.equal((await geminiStatus()).hint, '…0001', 'kunci lama tetap');
   assert.equal((await s.api('PUT', '/maintenance/whatsapp/gemini', { apiKey: 'ada spasi di sini' }, { as: 'superadmin' })).status, 400);
 
+  // a key Google refuses because it has no restrictions: the answer says how to fix it in AI Studio
+  const open = await s.api('PUT', '/maintenance/whatsapp/gemini', { apiKey: OPEN_KEY }, { as: 'superadmin' });
+  assert.equal(open.status, 400, open.text);
+  assert.match(open.body.error, /Restrict to Gemini API only/);
+  assert.match(open.body.error, /unrestricted API keys/, 'alasan dari Google ikut ditampilkan');
+  // the new AI Studio key format (with dots) is accepted and checked with Google
+  const auth = await s.api('PUT', '/maintenance/whatsapp/gemini', { apiKey: AUTH_KEY }, { as: 'superadmin' });
+  assert.equal(auth.status, 200, auth.text);
+  assert.equal(auth.body.status.gemini.hint, '…0003');
+  assert.equal((await s.api('PUT', '/maintenance/whatsapp/gemini', { apiKey: GOOD_KEY }, { as: 'superadmin' })).status, 200);
+
   const models = await s.api('GET', '/maintenance/whatsapp/gemini/models', undefined, { as: 'superadmin' });
   assert.equal(models.status, 200, models.text);
   assert.deepEqual(models.body.models.map(m => m.id), ['gemini-3-flash-preview'], 'hanya model yang bisa generateContent');
@@ -110,7 +124,7 @@ test('pengaturan Gemini: hanya Super Admin; kunci hanya-tulis (4 huruf terakhir)
 
   const logs = await s.api('GET', '/audit-logs?category=Maintenance', undefined, { as: 'superadmin' });
   assert.ok(logs.body.logs.some(l => /gemini/i.test(l.action)), 'tercatat di Log Aktivitas');
-  assert.ok(!logs.text.includes(GOOD_KEY) && !logs.text.includes(BAD_KEY), 'nilai kunci tidak tercatat');
+  assert.ok(![GOOD_KEY, BAD_KEY, AUTH_KEY, OPEN_KEY].some(k => logs.text.includes(k)), 'nilai kunci tidak tercatat');
 });
 
 test('pesan bebas dijawab Gemini memakai alat data; balasan model dikembalikan apa adanya; **tebal** jadi *tebal*', async () => {

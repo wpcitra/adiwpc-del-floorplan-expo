@@ -124,7 +124,7 @@ export default function GeminiAgentSettings({ gemini, onStatus }) {
             <div className="flex-1 min-w-0 flex items-center bg-white border border-slate-200 rounded-xl px-3 focus-within:border-emerald-400">
               <KeyRound size={14} className="text-slate-400 shrink-0" />
               <input id="gemini-key" type={showKey ? 'text' : 'password'} name="gemini-key" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
-                placeholder={configured ? `Tersimpan (${gemini.hint}). Isi hanya untuk mengganti.` : 'Tempel API key dari Google AI Studio (AIza...)'}
+                placeholder={configured ? `Tersimpan (${gemini.hint}). Isi hanya untuk mengganti.` : 'Tempel API key dari Google AI Studio (diawali AQ. atau AIza)'}
                 autoComplete="new-password" spellCheck={false}
                 className="flex-1 min-w-0 bg-transparent px-2 py-2.5 text-xs font-mono text-slate-800 placeholder:text-slate-500 focus:outline-none" />
               <button type="button" onClick={() => setShowKey(v => !v)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer" aria-label={showKey ? 'Sembunyikan API key' : 'Tampilkan API key'}>
