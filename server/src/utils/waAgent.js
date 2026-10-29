@@ -4,8 +4,8 @@ import { findBooth, getContract } from './contractBilling.js';
 import { createSession, hashToken } from '../middleware/auth.js';
 import { writeAuditLog } from '../middleware/audit.js';
 import { invoiceDates } from '../../../shared/invoiceDates.js';
-import { chatWithGemini, geminiReady } from './waGemini.js';
-import { waMeta } from './whatsapp.js';
+import { chatWithGemini, geminiReady, transcribeAudio } from './waGemini.js';
+import { waMeta, downloadAudio } from './whatsapp.js';
 
 // WhatsApp assistant for staff (AGENTS.md §45). Fixed commands: MENU, TERSEDIA [ukuran], BOOTH <nomor>, CARI <nama>,
 // RINGKASAN read the data; BOOKING <nomor> asks the tenant data one question at a time and INVOICE <nomor> prepares the
@@ -508,6 +508,26 @@ function isCommand(cmd, rest, fp) {
     case 'cari': return Boolean(r) && r.split(/\s+/).length <= 3;
     default: return false;
   }
+}
+
+/**
+ * A voice note: Gemini listens, the text is answered like a typed message, and the reply starts with what was heard
+ * (so a spoken "ya" that saves a booking is visible). { reply, outcome } — outcome is for "Pesan masuk terakhir".
+ */
+export async function answerVoice(user, { url, mimeType }) {
+  const name = currentPersona().name;
+  const askToType = 'Mohon ketik pesannya ya, Kak.';
+  if (!geminiReady()) return { outcome: 'pesan suara: agen Gemini belum aktif', reply: `Mohon maaf, Kak 🙏 pesan suara (voice note) baru bisa ${name} dengarkan bila agen AI Gemini aktif. ${askToType}` };
+  if (!url) return { outcome: 'pesan suara: Fonnte tidak mengirim filenya', reply: `Mohon maaf, Kak 🙏 pesan suara belum bisa ${name} dengarkan karena paket Fonnte nomor ini tidak meneruskan file suara (butuh paket yang mendukung lampiran). ${askToType}` };
+  const audio = await downloadAudio(url);
+  if (audio.error) return { outcome: `pesan suara: file gagal diambil (${audio.error})`, reply: `Mohon maaf, Kak 🙏 file suaranya tidak bisa ${name} ambil (${audio.error}). ${askToType}` };
+  const heard = await transcribeAudio({ data: audio.data, mimeType });
+  if (heard.error) return { outcome: `pesan suara: Gemini gagal (${heard.error})`, reply: `Mohon maaf, Kak 🙏 ${name} belum bisa mendengarkan pesan suara saat ini: ${heard.error}\n${askToType}` };
+  if (!heard.text) return { outcome: 'pesan suara: tidak terdengar jelas', reply: 'Mohon maaf, Kak 🙏 suaranya tidak terdengar jelas. Boleh diulang atau diketik, Kak?' };
+  const parts = [].concat(await answerStaff(user, heard.text));
+  const said = `🎙️ Kakak bilang: "${heard.text}"`;
+  if (typeof parts[0] === 'string') parts[0] = `${said}\n\n${parts[0]}`; else parts.unshift(said);
+  return { outcome: 'pesan suara: didengarkan dan dijawab', reply: parts };
 }
 
 /**

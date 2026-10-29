@@ -33,7 +33,12 @@ export function secretMatches(given) {
 }
 
 // Fonnte posts one message per call: { device, sender, message, member, url, filename, extension, inboxid, timestamp, ... }
-// Groups (`member` set) and calls for another device are ignored. A message without text, or with an attachment, is "non-text".
+// Voice notes and other audio Gemini can listen to (MIME types of its audio understanding)
+const AUDIO_TYPES = { ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', mp3: 'audio/mp3', mpeg: 'audio/mpeg', m4a: 'audio/m4a', aac: 'audio/aac', wav: 'audio/wav', webm: 'audio/webm', flac: 'audio/flac' };
+const extensionOf = (body) => String(body?.extension || String(body?.filename || '').split('.').pop() || '').toLowerCase().replace(/^\./, '').replace(/[^a-z0-9]/g, '');
+
+// Groups (`member` set) and calls for another device are ignored. A message without text, or with an attachment, is
+// "non-text": 'audio' (a voice note: Fonnte sends its file as `url` only on packages with attachments) or 'media'.
 export function incomingMessage(body) {
   const sender = String(body?.sender || '').replace(/\D/g, '');
   if (!sender || body?.member) return null;
@@ -42,12 +47,34 @@ export function incomingMessage(body) {
   if (device && sender === normalizePhone(device)) return null;
   const text = String(body?.message ?? '').trim();
   const isMedia = Boolean(body?.url || body?.extension || body?.filename) || !text;
+  const extension = isMedia ? extensionOf(body) : '';
+  const mimeType = AUDIO_TYPES[extension] || '';
   return {
     id: String(body?.inboxid || `${sender}|${body?.timestamp || ''}|${text}`),
     from: sender,
-    type: isMedia ? 'media' : 'text',
-    text: isMedia ? '' : text
+    type: mimeType ? 'audio' : isMedia ? 'media' : 'text',
+    text: isMedia ? '' : text,
+    url: isMedia ? String(body?.url || '') : '',
+    extension,
+    mimeType
   };
+}
+
+// The voice note file Fonnte links to: http(s) only, max 10 MB (Fonnte's own limit), 20 s. Returns { data } (base64) or { error }.
+const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
+export async function downloadAudio(url) {
+  if (!/^https?:\/\//i.test(String(url || ''))) return { error: 'alamat file tidak valid' };
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    if (Number(res.headers.get('content-length')) > MAX_AUDIO_BYTES) return { error: 'file lebih dari 10 MB' };
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length) return { error: 'file kosong' };
+    if (buf.length > MAX_AUDIO_BYTES) return { error: 'file lebih dari 10 MB' };
+    return { data: buf.toString('base64') };
+  } catch (e) {
+    return { error: 'file tidak dapat diunduh' };
+  }
 }
 
 // 0812… / +62 812… / 62812… all compare equal

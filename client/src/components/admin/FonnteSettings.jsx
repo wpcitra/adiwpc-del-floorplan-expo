@@ -53,6 +53,9 @@ export default function FonnteSettings() {
   const locked = status?.source === 'environment';
   const isLocalhost = /localhost|127\.0\.0\.1/.test(status?.webhookUrl || '');
   const test = status?.lastTest;
+  const inbox = status?.lastIncoming;
+  const inboxTime = inbox ? new Date(inbox.at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  const inboxBad = inbox && /tidak dijawab|gagal|tidak mengirim|belum aktif/.test(inbox.outcome);
 
   return (
     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6 animate-fadeIn">
@@ -62,7 +65,7 @@ export default function FonnteSettings() {
       </div>
 
       <p className="text-xs text-slate-500 leading-relaxed">
-        Staf (Sales, Keuangan, Super Admin) mengirim kata perintah ke nomor asisten (ketik <b>MENU</b>): booth yang tersedia, detail booth, cari tenant, ringkasan, booking booth, dan invoice (PDF-nya dikirim ke WhatsApp; mengirim file butuh paket Fonnte Super / Advanced / Ultra). Pertanyaan bebas (bukan kata perintah) dijawab agen AI Gemini bila diaktifkan di bagian bawah. Booking dan invoice baru disimpan setelah staf membalas <b>YA</b>. Hubungkan nomor asisten di{' '}
+        Staf (Sales, Keuangan, Super Admin) mengirim kata perintah ke nomor asisten (ketik <b>MENU</b>): booth yang tersedia, detail booth, cari tenant, ringkasan, booking booth, dan invoice (PDF-nya dikirim ke WhatsApp; mengirim file butuh paket Fonnte Super / Advanced / Ultra). Pertanyaan bebas (bukan kata perintah) dan pesan suara dijawab agen AI Gemini bila diaktifkan di bagian bawah. Booking dan invoice baru disimpan setelah staf membalas <b>YA</b>. Hubungkan nomor asisten di{' '}
         <a href="https://fonnte.com" target="_blank" rel="noopener noreferrer" className="text-emerald-700 font-semibold underline">fonnte.com</a>{' '}
         (menu Device, scan QR), lalu salin <b>Token</b> device-nya ke sini. Token hanya disimpan di server (<code className="bg-slate-100 px-1 py-0.5 rounded">server/.env</code>) dan <b>tidak pernah ditampilkan lagi</b>.
       </p>
@@ -93,6 +96,14 @@ export default function FonnteSettings() {
             </div>
           ) : <div className="text-xs text-slate-400">Belum pernah diuji</div>}
         </div>
+      </div>
+
+      {/* What the last WhatsApp message was and what happened to it (no text, the number masked) */}
+      <div className={`px-3 py-2 rounded-xl border text-xs leading-relaxed ${inboxBad ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-white border-slate-200 text-slate-700'}`}>
+        <span className="font-bold">Pesan masuk terakhir: </span>
+        {inbox ? (
+          <>{inboxTime} WIB · pesan {inbox.kind}{inbox.extension ? ` (${inbox.extension}${inbox.kind === 'suara' ? (inbox.hasFile ? ', file diterima' : ', tanpa file') : ''})` : ''} dari {inbox.from}{inbox.staff ? ` (${inbox.staff})` : ''} · <span className="font-semibold">{inbox.outcome}</span></>
+        ) : <span className="text-slate-500">belum ada pesan yang sampai ke server.</span>}
       </div>
 
       {locked ? (

@@ -63,11 +63,11 @@ export async function listGeminiModels(key = getGeminiKey()) {
 }
 
 /** POST generateContent with function declarations. Returns { ok, body } or { ok: false, code, message }. */
-export function generateContent({ model, system, tools, contents, key = getGeminiKey() }) {
+export function generateContent({ model, system, tools, contents, timeout, key = getGeminiKey() }) {
   if (!key) return Promise.resolve({ ok: false, code: 'NO_KEY', message: 'API key Gemini belum diisi.' });
   return call(`/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     key,
-    timeout: TIMEOUT_MS(),
+    timeout: timeout || TIMEOUT_MS(),
     body: { systemInstruction: { parts: [{ text: system }] }, contents, ...(tools?.length ? { tools: [{ functionDeclarations: tools }] } : {}) }
   });
 }

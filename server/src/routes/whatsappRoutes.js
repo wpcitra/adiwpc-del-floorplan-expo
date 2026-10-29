@@ -1,6 +1,6 @@
 import express from 'express';
-import { waEnabled, secretMatches, incomingMessage, staffByPhone, sendText, sendFile } from '../utils/whatsapp.js';
-import { answerStaff } from '../utils/waAgent.js';
+import { waEnabled, secretMatches, incomingMessage, staffByPhone, sendText, sendFile, saveWaMeta } from '../utils/whatsapp.js';
+import { answerStaff, answerVoice } from '../utils/waAgent.js';
 
 // WhatsApp (Fonnte) webhook of the staff assistant (AGENTS.md §45). Public path; Fonnte does not sign its calls, so the
 // URL itself carries a secret: /api/whatsapp/webhook/<FONNTE_WEBHOOK_SECRET>.
@@ -22,18 +22,28 @@ export async function processMessage(m) {
   if (seen.size > 2000) seen.delete(seen.values().next().value);
 
   const user = staffByPhone(m.from);
-  if (!user) return; // not a staff number: no answer, nothing revealed
-  if (!allowed(m.from)) { await sendText(m.from, 'Terlalu banyak pesan dalam waktu singkat. Coba lagi beberapa menit lagi.'); return; }
-  if (m.type !== 'text') {
-    await sendText(m.from, 'Saat ini saya hanya membaca pesan teks. Voice note dan gambar belum didukung, silakan ketik pertanyaannya.');
-    return;
-  }
+  // "Pesan masuk terakhir" in Setting: what arrived and what happened (never the text, the number masked)
+  const note = (outcome) => saveWaMeta({ lastIncoming: {
+    at: new Date().toISOString(), from: `…${m.from.slice(-4)}`, staff: user?.name || null,
+    kind: { text: 'teks', audio: 'suara', media: 'lampiran' }[m.type], extension: m.extension || '', hasFile: Boolean(m.url), outcome
+  } });
+  if (!user) { note('tidak dijawab: nomor ini tidak terdaftar di kolom Telepon akun staf'); return; } // nothing revealed
+  if (!allowed(m.from)) { note('tidak dijawab: terlalu banyak pesan'); await sendText(m.from, 'Terlalu banyak pesan dalam waktu singkat. Coba lagi beberapa menit lagi.'); return; }
+
+  let outcome = 'dijawab';
+  let reply;
+  if (m.type === 'audio') ({ reply, outcome } = await answerVoice(user, m));
+  else if (m.type === 'media') { outcome = 'lampiran bukan suara: diminta mengetik'; reply = 'Mohon maaf, Kak 🙏 gambar dan file belum bisa dibaca. Silakan ketik pertanyaannya, atau kirim pesan suara.'; }
+  else reply = await answerStaff(user, m.text);
+
   // The answer is one text, or several parts: texts and a document ({ file, filename, caption }, e.g. the invoice PDF)
-  for (const part of [].concat(await answerStaff(user, m.text))) {
-    if (typeof part === 'string') { await sendText(m.from, part); continue; }
+  let failed = '';
+  for (const part of [].concat(reply)) {
+    if (typeof part === 'string') { const r = await sendText(m.from, part); if (!r.ok && !failed) failed = r.reason; continue; }
     const sentFile = await sendFile(m.from, part.file, part.filename, part.caption);
     if (!sentFile.ok) await sendText(m.from, `PDF ${part.filename} tidak terkirim lewat WhatsApp (${sentFile.reason}). Unduh dari aplikasi.`);
   }
+  note(failed ? `${outcome}, tetapi balasan gagal dikirim Fonnte: ${failed}` : outcome);
 }
 
 // POST: answered at once (200), the reply is sent afterwards through Fonnte. A wrong secret looks like a missing page.

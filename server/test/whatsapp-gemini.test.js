@@ -14,6 +14,7 @@ const GOOD_KEY = 'AIzaTesKunciGeminiBenar0001';
 const BAD_KEY = 'AIzaTesKunciGeminiSalah0002';
 const AUTH_KEY = 'AQ.Ab8RN6TesKunciAuthBaru-Google.0003'; // new AI Studio "auth key" format (dots)
 const OPEN_KEY = 'AIzaTesKunciTanpaBatasan0004'; // a standard key without restrictions: Google answers 403
+const VOICE = Buffer.from('OggS-rekaman-suara-tiruan');
 let s;
 let wa;
 let gm;
@@ -48,6 +49,7 @@ before(async () => {
     const send = (status, body) => { res.statusCode = status; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(body)); };
     if (key === BAD_KEY) return send(400, { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'API key not valid. Please pass a valid API key.', details: [{ reason: 'API_KEY_INVALID' }] } });
     if (key === OPEN_KEY) return send(403, { error: { code: 403, status: 'PERMISSION_DENIED', message: 'Requests from unrestricted API keys are not allowed.' } });
+    if (req.method === 'GET' && req.url === '/media/voice.ogg') { res.setHeader('Content-Type', 'audio/ogg'); return res.end(VOICE); } // the voice note Fonnte links to
     if (req.method === 'GET' && req.url.startsWith('/v1beta/models')) {
       return send(200, { models: [
         { name: 'models/gemini-3-flash-preview', displayName: 'Gemini 3 Flash', supportedGenerationMethods: ['generateContent', 'countTokens'] },
@@ -81,11 +83,11 @@ after(async () => { await s?.stop(); wa?.close(); gm?.closeAllConnections(); gm?
 
 let counter = 0;
 // Send one WhatsApp message from `sender` and return the text of the replies (`count` messages are awaited)
-async function say(sender, message, count = 1) {
+async function say(sender, message, count = 1, extra = {}) {
   const n = sent.length;
   const r = await fetch(`${s.base}/whatsapp/webhook/${SECRET}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ device: '628111000111', sender, message, inboxid: `g${++counter}`, timestamp: Date.now() })
+    body: JSON.stringify({ device: '628111000111', sender, message, inboxid: `g${++counter}`, timestamp: Date.now(), ...extra })
   });
   assert.equal(r.status, 200);
   for (let i = 0; i < 600 && sent.length < n + count; i++) await new Promise(res => setTimeout(res, 50));
@@ -355,6 +357,35 @@ test('model utama diam atau sedang penuh: pertanyaan yang sama dijawab model cad
   r = await chatWeb('halo lagi');
   assert.equal(texts(r), 'Cadangan menjawab.');
   assert.equal(geminiCalls.at(-1).model, 'gemini-3.1-flash-lite');
+});
+
+test('pesan suara: didengarkan Gemini, ditulis ulang, lalu dijawab seperti pesan ketik; tanpa file atau tidak jelas: diminta mengetik', async () => {
+  const voice = { url: `http://127.0.0.1:${gm.address().port}/media/voice.ogg`, extension: 'ogg', filename: 'voice.ogg' };
+  const n = geminiCalls.length;
+  replies.push(modelSays('booth A-01 siapa tenantnya?'), modelSays('A-01 dipakai Kopi Satu, Kak.'));
+  const r = await say(FINANCE, '', 1, voice);
+  assert.match(r, /🎙️ Kakak bilang: "booth A-01 siapa tenantnya\?"/, 'tulisan dari suara ditampilkan');
+  assert.match(r, /A-01 dipakai Kopi Satu, Kak\./);
+  const hear = geminiCalls[n].body;
+  const audio = hear.contents[0].parts.find(p => p.inlineData)?.inlineData;
+  assert.equal(audio?.mimeType, 'audio/ogg');
+  assert.equal(audio?.data, VOICE.toString('base64'), 'file suara dikirim ke Gemini');
+  assert.ok(!hear.tools, 'mendengarkan tanpa alat');
+  assert.equal(geminiCalls[n + 1].body.contents.at(-1).parts[0].text, 'booth A-01 siapa tenantnya?', 'diproses seperti pesan ketik');
+
+  const last = (await s.api('GET', '/maintenance/whatsapp', undefined, { as: 'superadmin' })).body.status.lastIncoming;
+  assert.equal(last.kind, 'suara');
+  assert.equal(last.hasFile, true);
+  assert.equal(last.extension, 'ogg');
+  assert.equal(last.staff, 'Fina Keuangan');
+  assert.match(last.outcome, /dijawab/);
+  assert.equal(last.from, '…2222', 'nomor disamarkan');
+
+  // Fonnte did not forward the file (package without attachments)
+  assert.match(await say(FINANCE, '', 1, { extension: 'ogg', filename: 'voice.ogg' }), /paket Fonnte[\s\S]*ketik/);
+  // nothing intelligible
+  replies.push(modelSays('(tidak terdengar)'));
+  assert.match(await say(FINANCE, '', 1, voice), /tidak terdengar jelas/);
 });
 
 test('agen dimatikan lalu kunci dihapus: pesan bebas dijawab MENU tanpa memanggil Gemini', async () => {

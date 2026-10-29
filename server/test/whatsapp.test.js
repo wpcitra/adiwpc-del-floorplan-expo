@@ -104,11 +104,12 @@ test('RINGKASAN: jumlah booth per status', async () => {
   assert.match(sum, /Reserved: 1/);
 });
 
-test('voice note dijawab sopan: belum didukung', async () => {
+test('voice note tanpa agen Gemini dijawab sopan: diminta mengetik', async () => {
   const n = sent.length;
   await call(text(STAFF, '', { url: 'https://example.test/vn.ogg', extension: 'ogg' }));
   const [msg] = await waitSent(n + 1);
   assert.match(msg.body.message, /voice note/i);
+  assert.match(msg.body.message, /ketik/);
 });
 
 test('grup (member terisi) dan perangkat lain diabaikan', async () => {

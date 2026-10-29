@@ -30,6 +30,7 @@ function status(req) {
     staff: db.prepare("SELECT name, role, phone FROM users WHERE is_active = 1 AND role IN ('superadmin', 'finance', 'sales')").all()
       .map(u => ({ name: u.name, role: u.role, hasPhone: Boolean(normalizePhone(u.phone)) })),
     signature: meta.signature || '',
+    lastIncoming: meta.lastIncoming || null,
     persona: currentPersona().id, personas: PERSONAS,
     updatedAt: meta.updatedAt || null, updatedBy: meta.updatedBy || '', lastTest: meta.lastTest || null,
     gemini: geminiStatus()

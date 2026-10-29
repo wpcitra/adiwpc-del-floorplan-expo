@@ -23,6 +23,28 @@ export const geminiReady = () => Boolean(getGeminiKey()) && geminiConfig().enabl
 // WhatsApp marks bold with one star and has no headings
 const forWhatsApp = (text) => text.replace(/\*\*(.+?)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '').trim();
 
+/**
+ * A voice note to text: { text } ('' when nothing intelligible was said) or { error }. Gemini only listens here (no
+ * tools); the text then goes through the assistant like a typed message. Same fallback model as a chat turn.
+ */
+export async function transcribeAudio({ data, mimeType }) {
+  const listen = (model) => generateContent({
+    model,
+    timeout: 45000, // a longer recording takes longer to hear
+    system: 'Anda penulis transkrip pesan suara WhatsApp berbahasa Indonesia untuk aplikasi denah pameran.',
+    contents: [{ role: 'user', parts: [
+      { inlineData: { mimeType, data } },
+      { text: 'Tuliskan persis apa yang diucapkan dalam rekaman ini, satu paragraf, tanpa tambahan dan tanpa tanda kutip. Nomor booth tulis seperti A-12. Kalau tidak ada ucapan yang jelas, jawab tepat: (tidak terdengar)' }
+    ] }]
+  });
+  const { model } = geminiConfig();
+  let r = await listen(model);
+  if (!r.ok && RETRY_CODES.includes(r.code)) r = await listen(model === FALLBACK_GEMINI_MODEL ? DEFAULT_GEMINI_MODEL : FALLBACK_GEMINI_MODEL);
+  if (!r.ok) return { error: r.message };
+  const text = (r.body?.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim().replace(/^["“]|["”]$/g, '');
+  return { text: /^\(?tidak terdengar\)?\.?$/i.test(text) ? '' : text.slice(0, 1000) };
+}
+
 /** One staff message → { text } or { error }. `memoryKey` null = no conversation memory. */
 export async function chatWithGemini({ memoryKey, text, system, tools, handlers }) {
   const past = memoryKey && memory.get(memoryKey);

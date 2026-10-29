@@ -105,7 +105,7 @@ export default function GeminiAgentSettings({ gemini, assistant, onStatus }) {
       </div>
 
       <p className="text-xs text-slate-500 leading-relaxed max-w-[75ch]">
-        Dengan agen ini staf bisa bertanya bebas lewat WhatsApp, misalnya <i>"booth 3x3 yang masih kosong mana saja?"</i> atau <i>"bookingkan A-12 untuk Kopi Satu"</i>. Kata perintah seperti MENU dan TERSEDIA tetap berjalan. Booking dan invoice tetap baru disimpan setelah staf membalas <b>YA</b>; agen tidak bisa memberi diskon atau mengubah status pembayaran.
+        Dengan agen ini staf bisa bertanya bebas lewat WhatsApp, misalnya <i>"booth 3x3 yang masih kosong mana saja?"</i> atau <i>"bookingkan A-12 untuk Kopi Satu"</i>. Pesan suara (voice note) juga didengarkan lalu dijawab, bila paket Fonnte meneruskan file suaranya. Kata perintah seperti MENU dan TERSEDIA tetap berjalan. Booking dan invoice tetap baru disimpan setelah staf membalas <b>YA</b>; agen tidak bisa memberi diskon atau mengubah status pembayaran.
       </p>
 
       {/* Status */}
