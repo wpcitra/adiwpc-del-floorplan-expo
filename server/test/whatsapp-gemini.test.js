@@ -383,6 +383,10 @@ test('pesan suara: didengarkan Gemini, ditulis ulang, lalu dijawab seperti pesan
 
   // Fonnte did not forward the file (package without attachments)
   assert.match(await say(FINANCE, '', 1, { extension: 'ogg', filename: 'voice.ogg' }), /paket Fonnte[\s\S]*ketik/);
+  // the voice note arrives as an invisible character (Fonnte package without attachments): never sent to Gemini
+  const before = geminiCalls.length;
+  assert.match(await say(FINANCE, '\u200e'), /tidak berisi teks/);
+  assert.equal(geminiCalls.length, before);
   // nothing intelligible
   replies.push(modelSays('(tidak terdengar)'));
   assert.match(await say(FINANCE, '', 1, voice), /tidak terdengar jelas/);

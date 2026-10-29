@@ -112,6 +112,20 @@ test('voice note tanpa agen Gemini dijawab sopan: diminta mengetik', async () =>
   assert.match(msg.body.message, /ketik/);
 });
 
+test('pesan tanpa huruf / angka (pesan suara di paket Fonnte tanpa lampiran): dijawab jelas; catatan berisi kolom dan kode karakter, bukan isi', async () => {
+  const n = sent.length;
+  await call(text(STAFF, '\u200e ', { name: 'Sari' }));
+  const [msg] = await waitSent(n + 1);
+  assert.match(msg.body.message, /tidak berisi teks/);
+  assert.match(msg.body.message, /paket Fonnte/);
+  const last = (await s.api('GET', '/maintenance/whatsapp', undefined, { as: 'superadmin' })).body.status.lastIncoming;
+  assert.equal(last.kind, 'tanpa teks');
+  assert.deepEqual(last.fields, ['device', 'inboxid', 'message', 'name', 'sender', 'timestamp']);
+  assert.deepEqual(last.textCodes, ['U+200E']);
+  assert.match(await ask('👍'), /./, 'emoji saja tetap diproses');
+  assert.equal((await s.api('GET', '/maintenance/whatsapp', undefined, { as: 'superadmin' })).body.status.lastIncoming.kind, 'teks');
+});
+
 test('grup (member terisi) dan perangkat lain diabaikan', async () => {
   const n = sent.length;
   await call(text(STAFF, 'TERSEDIA', { member: '6281111' }));

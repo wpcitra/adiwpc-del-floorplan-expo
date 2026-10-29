@@ -104,6 +104,12 @@ export default function FonnteSettings() {
         {inbox ? (
           <>{inboxTime} WIB · pesan {inbox.kind}{inbox.extension ? ` (${inbox.extension}${inbox.kind === 'suara' ? (inbox.hasFile ? ', file diterima' : ', tanpa file') : ''})` : ''} dari {inbox.from}{inbox.staff ? ` (${inbox.staff})` : ''} · <span className="font-semibold">{inbox.outcome}</span></>
         ) : <span className="text-slate-500">belum ada pesan yang sampai ke server.</span>}
+        {inbox?.fields?.length > 0 && (
+          <div className="mt-1 text-[11px] opacity-80 break-words">
+            Kolom dari Fonnte: <span className="font-mono">{inbox.fields.join(', ')}</span>
+            {inbox.textCodes?.length > 0 && <> · isi teks tidak terbaca (<span className="font-mono">{inbox.textCodes.join(' ')}</span>)</>}
+          </div>
+        )}
       </div>
 
       {locked ? (

@@ -1,6 +1,6 @@
 import express from 'express';
 import { waEnabled, secretMatches, incomingMessage, staffByPhone, sendText, sendFile, saveWaMeta } from '../utils/whatsapp.js';
-import { answerStaff, answerVoice } from '../utils/waAgent.js';
+import { answerStaff, answerVoice, currentPersona } from '../utils/waAgent.js';
 
 // WhatsApp (Fonnte) webhook of the staff assistant (AGENTS.md §45). Public path; Fonnte does not sign its calls, so the
 // URL itself carries a secret: /api/whatsapp/webhook/<FONNTE_WEBHOOK_SECRET>.
@@ -25,7 +25,8 @@ export async function processMessage(m) {
   // "Pesan masuk terakhir" in Setting: what arrived and what happened (never the text, the number masked)
   const note = (outcome) => saveWaMeta({ lastIncoming: {
     at: new Date().toISOString(), from: `…${m.from.slice(-4)}`, staff: user?.name || null,
-    kind: { text: 'teks', audio: 'suara', media: 'lampiran' }[m.type], extension: m.extension || '', hasFile: Boolean(m.url), outcome
+    kind: { text: 'teks', audio: 'suara', media: 'lampiran', empty: 'tanpa teks' }[m.type], extension: m.extension || '', hasFile: Boolean(m.url),
+    fields: m.fields, textCodes: m.textCodes, outcome
   } });
   if (!user) { note('tidak dijawab: nomor ini tidak terdaftar di kolom Telepon akun staf'); return; } // nothing revealed
   if (!allowed(m.from)) { note('tidak dijawab: terlalu banyak pesan'); await sendText(m.from, 'Terlalu banyak pesan dalam waktu singkat. Coba lagi beberapa menit lagi.'); return; }
@@ -34,6 +35,10 @@ export async function processMessage(m) {
   let reply;
   if (m.type === 'audio') ({ reply, outcome } = await answerVoice(user, m));
   else if (m.type === 'media') { outcome = 'lampiran bukan suara: diminta mengetik'; reply = 'Mohon maaf, Kak 🙏 gambar dan file belum bisa dibaca. Silakan ketik pertanyaannya, atau kirim pesan suara.'; }
+  else if (m.type === 'empty') {
+    outcome = 'tanpa teks (pesan suara / lampiran yang tidak diteruskan Fonnte?): diminta mengetik';
+    reply = `Mohon maaf, Kak 🙏 pesan ini tidak berisi teks yang bisa ${currentPersona().name} baca. Pesan suara, gambar, dan file baru bisa diterima bila paket Fonnte nomor ini meneruskan lampiran. Mohon diketik ya, Kak.`;
+  }
   else reply = await answerStaff(user, m.text);
 
   // The answer is one text, or several parts: texts and a document ({ file, filename, caption }, e.g. the invoice PDF)

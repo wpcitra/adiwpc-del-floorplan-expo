@@ -46,17 +46,24 @@ export function incomingMessage(body) {
   if (device && normalizePhone(body?.device) !== normalizePhone(device)) return null;
   if (device && sender === normalizePhone(device)) return null;
   const text = String(body?.message ?? '').trim();
-  const isMedia = Boolean(body?.url || body?.extension || body?.filename) || !text;
-  const extension = isMedia ? extensionOf(body) : '';
+  // No letter, digit or emoji (empty, spaces, invisible characters): not text. A voice note reaches us like this on a
+  // Fonnte package that does not forward attachments (seen in production: an empty-looking text, no url / extension).
+  const readable = /[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(text);
+  const hasAttachment = Boolean(body?.url || body?.extension || body?.filename);
+  const isMedia = hasAttachment || !readable;
+  const extension = hasAttachment ? extensionOf(body) : '';
   const mimeType = AUDIO_TYPES[extension] || '';
   return {
     id: String(body?.inboxid || `${sender}|${body?.timestamp || ''}|${text}`),
     from: sender,
-    type: mimeType ? 'audio' : isMedia ? 'media' : 'text',
+    type: mimeType ? 'audio' : hasAttachment ? 'media' : readable ? 'text' : 'empty',
     text: isMedia ? '' : text,
-    url: isMedia ? String(body?.url || '') : '',
+    url: hasAttachment ? String(body?.url || '') : '',
     extension,
-    mimeType
+    mimeType,
+    // for "Pesan masuk terakhir": the field names Fonnte sent, and the code points of a text that cannot be read (never readable content)
+    fields: Object.keys(body || {}).sort(),
+    textCodes: readable ? [] : [...text].slice(0, 8).map(c => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`)
   };
 }
 
