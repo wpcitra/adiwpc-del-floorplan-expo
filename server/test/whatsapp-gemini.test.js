@@ -213,6 +213,7 @@ test('Gemini gagal (kuota habis, juga di model cadangan): staf mendapat alasanny
   const r = await say(SALES, 'halo');
   assert.match(r, /kuota/i);
   assert.match(r, /MENU/);
+  assert.match(r, /Mohon maaf, Kak/, 'tetap santun saat gagal');
   assert.deepEqual(geminiCalls.slice(n).map(c => c.model), ['gemini-3-flash-preview', 'gemini-3.1-flash-lite'], 'model cadangan ikut dicoba');
 });
 
@@ -307,6 +308,34 @@ test('daftar booth per status bayar: lunas, dan reserved (DP / belum bayar / bel
   const r = await say(SALES, 'RESERVED');
   assert.match(r, /A-01 · Kopi Satu/);
   assert.doesNotMatch(r, /A-03/);
+});
+
+test('persona asisten: Kak Aisyah secara bawaan (prompt Gemini, MENU); bisa diganti dari Setting', async () => {
+  const st = (await s.api('GET', '/maintenance/whatsapp', undefined, { as: 'superadmin' })).body.status;
+  assert.equal(st.persona, 'aisyah');
+  assert.deepEqual(st.personas.map(p => p.id), ['aisyah', 'khadijah', 'zahra', 'nadhira', 'salma']);
+
+  replies.push(modelSays("Wa'alaikumussalam warahmatullah, Kak 😊"));
+  await say(SALES, 'assalamualaikum');
+  const prompt = geminiCalls.at(-1).body.systemInstruction.parts[0].text;
+  assert.match(prompt, /Aisyah \(panggilan: Kak Aisyah\)/);
+  assert.match(prompt, /"Kak"/);
+  assert.match(prompt, /politik, SARA/);
+  assert.match(prompt, /siapkan_booking/, 'aturan kerja tetap ada');
+  // data rules come first and forbid invented booths / numbers (a greeting once made the model list booths that do not exist)
+  assert.match(prompt, /WAJIB memanggil alat/);
+  assert.ok(prompt.indexOf('WAJIB memanggil alat') < prompt.indexOf('Kepribadian'), 'aturan data sebelum persona');
+  assert.match(await say(SALES, 'MENU'), /Saya Aisyah/);
+
+  assert.equal((await s.api('PUT', '/maintenance/whatsapp', { persona: 'tidak-ada' }, { as: 'superadmin' })).status, 400);
+  const z = await s.api('PUT', '/maintenance/whatsapp', { persona: 'zahra' }, { as: 'superadmin' });
+  assert.equal(z.status, 200, z.text);
+  assert.equal(z.body.status.persona, 'zahra');
+  assert.match(await say(SALES, 'MENU'), /Saya Zahra/);
+  replies.push(modelSays('Baik, Kak.'));
+  await say(SALES, 'halo');
+  assert.match(geminiCalls.at(-1).body.systemInstruction.parts[0].text, /Zahra \(panggilan: Kak Zahra\)/);
+  assert.equal((await s.api('PUT', '/maintenance/whatsapp', { persona: 'aisyah' }, { as: 'superadmin' })).status, 200);
 });
 
 test('model utama diam atau sedang penuh: pertanyaan yang sama dijawab model cadangan', async () => {

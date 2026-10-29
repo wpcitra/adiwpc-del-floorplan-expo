@@ -5,7 +5,7 @@ import { envFileHas, setEnvFileValue } from '../utils/envFile.js';
 import { waEnabled, sendText, normalizePhone, waMeta as metaOf, saveWaMeta as saveMeta } from '../utils/whatsapp.js';
 import { getGeminiKey, isValidGeminiKeyFormat, isValidModelId, listGeminiModels, DEFAULT_GEMINI_MODEL } from '../utils/geminiApi.js';
 import { geminiConfig, geminiReady } from '../utils/waGemini.js';
-import { answerStaff, WEB_CHANNEL } from '../utils/waAgent.js';
+import { answerStaff, WEB_CHANNEL, PERSONAS, currentPersona } from '../utils/waAgent.js';
 
 // Setting > Integrasi WhatsApp (Fonnte), Super Admin only (AGENTS.md §45). Same rules as the Claude key (§23): the token and
 // the Gemini API key are WRITE-ONLY (responses carry only "configured" and the last 4 characters) and live in the env
@@ -30,6 +30,7 @@ function status(req) {
     staff: db.prepare("SELECT name, role, phone FROM users WHERE is_active = 1 AND role IN ('superadmin', 'finance', 'sales')").all()
       .map(u => ({ name: u.name, role: u.role, hasPhone: Boolean(normalizePhone(u.phone)) })),
     signature: meta.signature || '',
+    persona: currentPersona().id, personas: PERSONAS,
     updatedAt: meta.updatedAt || null, updatedBy: meta.updatedBy || '', lastTest: meta.lastTest || null,
     gemini: geminiStatus()
   };
@@ -61,12 +62,14 @@ router.put('/', (req, res) => {
   // one line, shown under every WhatsApp message; '' removes it
   const signature = req.body?.signature === undefined ? null : String(req.body.signature ?? '').replace(/\s+/g, ' ').trim();
   if (signature !== null && signature.length > 80) return res.status(400).json({ success: false, error: 'Tanda tangan maksimal 80 karakter.' });
+  const persona = req.body?.persona === undefined ? null : String(req.body.persona);
+  if (persona !== null && !PERSONAS.some(p => p.id === persona)) return res.status(400).json({ success: false, error: 'Nama asisten tidak dikenal.' });
   let device = null;
   if (deviceRaw !== undefined) {
     device = normalizePhone(deviceRaw);
     if (device && !/^\d{8,16}$/.test(device)) return res.status(400).json({ success: false, error: 'Nomor device harus berupa angka (contoh 6281234567890).' });
   }
-  if (!token && device === null && signature === null) return res.status(400).json({ success: false, error: 'Tidak ada yang diubah.' });
+  if (!token && device === null && signature === null && persona === null) return res.status(400).json({ success: false, error: 'Tidak ada yang diubah.' });
   try {
     if (token) {
       setEnvFileValue('FONNTE_TOKEN', token);
@@ -76,7 +79,7 @@ router.put('/', (req, res) => {
   } catch (e) {
     return res.status(500).json({ success: false, error: 'Pengaturan gagal disimpan ke file .env server.' });
   }
-  touch(req, { ...(token ? { lastTest: null } : {}), ...(signature !== null ? { signature } : {}) });
+  touch(req, { ...(token ? { lastTest: null } : {}), ...(signature !== null ? { signature } : {}), ...(persona !== null ? { persona } : {}) });
   res.json({ success: true, status: status(req) });
 });
 

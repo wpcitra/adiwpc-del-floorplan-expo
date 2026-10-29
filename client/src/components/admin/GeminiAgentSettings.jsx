@@ -14,7 +14,7 @@ const noticeStyle = {
   error: 'bg-rose-50 border-rose-200 text-rose-700'
 };
 
-export default function GeminiAgentSettings({ gemini, onStatus }) {
+export default function GeminiAgentSettings({ gemini, assistant, onStatus }) {
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [busy, setBusy] = useState('');
@@ -199,7 +199,7 @@ export default function GeminiAgentSettings({ gemini, onStatus }) {
 
       {/* The assistant on this page: the same answers, booking and invoice as on WhatsApp */}
       <div className="space-y-2">
-        <div className="text-xs font-bold text-slate-700">Chat dengan asisten</div>
+        <div className="text-xs font-bold text-slate-700">Chat dengan {assistant?.call || 'asisten'}</div>
         <p className="text-[11px] text-slate-500 leading-relaxed max-w-[75ch]">
           Sama seperti di WhatsApp: tanya data, minta booking, atau minta invoice. Booking dan invoice baru disimpan setelah Anda membalas <b>YA</b>, tercatat atas nama Anda di Log Aktivitas.{!configured && ' Tanpa API key Gemini, asisten hanya mengerti kata perintah (ketik MENU).'}
         </p>
@@ -223,7 +223,7 @@ export default function GeminiAgentSettings({ gemini, onStatus }) {
               )}
             </div>
           ))}
-          {busy === 'chat' && <div className="text-[11px] text-slate-500 flex items-center gap-1.5"><RefreshCw size={12} className="animate-spin" /> Asisten sedang menjawab…</div>}
+          {busy === 'chat' && <div className="text-[11px] text-slate-500 flex items-center gap-1.5"><RefreshCw size={12} className="animate-spin" /> {assistant?.name || 'Asisten'} sedang menjawab…</div>}
         </div>
         {awaitingYes && !busy && (
           <div className="flex flex-wrap gap-2">

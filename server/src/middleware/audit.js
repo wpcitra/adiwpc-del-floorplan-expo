@@ -144,7 +144,7 @@ const AUDIT_RULES = [
     describe: () => ({ target: 'api.anthropic.com /v1/models' }) },
   // WhatsApp (Fonnte): the token and the webhook secret are never logged
   { method: 'PUT', path: /^\/maintenance\/whatsapp$/, category: 'Maintenance', action: 'Simpan pengaturan WhatsApp (Fonnte)',
-    describe: (req) => ({ target: 'FONNTE_* (server/.env)', summary: [req.body?.token || req.body?.device !== undefined ? 'Token / nomor device diubah (nilai tidak dicatat)' : '', req.body?.signature !== undefined ? `Tanda tangan pesan: ${String(req.body.signature || '').trim() || '(kosong)'}` : ''].filter(Boolean).join(' · ') }) },
+    describe: (req) => ({ target: 'FONNTE_* (server/.env)', summary: [req.body?.token || req.body?.device !== undefined ? 'Token / nomor device diubah (nilai tidak dicatat)' : '', req.body?.signature !== undefined ? `Tanda tangan pesan: ${String(req.body.signature || '').trim() || '(kosong)'}` : '', req.body?.persona !== undefined ? `Nama asisten: ${req.body.persona}` : ''].filter(Boolean).join(' · ') }) },
   { method: 'POST', path: /^\/maintenance\/whatsapp\/secret$/, category: 'Maintenance', action: 'Ganti rahasia webhook WhatsApp',
     describe: () => ({ target: 'FONNTE_WEBHOOK_SECRET (server/.env)' }) },
   { method: 'POST', path: /^\/maintenance\/whatsapp\/test$/, category: 'Maintenance', action: 'Kirim pesan tes WhatsApp',
