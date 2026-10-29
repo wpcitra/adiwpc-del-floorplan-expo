@@ -14,12 +14,13 @@ export default function FonnteSettings() {
   const [token, setToken] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [device, setDevice] = useState('');
+  const [signature, setSignature] = useState('');
   const [testTarget, setTestTarget] = useState('');
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState(null);
   const [copied, setCopied] = useState(false);
 
-  const apply = (res) => { if (res.status) { setStatus(res.status); setDevice(res.status.device || ''); } };
+  const apply = (res) => { if (res.status) { setStatus(res.status); setDevice(res.status.device || ''); setSignature(res.status.signature || ''); } };
   const load = async () => {
     const res = await api.waSettings();
     if (res.success) { apply(res); setLoadError(''); } else setLoadError(res.error || 'Gagal memuat pengaturan WhatsApp');
@@ -37,7 +38,7 @@ export default function FonnteSettings() {
 
   const save = async (e) => {
     e.preventDefault();
-    const body = { device };
+    const body = { device, signature };
     if (token.trim()) body.token = token.trim();
     const res = await run('save', () => api.waSettings('PUT', '', body), 'Pengaturan WhatsApp tersimpan.');
     if (res.success) { setToken(''); setShowToken(false); }
@@ -115,8 +116,13 @@ export default function FonnteSettings() {
             <input type="text" inputMode="tel" value={device} onChange={(e) => setDevice(e.target.value)} className={input} placeholder="6281234567890" />
             <p className="text-[11px] text-slate-500 mt-1">Nomor WhatsApp yang terhubung ke Fonnte. Bila diisi, pesan dari perangkat lain diabaikan.</p>
           </div>
+          <div>
+            <label htmlFor="wa-signature" className="block text-xs font-bold text-slate-700 mb-1">Tanda tangan di akhir pesan (opsional)</label>
+            <input id="wa-signature" type="text" value={signature} onChange={(e) => setSignature(e.target.value)} maxLength={80} className={input} placeholder="halalfair.co.id" />
+            <p className="text-[11px] text-slate-500 mt-1">Ditambahkan di bawah setiap balasan WhatsApp. Selama device Fonnte memakai paket Free, tulisan "Sent via fonnte.com" tetap muncul di bawahnya (ditambahkan Fonnte, hilang di paket berbayar).</p>
+          </div>
           <div className="flex flex-wrap gap-2">
-            <button type="submit" disabled={Boolean(busy) || (!token.trim() && device === (status?.device || ''))} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 disabled:opacity-50 cursor-pointer">
+            <button type="submit" disabled={Boolean(busy) || (!token.trim() && device === (status?.device || '') && signature.trim() === (status?.signature || ''))} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 disabled:opacity-50 cursor-pointer">
               {busy === 'save' ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />} Simpan
             </button>
             {status?.tokenConfigured && (

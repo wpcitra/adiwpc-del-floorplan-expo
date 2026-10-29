@@ -71,6 +71,19 @@ test('pesan tes: token benar terkirim; nomor salah ditolak; hasil tersimpan', as
   assert.equal(ok.body.status.lastTest.ok, true);
 });
 
+test('tanda tangan pesan: disimpan, ditempel di akhir setiap pesan WhatsApp; terlalu panjang ditolak; kosong = tanpa tanda tangan', async () => {
+  assert.equal((await s.api('PUT', '/maintenance/whatsapp', { signature: 'x'.repeat(81) }, { as: 'superadmin' })).status, 400);
+  const r = await s.api('PUT', '/maintenance/whatsapp', { signature: '  halalfair.co.id  ' }, { as: 'superadmin' });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.status.signature, 'halalfair.co.id');
+  await s.api('POST', '/maintenance/whatsapp/test', { target: '081200000009' }, { as: 'superadmin' });
+  assert.match(sent.at(-1).body.message, /\n\nhalalfair\.co\.id$/);
+  const cleared = await s.api('PUT', '/maintenance/whatsapp', { signature: '' }, { as: 'superadmin' });
+  assert.equal(cleared.body.status.signature, '');
+  await s.api('POST', '/maintenance/whatsapp/test', { target: '081200000009' }, { as: 'superadmin' });
+  assert.ok(!sent.at(-1).body.message.includes('halalfair'), 'tanpa tanda tangan setelah dikosongkan');
+});
+
 test('token salah: pesan tes gagal dengan alasan dari Fonnte', async () => {
   await s.api('PUT', '/maintenance/whatsapp', { token: 'TokenSalahSalahSalah1' }, { as: 'superadmin' });
   const bad = await s.api('POST', '/maintenance/whatsapp/test', { target: '081200000009' }, { as: 'superadmin' });

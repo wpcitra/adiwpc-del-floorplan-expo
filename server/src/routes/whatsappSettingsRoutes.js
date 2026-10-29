@@ -29,6 +29,7 @@ function status(req) {
     enabled: waEnabled(),
     staff: db.prepare("SELECT name, role, phone FROM users WHERE is_active = 1 AND role IN ('superadmin', 'finance', 'sales')").all()
       .map(u => ({ name: u.name, role: u.role, hasPhone: Boolean(normalizePhone(u.phone)) })),
+    signature: meta.signature || '',
     updatedAt: meta.updatedAt || null, updatedBy: meta.updatedBy || '', lastTest: meta.lastTest || null,
     gemini: geminiStatus()
   };
@@ -51,18 +52,21 @@ const touch = (req, extra = {}) => saveMeta({ updatedAt: new Date().toISOString(
 
 router.get('/', (req, res) => res.json({ success: true, status: status(req) }));
 
-// PUT { token?, device? }: a new token also creates the webhook secret when there is none
+// PUT { token?, device?, signature? }: a new token also creates the webhook secret when there is none
 router.put('/', (req, res) => {
-  if (lockedByEnvironment()) return res.status(409).json({ success: false, error: 'Token Fonnte diatur dari environment server (di luar aplikasi) sehingga tidak dapat diganti dari sini.' });
   const token = String(req.body?.token ?? '').trim();
   const deviceRaw = req.body?.device;
+  if (token && lockedByEnvironment()) return res.status(409).json({ success: false, error: 'Token Fonnte diatur dari environment server (di luar aplikasi) sehingga tidak dapat diganti dari sini.' });
   if (token && !/^[A-Za-z0-9._~+=-]{8,200}$/.test(token)) return res.status(400).json({ success: false, error: 'Format token tidak valid (tanpa spasi atau tanda kutip). Salin dari dashboard Fonnte > Device.' });
+  // one line, shown under every WhatsApp message; '' removes it
+  const signature = req.body?.signature === undefined ? null : String(req.body.signature ?? '').replace(/\s+/g, ' ').trim();
+  if (signature !== null && signature.length > 80) return res.status(400).json({ success: false, error: 'Tanda tangan maksimal 80 karakter.' });
   let device = null;
   if (deviceRaw !== undefined) {
     device = normalizePhone(deviceRaw);
     if (device && !/^\d{8,16}$/.test(device)) return res.status(400).json({ success: false, error: 'Nomor device harus berupa angka (contoh 6281234567890).' });
   }
-  if (!token && device === null) return res.status(400).json({ success: false, error: 'Tidak ada yang diubah.' });
+  if (!token && device === null && signature === null) return res.status(400).json({ success: false, error: 'Tidak ada yang diubah.' });
   try {
     if (token) {
       setEnvFileValue('FONNTE_TOKEN', token);
@@ -72,7 +76,7 @@ router.put('/', (req, res) => {
   } catch (e) {
     return res.status(500).json({ success: false, error: 'Pengaturan gagal disimpan ke file .env server.' });
   }
-  touch(req, token ? { lastTest: null } : {});
+  touch(req, { ...(token ? { lastTest: null } : {}), ...(signature !== null ? { signature } : {}) });
   res.json({ success: true, status: status(req) });
 });
 

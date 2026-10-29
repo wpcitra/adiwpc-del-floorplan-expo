@@ -17,6 +17,13 @@ export const saveWaMeta = (patch) => db.prepare(`
   ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
 `).run(JSON.stringify({ ...waMeta(), ...patch }));
 
+// The signature of Setting ("Tanda tangan di akhir pesan", e.g. halalfair.co.id) closes every WhatsApp message. Fonnte's
+// own "Sent via fonnte.com" (Free package) is added by Fonnte after this and cannot be removed from here.
+const withSignature = (text) => {
+  const sig = String(waMeta().signature || '').trim();
+  return sig ? `${text}\n\n${sig}` : text;
+};
+
 // The secret in the webhook URL, compared in constant time
 export function secretMatches(given) {
   const secret = env('FONNTE_WEBHOOK_SECRET');
@@ -62,7 +69,7 @@ export function staffByPhone(from) {
 
 // Returns { ok, reason } (reason = Fonnte's own explanation, e.g. "token invalid")
 export async function sendText(to, text) {
-  const chunks = String(text || '').match(/[\s\S]{1,3800}/g) || [''];
+  const chunks = withSignature(String(text || '')).match(/[\s\S]{1,3800}/g) || [''];
   for (const message of chunks) {
     try {
       const res = await fetch(`${apiBase()}/send`, {
@@ -90,7 +97,7 @@ export async function sendText(to, text) {
 export async function sendFile(to, buffer, filename, caption = '') {
   const form = new FormData();
   form.append('target', to);
-  form.append('message', caption);
+  form.append('message', withSignature(caption));
   form.append('filename', filename);
   form.append('countryCode', '0');
   form.append('file', new Blob([buffer], { type: 'application/pdf' }), filename);
