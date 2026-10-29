@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { Sparkles, KeyRound, ShieldCheck, RefreshCw, Trash2, Eye, EyeOff, Save, Send, ExternalLink, Power, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Sparkles, KeyRound, ShieldCheck, RefreshCw, Trash2, Eye, EyeOff, Save, Send, ExternalLink, Power, AlertTriangle, FileDown, Check, X } from 'lucide-react';
 import { api } from '../../services/api';
+import { downloadInvoicePdf } from '../../utils/invoicePdf';
 
 // Setting > Integrasi WhatsApp > "Agen AI (Gemini)" (AGENTS.md §45). The Google AI Studio key is WRITE-ONLY like the
 // Fonnte token: sent once, checked with Google, stored in the env file and never shown again (only its last 4
-// characters). Model and on / off are plain settings. "Coba tanya agen" asks one read-only question from this page.
+// characters). Model and on / off are plain settings. "Chat dengan asisten" is the WhatsApp assistant on this page:
+// questions, booking and invoice, saved only after YA, in the logged-in user's name.
 const input = 'w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-emerald-400';
 const noticeStyle = {
   success: 'bg-emerald-50 border-emerald-200 text-emerald-800',
@@ -19,8 +21,9 @@ export default function GeminiAgentSettings({ gemini, onStatus }) {
   const [notice, setNotice] = useState(null);
   const [models, setModels] = useState([]);
   const [modelsError, setModelsError] = useState('');
-  const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState('');
+  const [message, setMessage] = useState('');
+  const [chat, setChat] = useState([]); // { from: 'me' | 'bot', text } or { from: 'bot', invoiceId, invoiceNumber, filename }
+  const logRef = useRef(null);
 
   const configured = Boolean(gemini?.configured);
   const locked = gemini?.source === 'environment';
@@ -57,17 +60,31 @@ export default function GeminiAgentSettings({ gemini, onStatus }) {
     if (res.success) { setApiKey(''); setShowKey(false); }
   };
 
-  const ask = async (e) => {
-    e.preventDefault();
-    if (!question.trim()) return;
-    setBusy('ask');
-    setAnswer('');
-    setNotice(null);
-    const res = await api.waSettings('POST', '/gemini/test', { question: question.trim() });
+  useEffect(() => { logRef.current?.scrollTo({ top: logRef.current.scrollHeight }); }, [chat, busy]);
+
+  const send = async (text) => {
+    const msg = String(text || '').trim();
+    if (!msg || busy) return;
+    setMessage('');
+    setChat(c => [...c, { from: 'me', text: msg }]);
+    setBusy('chat');
+    const res = await api.waSettings('POST', '/chat', { message: msg });
     setBusy('');
-    if (res.success) setAnswer(res.answer || '');
-    else setNotice({ type: 'error', text: res.error || 'Agen belum bisa menjawab.' });
+    if (res.success) setChat(c => [...c, ...(res.parts || []).map(p => ({ from: 'bot', ...p }))]);
+    else setChat(c => [...c, { from: 'bot', text: res.error || 'Asisten gagal menjawab. Coba lagi.', error: true }]);
   };
+
+  const downloadPdf = async (m) => {
+    setBusy('pdf');
+    const res = await downloadInvoicePdf({ invoice: { id: m.invoiceId, invoice_number: m.invoiceNumber }, fileName: m.filename });
+    setBusy('');
+    if (!res.success) setChat(c => [...c, { from: 'bot', text: `${res.error}. Invoice ${m.invoiceNumber} bisa dibuka dari menu Invoice.`, error: true }]);
+  };
+
+  // WhatsApp-style *bold* in the assistant's answers
+  const rich = (t) => String(t || '').split(/(\*[^*\n]+\*)/g).map((part, i) => (/^\*[^*\n]+\*$/.test(part) ? <b key={i}>{part.slice(1, -1)}</b> : part));
+  const lastBot = [...chat].reverse().find(m => m.from === 'bot' && m.text);
+  const awaitingYes = Boolean(lastBot && /Balas YA/.test(lastBot.text));
 
   // The dropdown: the recommended default first, then the models the key can use, and the saved one if Google no longer lists it
   const modelOptions = [
@@ -159,7 +176,7 @@ export default function GeminiAgentSettings({ gemini, onStatus }) {
                 {modelOptions.map(m => <option key={m.id} value={m.id}>{`${m.name} (${m.id})`}</option>)}
               </select>
               {modelsError ? <p className="text-[11px] text-amber-700 mt-1">{modelsError}</p>
-                : <p className="text-[11px] text-slate-500 mt-1">Kalau agen lambat, tidak menjawab, atau kuotanya habis, pilih model lain lalu coba tanya lagi. Model "lite" paling hemat kuota.</p>}
+                : <p className="text-[11px] text-slate-500 mt-1">Kalau agen lambat, tidak menjawab, atau kuotanya habis, pilih model lain lalu coba lagi di chat di bawah. Model "lite" paling hemat kuota.</p>}
             </div>
             <div className="flex gap-2">
               <button type="button" disabled={Boolean(busy)}
@@ -177,23 +194,56 @@ export default function GeminiAgentSettings({ gemini, onStatus }) {
             </div>
           </div>
 
-          {/* Ask one question from this page */}
-          <form onSubmit={ask} className="space-y-2">
-            <label htmlFor="gemini-question" className="block text-xs font-bold text-slate-700">Coba tanya agen</label>
-            <p className="text-[11px] text-slate-500">Jawaban tampil di sini, tanpa WhatsApp. Dari halaman ini agen hanya membaca data (tidak membuat booking atau invoice).</p>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input id="gemini-question" value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={500} className={input}
-                placeholder="Contoh: booth ukuran 3x3 yang masih kosong apa saja?" />
-              <button type="submit" disabled={Boolean(busy) || !question.trim()} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer shrink-0 transition-transform">
-                {busy === 'ask' ? <RefreshCw size={13} className="animate-spin" /> : <Send size={13} />} {busy === 'ask' ? 'Menunggu jawaban...' : 'Tanya'}
-              </button>
-            </div>
-            {answer && (
-              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-100 text-xs text-emerald-950 whitespace-pre-wrap leading-relaxed" aria-live="polite">{answer}</div>
-            )}
-          </form>
         </>
       )}
+
+      {/* The assistant on this page: the same answers, booking and invoice as on WhatsApp */}
+      <div className="space-y-2">
+        <div className="text-xs font-bold text-slate-700">Chat dengan asisten</div>
+        <p className="text-[11px] text-slate-500 leading-relaxed max-w-[75ch]">
+          Sama seperti di WhatsApp: tanya data, minta booking, atau minta invoice. Booking dan invoice baru disimpan setelah Anda membalas <b>YA</b>, tercatat atas nama Anda di Log Aktivitas.{!configured && ' Tanpa API key Gemini, asisten hanya mengerti kata perintah (ketik MENU).'}
+        </p>
+        <div ref={logRef} className="h-80 overflow-y-auto overscroll-contain rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2" aria-live="polite">
+          {!chat.length && (
+            <div className="h-full flex items-center justify-center text-center text-[11px] text-slate-500 px-6 leading-relaxed">
+              Contoh: "booth 3x3 yang kosong apa saja?", "bookingkan A-12 untuk Teh Dua, PIC Rina 081234567890, F&amp;B, DP 30", atau "buatkan invoice booth A-12".
+            </div>
+          )}
+          {chat.map((m, i) => (
+            <div key={i} className={`flex ${m.from === 'me' ? 'justify-end' : 'justify-start'}`}>
+              {m.invoiceId ? (
+                <button type="button" disabled={Boolean(busy)} onClick={() => downloadPdf(m)}
+                  className="px-3 py-2 rounded-xl bg-white border border-emerald-200 hover:bg-emerald-50 text-emerald-800 text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform">
+                  {busy === 'pdf' ? <RefreshCw size={14} className="animate-spin" /> : <FileDown size={14} />} Download PDF {m.invoiceNumber}
+                </button>
+              ) : (
+                <div className={`max-w-[85%] px-3 py-2 rounded-xl text-xs leading-relaxed whitespace-pre-wrap break-words ${m.from === 'me' ? 'bg-emerald-600 text-white rounded-br-sm' : m.error ? 'bg-rose-50 border border-rose-200 text-rose-800 rounded-bl-sm' : 'bg-white border border-slate-200 text-slate-800 rounded-bl-sm'}`}>
+                  {m.from === 'me' ? m.text : rich(m.text)}
+                </div>
+              )}
+            </div>
+          ))}
+          {busy === 'chat' && <div className="text-[11px] text-slate-500 flex items-center gap-1.5"><RefreshCw size={12} className="animate-spin" /> Asisten sedang menjawab…</div>}
+        </div>
+        {awaitingYes && !busy && (
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => send('YA')} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-transform">
+              <Check size={14} /> Ya, simpan
+            </button>
+            <button type="button" onClick={() => send('BATAL')} className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-100 active:scale-[0.98] text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-transform">
+              <X size={14} /> Batal
+            </button>
+          </div>
+        )}
+        <form onSubmit={(e) => { e.preventDefault(); send(message); }} className="flex flex-col sm:flex-row gap-2">
+          <label htmlFor="assistant-message" className="sr-only">Pesan untuk asisten</label>
+          <input id="assistant-message" value={message} onChange={(e) => setMessage(e.target.value)} maxLength={1000} className={input} autoComplete="off"
+            placeholder="Tulis pesan, misalnya: bookingkan A-12 untuk Teh Dua" />
+          <button type="submit" disabled={Boolean(busy) || !message.trim()} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer shrink-0 transition-transform">
+            {busy === 'chat' ? <RefreshCw size={13} className="animate-spin" /> : <Send size={13} />} Kirim
+          </button>
+        </form>
+      </div>
 
       <div className="flex items-start gap-2 px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-[11px] text-amber-800 leading-relaxed">
         <AlertTriangle size={14} className="shrink-0 mt-0.5" />

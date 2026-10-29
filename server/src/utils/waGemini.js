@@ -1,4 +1,4 @@
-import { generateContent, getGeminiKey, DEFAULT_GEMINI_MODEL } from './geminiApi.js';
+import { generateContent, getGeminiKey, DEFAULT_GEMINI_MODEL, FALLBACK_GEMINI_MODEL } from './geminiApi.js';
 import { waMeta } from './whatsapp.js';
 
 // Conversation with Gemini for the WhatsApp staff assistant (AGENTS.md §45). It knows nothing about booths: the caller
@@ -9,6 +9,8 @@ const MAX_STEPS = 5;
 const KEEP_MESSAGES = 12;
 const IDLE_MS = 30 * 60 * 1000;
 const memory = new Map(); // user id -> { contents: text turns only, at }
+// Failures of the model itself (busy, silent, retired, out of quota): worth one try on the fallback model
+const RETRY_CODES = ['UNAVAILABLE', 'TIMEOUT', 'MODEL', 'QUOTA'];
 
 // Model and on / off live in maintenance_settings.wa_meta.gemini; the key in the env file
 export const geminiConfig = () => {
@@ -20,19 +22,26 @@ export const geminiReady = () => Boolean(getGeminiKey()) && geminiConfig().enabl
 // WhatsApp marks bold with one star and has no headings
 const forWhatsApp = (text) => text.replace(/\*\*(.+?)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '').trim();
 
-/** One staff message → { text } or { error }. `memoryKey` null = no conversation memory (the web test). */
+/** One staff message → { text } or { error }. `memoryKey` null = no conversation memory. */
 export async function chatWithGemini({ memoryKey, text, system, tools, handlers }) {
   const past = memoryKey && memory.get(memoryKey);
   const history = past && Date.now() - past.at < IDLE_MS ? past.contents : [];
   const question = { role: 'user', parts: [{ text }] };
-  const contents = [...history, question];
   const remember = (answer) => {
     if (memoryKey) memory.set(memoryKey, { contents: [...history, question, { role: 'model', parts: [{ text: answer }] }].slice(-KEEP_MESSAGES), at: Date.now() });
   };
+  const { model } = geminiConfig();
+  const turn = (m) => runTurn({ model: m, contents: [...history, question], system, tools, handlers, remember });
+  const out = await turn(model);
+  // the whole turn again (fresh contents: thought signatures belong to one model); siapkan_* only prepares, so a repeat is safe
+  if (out.code && RETRY_CODES.includes(out.code)) return turn(model === FALLBACK_GEMINI_MODEL ? DEFAULT_GEMINI_MODEL : FALLBACK_GEMINI_MODEL);
+  return out;
+}
 
+async function runTurn({ model, contents, system, tools, handlers, remember }) {
   for (let step = 0; step < MAX_STEPS; step++) {
-    const r = await generateContent({ model: geminiConfig().model, system, tools, contents });
-    if (!r.ok) return { error: r.message };
+    const r = await generateContent({ model, system, tools, contents });
+    if (!r.ok) return { error: r.message, code: r.code };
     const content = r.body?.candidates?.[0]?.content;
     const parts = content?.parts || [];
     if (!parts.length) return { error: r.body?.promptFeedback?.blockReason ? 'Pertanyaan ditolak filter keamanan Gemini.' : 'Gemini tidak memberi jawaban.' };

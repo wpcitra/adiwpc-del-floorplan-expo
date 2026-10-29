@@ -33,7 +33,8 @@ hanya setelah staf membalas **YA** (sama seperti sekarang). Diskon dan status pe
   400, tidak disimpan; jaringan / kuota / gangguan → disimpan dengan peringatan. Kunci dari environment asli tidak bisa
   diubah di halaman.
 - `GET …/gemini/models`: pilihan model (bisa `generateContent`); default `gemini-3.5-flash` (model tetap; alias `gemini-flash-latest` pernah tidak menjawab 90 detik). Satu panggilan maksimal 30 detik.
-- `POST …/gemini/test { question }`: coba tanya dari web, hanya alat baca, tanpa ingatan, tidak tercatat.
+- `POST /api/maintenance/whatsapp/chat { message }`: chat dengan asisten di halaman Setting, sama seperti WhatsApp (bertanya, booking, invoice; simpan setelah YA; tercatat "via chat Setting"). Menggantikan "Coba tanya agen" yang hanya membaca (permintaan pemilik 2026-10-29).
+- Model cadangan `gemini-3.1-flash-lite`: giliran yang gagal karena modelnya (503 penuh, diam, 404, kuota) diulang sekali di model cadangan.
 - `DELETE …/gemini`: hapus kunci.
 - Model & aktif disimpan di `maintenance_settings.wa_meta.gemini`. Status hanya menampilkan 4 huruf terakhir kunci.
 - Log Aktivitas (Maintenance) tanpa nilai kunci. Test & staging: `GEMINI_API_KEY=''`, URL mati.

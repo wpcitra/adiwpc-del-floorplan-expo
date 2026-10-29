@@ -7,8 +7,11 @@ const apiBase = () => (process.env.GEMINI_API_URL || 'https://generativelanguage
 // A fixed model, not an alias: "gemini-flash-latest" moves to Google's newest Flash on its own and once never answered
 // (90 s, no reply) while gemini-3.5-flash answered the same request in 3 s. The admin can pick another model in Setting.
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
+// Popular models get "high demand" (503) spikes: a turn that fails on the chosen model is tried once more on this light,
+// stable model with its own free quota (or on the default when this one is the chosen model)
+export const FALLBACK_GEMINI_MODEL = 'gemini-3.1-flash-lite';
 // How long one call may take; a model that does not answer must not keep the staff member waiting (tests set it short)
-const TIMEOUT_MS = () => Number(process.env.GEMINI_TIMEOUT_MS) || 30000;
+const TIMEOUT_MS = () => Number(process.env.GEMINI_TIMEOUT_MS) || 20000;
 export const getGeminiKey = () => String(process.env.GEMINI_API_KEY || '').trim();
 // No spaces, quotes or line breaks (it is written to the env file). Older keys look like "AIza…"; the "auth keys" AI
 // Studio creates since 28 May 2026 contain dots ("AQ.…"), so dots are allowed.

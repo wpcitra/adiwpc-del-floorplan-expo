@@ -5,7 +5,7 @@ import { envFileHas, setEnvFileValue } from '../utils/envFile.js';
 import { waEnabled, sendText, normalizePhone, waMeta as metaOf, saveWaMeta as saveMeta } from '../utils/whatsapp.js';
 import { getGeminiKey, isValidGeminiKeyFormat, isValidModelId, listGeminiModels, DEFAULT_GEMINI_MODEL } from '../utils/geminiApi.js';
 import { geminiConfig, geminiReady } from '../utils/waGemini.js';
-import { askGeminiFromWeb } from '../utils/waAgent.js';
+import { answerStaff, WEB_CHANNEL } from '../utils/waAgent.js';
 
 // Setting > Integrasi WhatsApp (Fonnte), Super Admin only (AGENTS.md §45). Same rules as the Claude key (§23): the token and
 // the Gemini API key are WRITE-ONLY (responses carry only "configured" and the last 4 characters) and live in the env
@@ -129,15 +129,20 @@ router.get('/gemini/models', async (req, res) => {
   res.json({ success: true, models: out.models, defaultModel: DEFAULT_GEMINI_MODEL });
 });
 
-// POST /gemini/test { question }: one question with read-only tools, answered on the page. Nothing is stored.
-router.post('/gemini/test', async (req, res) => {
+// POST /chat { message }: the assistant on this page, exactly as on WhatsApp for the logged-in staff member (commands,
+// Gemini, booking / invoice saved only after YA). The saves go through the web endpoints, which audit them.
+router.post('/chat', async (req, res) => {
   req.skipAudit = true;
-  const question = String(req.body?.question || '').trim();
-  if (!question || question.length > 500) return res.status(400).json({ success: false, error: 'Tulis pertanyaan (maksimal 500 karakter).' });
-  if (!getGeminiKey()) return res.status(409).json({ success: false, error: 'API key Gemini belum diisi.' });
-  const out = await askGeminiFromWeb(req.user, question);
-  if (out.error) return res.status(502).json({ success: false, error: out.error });
-  res.json({ success: true, answer: out.text });
+  const message = String(req.body?.message || '').trim();
+  if (!message || message.length > 1000) return res.status(400).json({ success: false, error: 'Tulis pesan (maksimal 1.000 karakter).' });
+  try {
+    const out = await answerStaff(req.user, message, WEB_CHANNEL);
+    const parts = [].concat(out).map(p => (typeof p === 'string' ? { text: p } : { invoiceId: p.invoiceId, invoiceNumber: p.invoiceNumber, filename: p.filename }));
+    res.json({ success: true, parts });
+  } catch (e) {
+    console.error('Chat asisten gagal:', e);
+    res.status(500).json({ success: false, error: 'Asisten gagal memproses pesan. Coba lagi.' });
+  }
 });
 
 router.delete('/gemini', (req, res) => {

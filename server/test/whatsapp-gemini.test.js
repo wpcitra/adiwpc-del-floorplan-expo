@@ -199,33 +199,67 @@ test('Keuangan tidak bisa booking lewat Gemini: alasannya kembali ke Gemini, YA 
   assert.equal((await booth('A-03')).status, 'available');
 });
 
-test('Gemini gagal (kuota habis): staf mendapat alasannya dan diarahkan ke MENU', async () => {
-  replies.push({ status: 429, body: { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded' } } });
+test('Gemini gagal (kuota habis, juga di model cadangan): staf mendapat alasannya dan diarahkan ke MENU', async () => {
+  const n = geminiCalls.length;
+  const quota = { status: 429, body: { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded' } } };
+  replies.push(quota, quota);
   const r = await say(SALES, 'halo');
   assert.match(r, /kuota/i);
   assert.match(r, /MENU/);
+  assert.deepEqual(geminiCalls.slice(n).map(c => c.model), ['gemini-3-flash-preview', 'gemini-3.1-flash-lite'], 'model cadangan ikut dicoba');
 });
 
-test('coba tanya dari halaman Setting: hanya alat baca, jawabannya kembali ke halaman', async () => {
+const chatWeb = (message, as = 'superadmin') => s.api('POST', '/maintenance/whatsapp/chat', { message }, { as });
+const texts = (r) => (r.body.parts || []).filter(p => p.text).map(p => p.text).join('\n');
+
+test('chat asisten di halaman Setting: bertanya, booking dan invoice lewat obrolan, tersimpan hanya setelah YA', async () => {
   replies.push(modelSays('Ada 1 booth kosong.'));
-  const r = await s.api('POST', '/maintenance/whatsapp/gemini/test', { question: 'booth kosong ada berapa?' }, { as: 'superadmin' });
+  let r = await chatWeb('booth kosong ada berapa?');
   assert.equal(r.status, 200, r.text);
-  assert.equal(r.body.answer, 'Ada 1 booth kosong.');
-  const names = toolNames(geminiCalls.at(-1));
-  assert.ok(names.includes('booth_tersedia'));
-  assert.ok(!names.includes('siapkan_booking') && !names.includes('siapkan_invoice'), 'tanpa alat yang menyiapkan aksi');
-  assert.equal((await s.api('POST', '/maintenance/whatsapp/gemini/test', { question: 'x' }, { as: 'sales' })).status, 403);
+  assert.equal(texts(r), 'Ada 1 booth kosong.');
+  assert.ok(toolNames(geminiCalls.at(-1)).includes('siapkan_booking') && toolNames(geminiCalls.at(-1)).includes('siapkan_invoice'), 'alat booking dan invoice tersedia');
+
+  replies.push(modelCalls('siapkan_booking', { nomor_booth: ['A-03'], brand: 'Roti Tiga', nama_pic: 'Tono', whatsapp: '081200000003', kategori: 'F&B', rencana: 'penuh' }));
+  r = await chatWeb('bookingkan A-03 untuk Roti Tiga, PIC Tono 081200000003, F&B, bayar penuh');
+  assert.match(texts(r), /Konfirmasi BOOKING/);
+  assert.equal((await booth('A-03')).status, 'available', 'belum tersimpan sebelum YA');
+  r = await chatWeb('ya');
+  assert.match(texts(r), /Booking tersimpan/);
+  assert.equal((await booth('A-03')).status, 'reserved');
+
+  replies.push(modelCalls('siapkan_invoice', { nomor_booth: 'A-03' }));
+  r = await chatWeb('buatkan invoicenya');
+  assert.match(texts(r), /Konfirmasi INVOICE/);
+  r = await chatWeb('ya');
+  assert.match(texts(r), /Invoice Penuh \S+ terbit untuk booth A-03/);
+  const pdf = r.body.parts.find(p => p.invoiceId);
+  assert.ok(pdf, 'tombol PDF invoice');
+  const inv = (await s.api('GET', '/invoices', undefined, { as: 'finance' })).body.invoices.find(i => i.id === pdf.invoiceId);
+  assert.equal(inv?.booth_code, 'A-03');
+
+  const logs = await s.api('GET', '/audit-logs?category=WhatsApp', undefined, { as: 'superadmin' });
+  assert.ok(logs.body.logs.some(l => /Booking via chat Setting/.test(l.action)), 'tercatat dari chat Setting');
+  assert.equal((await chatWeb('halo', 'sales')).status, 403);
+  assert.equal((await chatWeb('', 'superadmin')).status, 400);
 });
 
-test('model yang tidak menjawab: berhenti setelah batas waktu dengan pesan untuk memilih model lain', async () => {
+test('model utama diam atau sedang penuh: pertanyaan yang sama dijawab model cadangan', async () => {
+  // a model that never answers: stopped after the time limit, then the fallback answers
   assert.equal((await s.api('PUT', '/maintenance/whatsapp/gemini', { model: 'model-diam' }, { as: 'superadmin' })).status, 200);
+  replies.push(modelSays('Jawaban dari model cadangan.'));
   const t0 = Date.now();
-  const r = await s.api('POST', '/maintenance/whatsapp/gemini/test', { question: 'halo' }, { as: 'superadmin' });
-  assert.equal(r.status, 502, r.text);
-  assert.match(r.body.error, /tidak menjawab/);
-  assert.match(r.body.error, /model lain/);
+  let r = await chatWeb('halo');
+  assert.equal(r.status, 200, r.text);
+  assert.equal(texts(r), 'Jawaban dari model cadangan.');
+  assert.equal(geminiCalls.at(-1).model, 'gemini-3.1-flash-lite');
   assert.ok(Date.now() - t0 < 10000, 'tidak menunggu lebih dari batas waktu');
+
+  // a model "experiencing high demand" (503)
   assert.equal((await s.api('PUT', '/maintenance/whatsapp/gemini', { model: 'gemini-3-flash-preview' }, { as: 'superadmin' })).status, 200);
+  replies.push({ status: 503, body: { error: { code: 503, status: 'UNAVAILABLE', message: 'This model is currently experiencing high demand.' } } }, modelSays('Cadangan menjawab.'));
+  r = await chatWeb('halo lagi');
+  assert.equal(texts(r), 'Cadangan menjawab.');
+  assert.equal(geminiCalls.at(-1).model, 'gemini-3.1-flash-lite');
 });
 
 test('agen dimatikan lalu kunci dihapus: pesan bebas dijawab MENU tanpa memanggil Gemini', async () => {
