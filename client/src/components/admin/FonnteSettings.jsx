@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { MessageCircle, KeyRound, ShieldCheck, CheckCircle2, AlertTriangle, RefreshCw, Trash2, Eye, EyeOff, Save, Copy, Send, Users } from 'lucide-react';
 import { api } from '../../services/api';
+import GeminiAgentSettings from './GeminiAgentSettings';
 
 // Setting > Integrasi WhatsApp (Fonnte): the Super Admin enters the Fonnte device token (AGENTS.md §45).
 // The token is WRITE-ONLY, like the Claude key (§23): sent once, stored in server/.env, never shown again.
@@ -59,7 +60,7 @@ export default function FonnteSettings() {
       </div>
 
       <p className="text-xs text-slate-500 leading-relaxed">
-        Staf (Sales, Keuangan, Super Admin) mengirim kata perintah ke nomor asisten (ketik <b>MENU</b>): booth yang tersedia, detail booth, cari tenant, ringkasan, booking booth, dan invoice (PDF-nya dikirim ke WhatsApp; mengirim file butuh paket Fonnte Super / Advanced / Ultra). Tanpa AI, tanpa kunci Claude. Booking dan invoice baru disimpan setelah staf membalas <b>YA</b>. Hubungkan nomor asisten di{' '}
+        Staf (Sales, Keuangan, Super Admin) mengirim kata perintah ke nomor asisten (ketik <b>MENU</b>): booth yang tersedia, detail booth, cari tenant, ringkasan, booking booth, dan invoice (PDF-nya dikirim ke WhatsApp; mengirim file butuh paket Fonnte Super / Advanced / Ultra). Pertanyaan bebas (bukan kata perintah) dijawab agen AI Gemini bila diaktifkan di bagian bawah. Booking dan invoice baru disimpan setelah staf membalas <b>YA</b>. Hubungkan nomor asisten di{' '}
         <a href="https://fonnte.com" target="_blank" rel="noopener noreferrer" className="text-emerald-700 font-semibold underline">fonnte.com</a>{' '}
         (menu Device, scan QR), lalu salin <b>Token</b> device-nya ke sini. Token hanya disimpan di server (<code className="bg-slate-100 px-1 py-0.5 rounded">server/.env</code>) dan <b>tidak pernah ditampilkan lagi</b>.
       </p>
@@ -103,7 +104,7 @@ export default function FonnteSettings() {
             <div className="flex items-center bg-white border border-slate-200 rounded-xl px-3 focus-within:border-emerald-400">
               <KeyRound size={14} className="text-slate-400 shrink-0" />
               <input type={showToken ? 'text' : 'password'} name="fonnte-token" value={token} onChange={(e) => setToken(e.target.value)} placeholder={status?.tokenConfigured ? `Token tersimpan (${status.tokenHint}). Isi hanya untuk mengganti.` : 'Token dari Fonnte > Device'} autoComplete="new-password" spellCheck={false}
-                className="flex-1 bg-transparent px-2 py-2.5 text-xs font-mono text-slate-800 focus:outline-none" />
+                className="flex-1 min-w-0 bg-transparent px-2 py-2.5 text-xs font-mono text-slate-800 focus:outline-none" />
               <button type="button" onClick={() => setShowToken(v => !v)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer" aria-label={showToken ? 'Sembunyikan token' : 'Tampilkan token'}>
                 {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
@@ -182,6 +183,8 @@ export default function FonnteSettings() {
           </div>
         </>
       )}
+
+      <GeminiAgentSettings gemini={status?.gemini} onStatus={(next) => apply({ status: next })} />
     </div>
   );
 }

@@ -87,7 +87,7 @@ async function up(ref = 'main') {
 
   start('server', process.execPath, ['src/index.js'], path.join(APP, 'server'), {
     PORT: String(API_PORT), DATA_DIR: DATA, APP_ENV: 'staging', APP_COMMIT: commit, BACKUP_DISABLED: '1',
-    ALLOWED_ORIGINS: `http://localhost:${WEB_PORT}`, ANTHROPIC_API_KEY: ''
+    ALLOWED_ORIGINS: `http://localhost:${WEB_PORT}`, ANTHROPIC_API_KEY: '', GEMINI_API_KEY: ''
   });
   start('web', process.execPath, [path.join(APP, 'client/node_modules/vite/bin/vite.js'), 'preview', '--port', String(WEB_PORT), '--strictPort'], path.join(APP, 'client'), {});
   const okApi = await waitFor(`http://localhost:${API_PORT}/api/health`);

@@ -10,6 +10,13 @@ const env = (name) => String(process.env[name] || '').trim();
 
 export const waEnabled = () => Boolean(env('FONNTE_TOKEN') && env('FONNTE_WEBHOOK_SECRET'));
 
+// Non-secret settings of Setting > Integrasi WhatsApp (who changed them, last test, the Gemini model / on-off)
+export const waMeta = () => { try { return JSON.parse(db.prepare("SELECT value FROM maintenance_settings WHERE key = 'wa_meta'").get()?.value || '{}'); } catch (e) { return {}; } };
+export const saveWaMeta = (patch) => db.prepare(`
+  INSERT INTO maintenance_settings (key, value, updated_at) VALUES ('wa_meta', ?, CURRENT_TIMESTAMP)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+`).run(JSON.stringify({ ...waMeta(), ...patch }));
+
 // The secret in the webhook URL, compared in constant time
 export function secretMatches(given) {
   const secret = env('FONNTE_WEBHOOK_SECRET');

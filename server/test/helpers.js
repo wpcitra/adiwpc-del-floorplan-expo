@@ -37,9 +37,9 @@ export async function startServer(extraEnv = {}, { prepare, credentials = {} } =
     cwd: SERVER_DIR,
     env: {
       ...process.env, PORT: String(port), DATA_DIR: dataDir, APP_ENV: 'test', BACKUP_DISABLED: '1',
-      PUBLIC_ALIAS_SALT: 'test-salt', ANTHROPIC_API_KEY: '',
-      // own .env file and a dead Anthropic URL: tests never touch server/.env or call the real API
-      ENV_FILE: path.join(dataDir, '.env'), ANTHROPIC_API_URL: 'http://127.0.0.1:9', ...extraEnv
+      PUBLIC_ALIAS_SALT: 'test-salt', ANTHROPIC_API_KEY: '', GEMINI_API_KEY: '',
+      // own .env file and dead Anthropic / Gemini URLs: tests never touch server/.env or call the real APIs
+      ENV_FILE: path.join(dataDir, '.env'), ANTHROPIC_API_URL: 'http://127.0.0.1:9', GEMINI_API_URL: 'http://127.0.0.1:9', ...extraEnv
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });

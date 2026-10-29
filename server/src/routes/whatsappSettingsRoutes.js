@@ -2,18 +2,16 @@ import express from 'express';
 import crypto from 'crypto';
 import db from '../db.js';
 import { envFileHas, setEnvFileValue } from '../utils/envFile.js';
-import { waEnabled, sendText, normalizePhone } from '../utils/whatsapp.js';
+import { waEnabled, sendText, normalizePhone, waMeta as metaOf, saveWaMeta as saveMeta } from '../utils/whatsapp.js';
+import { getGeminiKey, isValidGeminiKeyFormat, isValidModelId, listGeminiModels, DEFAULT_GEMINI_MODEL } from '../utils/geminiApi.js';
+import { geminiConfig, geminiReady } from '../utils/waGemini.js';
+import { askGeminiFromWeb } from '../utils/waAgent.js';
 
-// Setting > Integrasi WhatsApp (Fonnte), Super Admin only (AGENTS.md §45). Same rules as the Claude key (§23): the token is
-// WRITE-ONLY (responses carry only "configured" and its last 4 characters) and lives in server/.env, never in the database.
-// The webhook secret is shown to the Super Admin because it is part of the URL that is pasted into the Fonnte dashboard.
+// Setting > Integrasi WhatsApp (Fonnte), Super Admin only (AGENTS.md §45). Same rules as the Claude key (§23): the token and
+// the Gemini API key are WRITE-ONLY (responses carry only "configured" and the last 4 characters) and live in the env
+// file, never in the database. The webhook secret is shown to the Super Admin because it is part of the URL that is
+// pasted into the Fonnte dashboard.
 const router = express.Router();
-
-const metaOf = () => { try { return JSON.parse(db.prepare("SELECT value FROM maintenance_settings WHERE key = 'wa_meta'").get()?.value || '{}'); } catch (e) { return {}; } };
-const saveMeta = (patch) => db.prepare(`
-  INSERT INTO maintenance_settings (key, value, updated_at) VALUES ('wa_meta', ?, CURRENT_TIMESTAMP)
-  ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-`).run(JSON.stringify({ ...metaOf(), ...patch }));
 
 const baseUrl = (req) => `${String(req.headers['x-forwarded-proto'] || req.protocol).split(',')[0]}://${req.headers['x-forwarded-host'] || req.headers.host}`;
 
@@ -31,7 +29,20 @@ function status(req) {
     enabled: waEnabled(),
     staff: db.prepare("SELECT name, role, phone FROM users WHERE is_active = 1 AND role IN ('superadmin', 'finance', 'sales')").all()
       .map(u => ({ name: u.name, role: u.role, hasPhone: Boolean(normalizePhone(u.phone)) })),
-    updatedAt: meta.updatedAt || null, updatedBy: meta.updatedBy || '', lastTest: meta.lastTest || null
+    updatedAt: meta.updatedAt || null, updatedBy: meta.updatedBy || '', lastTest: meta.lastTest || null,
+    gemini: geminiStatus()
+  };
+}
+
+function geminiStatus() {
+  const key = getGeminiKey();
+  const g = metaOf().gemini || {};
+  const cfg = geminiConfig();
+  return {
+    configured: Boolean(key), hint: key ? `…${key.slice(-4)}` : '',
+    source: key ? (envFileHas('GEMINI_API_KEY') ? 'env-file' : 'environment') : null,
+    model: cfg.model, defaultModel: DEFAULT_GEMINI_MODEL, enabled: cfg.enabled, ready: geminiReady(),
+    updatedAt: g.updatedAt || null, updatedBy: g.updatedBy || ''
   };
 }
 const lockedByEnvironment = () => Boolean(process.env.FONNTE_TOKEN) && !envFileHas('FONNTE_TOKEN');
@@ -81,6 +92,59 @@ router.post('/test', async (req, res) => {
   const lastTest = { ok: out.ok, at: new Date().toISOString(), target: `…${target.slice(-4)}`, message: out.ok ? 'Pesan tes terkirim.' : `Gagal: ${out.reason}` };
   saveMeta({ lastTest });
   res.json({ success: true, ok: out.ok, message: lastTest.message, status: status(req) });
+});
+
+// ---------- Agen Gemini ----------
+const geminiLocked = () => Boolean(process.env.GEMINI_API_KEY) && !envFileHas('GEMINI_API_KEY');
+const saveGemini = (req, patch) => saveMeta({ gemini: { ...(metaOf().gemini || {}), ...patch, updatedAt: new Date().toISOString(), updatedBy: req.user?.name || '' } });
+
+// PUT /gemini { apiKey?, model?, enabled? }: a key is checked with Google first; a refused key is not stored
+router.put('/gemini', async (req, res) => {
+  const { apiKey, model, enabled } = req.body || {};
+  const key = apiKey === undefined ? '' : String(apiKey).trim();
+  if (apiKey !== undefined && !isValidGeminiKeyFormat(key)) return res.status(400).json({ success: false, error: 'Format API key Gemini tidak valid (tanpa spasi atau tanda kutip). Salin dari Google AI Studio.' });
+  if (key && geminiLocked()) return res.status(409).json({ success: false, error: 'API key Gemini diatur dari environment server (di luar aplikasi) sehingga tidak dapat diganti dari sini.' });
+  if (model !== undefined && !isValidModelId(model)) return res.status(400).json({ success: false, error: 'Nama model Gemini tidak valid.' });
+  if (enabled !== undefined && typeof enabled !== 'boolean') return res.status(400).json({ success: false, error: 'Nilai aktif harus ya / tidak.' });
+  if (!key && model === undefined && enabled === undefined) return res.status(400).json({ success: false, error: 'Tidak ada yang diubah.' });
+
+  let warning = '';
+  if (key) {
+    const check = await listGeminiModels(key);
+    if (!check.ok && ['INVALID_KEY', 'FORBIDDEN'].includes(check.code)) return res.status(400).json({ success: false, error: check.message });
+    if (!check.ok) warning = `API key disimpan, tetapi belum bisa dicek: ${check.message}`;
+    try { setEnvFileValue('GEMINI_API_KEY', key); } catch (e) { return res.status(500).json({ success: false, error: 'API key gagal disimpan ke file .env server.' }); }
+  }
+  saveGemini(req, {
+    ...(model !== undefined ? { model } : {}),
+    ...(enabled !== undefined ? { enabled } : key ? { enabled: true } : {})
+  });
+  res.json({ success: true, message: warning || 'Pengaturan agen Gemini tersimpan.', warning, status: status(req) });
+});
+
+// GET /gemini/models: the models the stored key can use (for the model dropdown)
+router.get('/gemini/models', async (req, res) => {
+  const out = await listGeminiModels();
+  if (!out.ok) return res.status(out.code === 'NO_KEY' ? 409 : 502).json({ success: false, error: out.message });
+  res.json({ success: true, models: out.models, defaultModel: DEFAULT_GEMINI_MODEL });
+});
+
+// POST /gemini/test { question }: one question with read-only tools, answered on the page. Nothing is stored.
+router.post('/gemini/test', async (req, res) => {
+  req.skipAudit = true;
+  const question = String(req.body?.question || '').trim();
+  if (!question || question.length > 500) return res.status(400).json({ success: false, error: 'Tulis pertanyaan (maksimal 500 karakter).' });
+  if (!getGeminiKey()) return res.status(409).json({ success: false, error: 'API key Gemini belum diisi.' });
+  const out = await askGeminiFromWeb(req.user, question);
+  if (out.error) return res.status(502).json({ success: false, error: out.error });
+  res.json({ success: true, answer: out.text });
+});
+
+router.delete('/gemini', (req, res) => {
+  if (geminiLocked()) return res.status(409).json({ success: false, error: 'API key Gemini diatur dari environment server (di luar aplikasi) sehingga tidak dapat dihapus dari sini.' });
+  try { setEnvFileValue('GEMINI_API_KEY', null); } catch (e) { return res.status(500).json({ success: false, error: 'API key gagal dihapus dari file .env server.' }); }
+  saveGemini(req, {});
+  res.json({ success: true, status: status(req) });
 });
 
 router.delete('/', (req, res) => {

@@ -151,6 +151,11 @@ const AUDIT_RULES = [
     describe: () => ({ target: 'api.fonnte.com /send' }) },
   { method: 'DELETE', path: /^\/maintenance\/whatsapp$/, category: 'Maintenance', action: 'Hapus pengaturan WhatsApp (Fonnte)',
     describe: () => ({ target: 'FONNTE_* (server/.env)' }) },
+  // Gemini agent of the WhatsApp assistant: the key is never logged (SENSITIVE_KEYS drops `apiKey` from the details)
+  { method: 'PUT', path: /^\/maintenance\/whatsapp\/gemini$/, category: 'Maintenance', action: 'Simpan pengaturan agen Gemini',
+    describe: (req) => ({ target: 'GEMINI_API_KEY (file .env) / model', summary: [req.body?.apiKey ? 'API key baru (nilai tidak dicatat)' : '', req.body?.model ? `model ${req.body.model}` : '', typeof req.body?.enabled === 'boolean' ? (req.body.enabled ? 'agen diaktifkan' : 'agen dimatikan') : ''].filter(Boolean).join(' · ') }) },
+  { method: 'DELETE', path: /^\/maintenance\/whatsapp\/gemini$/, category: 'Maintenance', action: 'Hapus API key Gemini',
+    describe: () => ({ target: 'GEMINI_API_KEY (file .env)' }) },
   { method: 'POST', path: /^\/maintenance\/errors\/([^/]+)\/status$/, category: 'Maintenance', action: 'Ubah status error',
     before: (m) => db.prepare('SELECT id, status, priority, message FROM error_groups WHERE id = ?').get(m[1]),
     describe: (req, m, before) => ({
