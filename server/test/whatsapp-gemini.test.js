@@ -31,7 +31,14 @@ const toolNames = (call) => (call.body.tools?.[0]?.functionDeclarations || []).m
 
 before(async () => {
   wa = await listen(async (req, res) => {
-    sent.push(JSON.parse(await readRaw(req) || '{}'));
+    const raw = await readRaw(req);
+    // a document (invoice PDF) is a multipart upload: keep its caption and file name
+    if ((req.headers['content-type'] || '').startsWith('multipart/form-data')) {
+      const form = await new Response(raw, { headers: { 'content-type': req.headers['content-type'] } }).formData();
+      sent.push({ target: form.get('target'), message: form.get('message'), filename: form.get('filename'), file: true });
+    } else {
+      sent.push(JSON.parse(raw || '{}'));
+    }
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ status: true }));
   });
@@ -73,15 +80,15 @@ before(async () => {
 after(async () => { await s?.stop(); wa?.close(); gm?.closeAllConnections(); gm?.close(); });
 
 let counter = 0;
-// Send one WhatsApp message from `sender` and return the text of the reply
-async function say(sender, message) {
+// Send one WhatsApp message from `sender` and return the text of the replies (`count` messages are awaited)
+async function say(sender, message, count = 1) {
   const n = sent.length;
   const r = await fetch(`${s.base}/whatsapp/webhook/${SECRET}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ device: '628111000111', sender, message, inboxid: `g${++counter}`, timestamp: Date.now() })
   });
   assert.equal(r.status, 200);
-  for (let i = 0; i < 300 && sent.length < n + 1; i++) await new Promise(res => setTimeout(res, 50));
+  for (let i = 0; i < 600 && sent.length < n + count; i++) await new Promise(res => setTimeout(res, 50));
   return sent.slice(n).map(m => m.message || '').join('\n');
 }
 const booth = async (code) => (await s.api('GET', `/floorplan/${FP}`, undefined, { as: 'superadmin' })).body.floorplan.booths.find(b => b.code === code);
@@ -241,6 +248,39 @@ test('chat asisten di halaman Setting: bertanya, booking dan invoice lewat obrol
   assert.ok(logs.body.logs.some(l => /Booking via chat Setting/.test(l.action)), 'tercatat dari chat Setting');
   assert.equal((await chatWeb('halo', 'sales')).status, 403);
   assert.equal((await chatWeb('', 'superadmin')).status, 400);
+});
+
+test('cek invoice dan kirim PDF invoice lewat obrolan: sudah / belum ada, PDF langsung dikirim tanpa YA', async () => {
+  const inv = (await s.api('GET', '/invoices', undefined, { as: 'finance' })).body.invoices.find(i => i.floorplan_id === FP && i.booth_code === 'A-03');
+  assert.ok(inv, 'invoice A-03 dari test chat');
+  const num = new RegExp(inv.invoice_number.replace(/[/.]/g, '\\$&'));
+  const lastToolAnswer = () => JSON.stringify(geminiCalls.at(-1).body.contents.at(-1).parts[0].functionResponse.response);
+
+  replies.push(modelCalls('cari_invoice', { kata: 'A-03' }), modelSays('Sudah ada.'));
+  assert.equal(texts(await chatWeb('invoice A-03 sudah dibuat belum?')), 'Sudah ada.');
+  assert.match(lastToolAnswer(), num, 'nomor invoice dikirim ke Gemini');
+  assert.match(lastToolAnswer(), /Penuh/);
+  replies.push(modelCalls('cari_invoice', { kata: 'Kopi Satu' }), modelSays('Belum ada.'));
+  await chatWeb('invoice kopi satu sudah ada?');
+  assert.match(lastToolAnswer(), /belum ada invoice/i);
+
+  // send: no YA, the system's own message + the PDF
+  const n = geminiCalls.length;
+  replies.push(modelCalls('kirim_pdf_invoice', { nomor: 'A-03' }));
+  let r = await chatWeb('kirimin pdf invoice A-03');
+  assert.equal(geminiCalls.length, n + 1, 'langsung dikirim');
+  assert.match(texts(r), num);
+  assert.ok(r.body.parts.some(p => p.invoiceId === inv.id), 'tombol PDF invoice yang benar di chat Setting');
+  replies.push(modelCalls('kirim_pdf_invoice', { nomor: 'Z-99' }), modelSays('Invoice Z-99 tidak ditemukan.'));
+  r = await chatWeb('kirim invoice Z-99');
+  assert.equal(texts(r), 'Invoice Z-99 tidak ditemukan.');
+  assert.match(lastToolAnswer(), /Belum ada invoice/i);
+
+  // on WhatsApp: the text and then the PDF file (or the reason when it cannot be made)
+  replies.push(modelCalls('kirim_pdf_invoice', { nomor: inv.invoice_number }));
+  const wa = await say(SALES, 'tolong kirim pdf invoice A-03', 2);
+  assert.match(wa, num);
+  assert.ok(sent.slice(-2).some(m => m.file) || /PDF/.test(wa), 'PDF terkirim sebagai file, atau alasannya dikabarkan');
 });
 
 test('model utama diam atau sedang penuh: pertanyaan yang sama dijawab model cadangan', async () => {

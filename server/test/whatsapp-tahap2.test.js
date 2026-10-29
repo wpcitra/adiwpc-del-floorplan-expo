@@ -118,6 +118,14 @@ test('INVOICE: rencana DP 30% menerbitkan Invoice DP setelah YA; nomor, total da
   } else {
     assert.match(msg, /PDF/, 'tanpa mesin PDF: alasannya dikabarkan, nomor invoice tetap terkirim');
   }
-  assert.match(await say(FINANCE, 'INVOICE A-02'), /sudah/, 'tidak bisa dobel');
+  // the invoice exists: INVOICE sends it again (by booth or by invoice number), no second invoice, no YA
+  for (const ask of ['INVOICE A-02', `INVOICE ${inv.invoice_number}`]) {
+    const again = await chat(FINANCE, ask, 2);
+    const againMsg = again.map(m => m.json?.message || m.form?.message || '').join('\n');
+    assert.match(againMsg, /sudah ada/, ask);
+    assert.match(againMsg, new RegExp(inv.invoice_number.replace(/[/.]/g, '\\$&')));
+    if (pdfEngine) assert.ok(again.some(m => m.form?.head === '%PDF-'), `${ask}: PDF dikirim lagi`);
+  }
+  assert.equal((await invoicesOf('A-02')).length, 1, 'tidak dobel');
   assert.match(await say(FINANCE, 'INVOICE A-03'), /belum punya tenant/i);
 });

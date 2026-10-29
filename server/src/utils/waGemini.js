@@ -4,7 +4,8 @@ import { waMeta } from './whatsapp.js';
 // Conversation with Gemini for the WhatsApp staff assistant (AGENTS.md §45). It knows nothing about booths: the caller
 // passes the tool declarations and their handlers. A handler returns { result } (data back to Gemini), { error } (also
 // back, Gemini then asks the staff member) or { final } (the system's own text ends the turn, e.g. a booking summary
-// that waits for YA: Gemini never words a confirmation and never saves anything).
+// that waits for YA: Gemini never words a confirmation and never saves anything) or { parts } (the system's own message
+// with attachments, e.g. the PDF of an existing invoice).
 const MAX_STEPS = 5;
 const KEEP_MESSAGES = 12;
 const IDLE_MS = 30 * 60 * 1000;
@@ -64,6 +65,8 @@ async function runTurn({ model, contents, system, tools, handlers, remember }) {
         out = { error: 'Alat gagal dijalankan.' };
       }
       if (out.final) { remember(out.final); return { text: out.final }; }
+      // the system's own message with attachments (e.g. invoice PDFs): sent as is, the turn ends
+      if (out.parts) { remember(out.parts.find(p => typeof p === 'string') || 'PDF invoice dikirim.'); return { parts: out.parts }; }
       // one response per call, with the call's id and name (Gemini answers empty otherwise)
       responses.push({ functionResponse: { name: c.name, ...(c.id ? { id: c.id } : {}), response: out.error ? { error: out.error } : { result: out.result } } });
     }

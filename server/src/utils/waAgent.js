@@ -67,7 +67,7 @@ const menuText = (fp) => [
   '- CARI kopi : cari tenant / brand',
   '- RINGKASAN : ringkasan project',
   '- BOOKING A-12 : booking booth (Sales / Super Admin)',
-  '- INVOICE A-12 : terbitkan invoice booth',
+  '- INVOICE A-12 : kirim PDF invoice booth (dibuat dulu bila belum ada)',
   'Booking dan invoice baru disimpan setelah Anda membalas YA.'
 ].join('\n');
 
@@ -229,7 +229,7 @@ function invoiceRequest(user, fp, rest, channel = 'WhatsApp') {
   if (!code) return { error: 'Ketik nomor booth, misalnya: INVOICE A-12' };
   const s = boothSummary(fp.id, code, '', user.role);
   if (!s) return { error: `Booth ${code} tidak ditemukan di project ${fp.title}.` };
-  if (s.invoices.length) return { error: `Booth ${s.booth.code} sudah punya invoice (${s.invoices.map(i => i.invoice_number).join(', ')}). Ketik BOOTH ${s.booth.code} untuk detailnya.` };
+  if (s.invoices.length) return { error: `Booth ${s.booth.code} sudah punya invoice (${s.invoices.map(i => i.invoice_number).join(', ')}): tidak dibuat lagi. PDF-nya bisa dikirim (INVOICE ${s.booth.code}).` };
   const act = s.actions.invoice;
   if (!act.enabled) return { error: act.reason };
   if (act.mode === 'booking') return { error: `Booth ${s.booth.code} belum punya tenant. Booking dulu: BOOKING ${s.booth.code}` };
@@ -248,14 +248,29 @@ function invoiceRequest(user, fp, rest, channel = 'WhatsApp') {
 
 // YA: the prepared request goes through the web endpoint itself, with a short session of this staff member, so the
 // role rules, the checks (booth taken, double invoice) and the audit log are exactly those of the web pages.
-async function runConfirmed(user, action) {
+// The web endpoints in this staff member's name: a short session, deleted afterwards
+async function withSession(user, fn) {
   const session = createSession(user.id, { headers: { 'user-agent': 'Asisten WhatsApp' }, socket: {} });
   const call = (method, path, body) => fetch(`http://127.0.0.1:${process.env.PORT || 5001}/api${path}`, {
     method, headers: { Authorization: `Bearer ${session.token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined
   });
+  try { return await fn(call); } finally { db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashToken(session.token)); }
+}
+
+// One invoice's PDF as message parts: the web chat gets a download button (the page fetches the PDF itself); WhatsApp
+// gets the file from GET /invoices/:id/pdf (so the reader's own access rules apply), or the reason it cannot be made
+async function pdfParts(call, inv, channel) {
+  const filename = `Invoice-${String(inv.invoice_number).replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`;
+  if (channel !== 'WhatsApp') return [{ invoiceId: inv.id, invoiceNumber: inv.invoice_number, filename }];
+  const pdf = await call('GET', `/invoices/${encodeURIComponent(inv.id)}/pdf`);
+  if (pdf.ok) return [{ file: Buffer.from(await pdf.arrayBuffer()), filename, caption: `Invoice ${inv.invoice_number}` }];
+  return [`PDF ${inv.invoice_number} belum bisa dibuat di server (${(await pdf.json().catch(() => ({}))).error || `HTTP ${pdf.status}`}). Unduh dari aplikasi.`];
+}
+
+async function runConfirmed(user, action) {
   const channel = action.channel || 'WhatsApp';
   const audit = (summary) => writeAuditLog({ user, category: 'WhatsApp', action: `${action.kind === 'booking' ? 'Booking' : 'Buat invoice'} via ${channel}`, target: action.label, summary });
-  try {
+  return withSession(user, async (call) => {
     if (action.kind === 'booking') {
       const res = await call('POST', '/orders/checkout', action.body);
       const out = await res.json().catch(() => ({}));
@@ -272,17 +287,57 @@ async function runConfirmed(user, action) {
     const due = invoiceDates(inv, { dueDays: cfg.invoiceDueDays }).dueDate;
     const kind = inv.invoice_kind === 'dp' ? 'Invoice DP' : 'Invoice Penuh';
     audit(`${kind} ${inv.invoice_number} untuk booth ${action.body.boothCode}, total ${rupiah(inv.total_amount)}`);
-    const parts = [`${kind} ${inv.invoice_number} terbit untuk booth ${action.body.boothCode} (${inv.company_name || '-'}).\n- Total: ${rupiah(inv.total_amount)}\n- Jatuh tempo: ${new Date(`${due}T00:00:00Z`).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })}`];
-    const filename = `Invoice-${String(inv.invoice_number).replace(/[^A-Za-z0-9._-]+/g, '_')}.pdf`;
-    // the web chat downloads the PDF itself from the invoice; only WhatsApp needs the file now
-    if (channel !== 'WhatsApp') return [...parts, { invoiceId: inv.id, invoiceNumber: inv.invoice_number, filename }];
-    const pdf = await call('GET', `/invoices/${encodeURIComponent(inv.id)}/pdf`);
-    if (pdf.ok) parts.push({ file: Buffer.from(await pdf.arrayBuffer()), filename, caption: `${kind} ${inv.invoice_number}` });
-    else parts.push(`PDF belum bisa dibuat di server (${(await pdf.json().catch(() => ({}))).error || `HTTP ${pdf.status}`}). Unduh dari aplikasi.`);
-    return parts;
-  } finally {
-    db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashToken(session.token));
-  }
+    return [
+      `${kind} ${inv.invoice_number} terbit untuk booth ${action.body.boothCode} (${inv.company_name || '-'}).\n- Total: ${rupiah(inv.total_amount)}\n- Jatuh tempo: ${new Date(`${due}T00:00:00Z`).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })}`,
+      ...await pdfParts(call, inv, channel)
+    ];
+  });
+}
+
+// ---------- Existing invoices: check and send the PDF (no YA: nothing is saved) ----------
+const INVOICE_KIND = { dp: 'DP', settlement: 'Pelunasan', full: 'Penuh', facility: 'Fasilitas' };
+const PAY_STATUS = { PAID: 'lunas', PARTIAL: 'dibayar sebagian', PENDING: 'menunggu verifikasi', UNPAID: 'belum dibayar', CANCELED: 'batal' };
+const isLive = (inv) => String(inv.payment_status || '').toUpperCase() !== 'CANCELED';
+
+// Invoices of the project by invoice number, booth number (exact, or one part of "A-01+A-02": AGENTS.md §12) or tenant name
+function findInvoices(fp, query) {
+  const q = lower(query).replace(/^#/, '');
+  if (!q) return [];
+  const rows = db.prepare(`
+    SELECT id, invoice_number, booth_code, company_name, client_name, invoice_kind, total_amount, paid_amount, payment_status, created_at
+    FROM invoices WHERE floorplan_id = ? AND deleted_at IS NULL ORDER BY created_at`).all(fp.id);
+  const byNumber = rows.filter(r => lower(r.invoice_number) === q);
+  if (byNumber.length) return byNumber;
+  const byBooth = rows.filter(r => `+${lower(r.booth_code).replace(/\s*\+\s*/g, '+')}+`.includes(`+${q}+`));
+  if (byBooth.length) return byBooth;
+  const words = q.split(/\s+/).filter(Boolean);
+  return rows.filter(r => words.every(w => lower(`${r.company_name || ''} ${r.client_name || ''}`).includes(w)));
+}
+
+const invoiceLine = (r) => {
+  const status = String(r.payment_status || 'UNPAID').toUpperCase();
+  const paid = Number(r.paid_amount) || 0;
+  return `- ${r.invoice_number} · booth ${r.booth_code || '-'} · ${r.company_name || r.client_name || '-'} · ${INVOICE_KIND[r.invoice_kind || 'full'] || 'Penuh'} · ${rupiah(r.total_amount)} · ${PAY_STATUS[status] || status}${paid > 0 && status !== 'PAID' ? ` (dibayar ${rupiah(paid)})` : ''}`;
+};
+
+function invoiceListText(fp, query) {
+  const list = findInvoices(fp, query);
+  if (list.length) return [`Invoice "${String(query).trim()}" · ${fp.title}:`, ...list.slice(0, 10).map(invoiceLine), list.length > 10 ? `…dan ${list.length - 10} lainnya. Sebutkan nomor invoice.` : ''].filter(Boolean).join('\n');
+  const booth = findBooth(fp.id, String(query || '').trim().replace(/^#/, ''), '');
+  if (booth) return `Booth ${booth.code} belum ada invoice. ${String(booth.owner_name || '').trim() ? `Tenant ${booth.owner_name}: invoice bisa dibuat (INVOICE ${booth.code}).` : 'Booth ini juga belum punya tenant: booking dulu.'}`;
+  return `Belum ada invoice untuk "${String(query || '').trim()}" di project ${fp.title}.`;
+}
+
+// The PDF of invoices that already exist: { parts } or { error } (nothing found, or too many to pick from)
+async function sendInvoicePdfs(user, fp, query, channel) {
+  const list = findInvoices(fp, query).filter(isLive);
+  if (!list.length) return { error: invoiceListText(fp, query) };
+  if (list.length > 3) return { error: `Ada ${list.length} invoice untuk "${String(query).trim()}". Sebutkan nomor invoice-nya:\n${list.slice(0, 10).map(invoiceLine).join('\n')}` };
+  return withSession(user, async (call) => {
+    const parts = [`Invoice untuk "${String(query).trim()}" sudah ada:\n${list.map(invoiceLine).join('\n')}\n${channel === 'WhatsApp' ? 'PDF-nya saya kirim di bawah.' : 'PDF bisa diunduh di bawah.'}`];
+    for (const inv of list) parts.push(...await pdfParts(call, inv, channel));
+    return { parts };
+  });
 }
 
 // YA / BATAL: only the staff member's own answer saves a prepared request
@@ -302,7 +357,8 @@ const READ_TOOLS = [
   { name: 'booth_tersedia', description: 'Daftar booth yang masih kosong (Available, tanpa tenant): nomor, ukuran, kategori, harga. Bisa disaring ukuran.', parameters: { type: 'OBJECT', properties: { ukuran: str('Ukuran, misalnya 3x3. Kosongkan untuk semua ukuran.') } } },
   { name: 'detail_booth', description: 'Detail satu booth: status, ukuran, tenant, PIC, harga, diskon, rencana bayar, invoice dan pembayaran.', parameters: { type: 'OBJECT', properties: { nomor_booth: str('Nomor booth, misalnya A-12') }, required: ['nomor_booth'] } },
   { name: 'cari_tenant', description: 'Cari booth berdasarkan nama tenant / brand atau nomor booth (maksimal 15 hasil).', parameters: { type: 'OBJECT', properties: { kata: str('Nama tenant / brand atau nomor booth') }, required: ['kata'] } },
-  { name: 'ringkasan_project', description: 'Jumlah booth per status dan total tagihan / uang yang sudah dibayar di project.' }
+  { name: 'ringkasan_project', description: 'Jumlah booth per status dan total tagihan / uang yang sudah dibayar di project.' },
+  { name: 'cari_invoice', description: 'Cek invoice: sudah dibuat atau belum, nomor, jenis (DP / Pelunasan / Penuh / Fasilitas), total dan status bayar. Cari dengan nomor booth, nomor invoice, atau nama tenant.', parameters: { type: 'OBJECT', properties: { kata: str('Nomor booth, nomor invoice, atau nama tenant') }, required: ['kata'] } }
 ];
 const ACTION_TOOLS = [
   {
@@ -319,6 +375,11 @@ const ACTION_TOOLS = [
     }
   },
   {
+    name: 'kirim_pdf_invoice',
+    description: 'Mengirim PDF invoice yang SUDAH ADA ke staf ini, langsung (tanpa YA, tidak ada yang disimpan). Sebutkan nomor invoice atau nomor booth. Untuk invoice yang belum ada, pakai siapkan_invoice.',
+    parameters: { type: 'OBJECT', properties: { nomor: str('Nomor invoice atau nomor booth') }, required: ['nomor'] }
+  },
+  {
     name: 'siapkan_invoice',
     description: 'MENYIAPKAN invoice pertama untuk booth yang sudah dibooking (DP bila rencananya DP, selain itu Penuh). Tidak menerbitkan: sistem menunggu balasan YA dari staf.',
     parameters: { type: 'OBJECT', properties: { nomor_booth: str('Nomor booth') }, required: ['nomor_booth'] }
@@ -330,7 +391,7 @@ Yang bertanya: ${user.name} (${ROLE_NAME[user.role] || user.role}). Project: ${f
 Anda bisa membaca data lewat alat (booth tersedia, detail booth, cari tenant, ringkasan) dan MENYIAPKAN booking booth (siapkan_booking) atau invoice (siapkan_invoice).
 Menyiapkan BUKAN menyimpan: sistem sendiri yang mengirim ringkasan dan baru menyimpan setelah staf membalas YA. Jangan pernah bilang sesuatu sudah tersimpan atau terbit.
 Booking butuh: nomor booth, nama brand / tenant, nama PIC, nomor WhatsApp tenant, kategori brand, dan rencana bayar (penuh, atau DP berapa persen). Kalau ada yang kurang, tanyakan dulu; jangan mengarang.
-Invoice dibuat untuk booth yang sudah dibooking (DP bila rencana bayarnya DP, selain itu Penuh).
+Invoice dibuat untuk booth yang sudah dibooking (DP bila rencana bayarnya DP, selain itu Penuh). Untuk mengecek apakah invoice sudah ada pakai cari_invoice; untuk mengirim PDF invoice yang sudah ada pakai kirim_pdf_invoice (langsung, tanpa YA). Kalau diminta "buatkan / kirim invoice", cek dulu: sudah ada berarti kirim PDF-nya, belum ada berarti siapkan_invoice.
 Tidak bisa lewat sini: memberi diskon, mengubah status pembayaran, mengubah data lain. Arahkan ke aplikasi web.
 Aturan:
 - Bahasa Indonesia, singkat, teks biasa untuk WhatsApp (tanpa tabel, tanpa judul). Boleh baris pendek dengan tanda "-".
@@ -345,6 +406,8 @@ const toolHandlers = (user, fp, channel) => ({
   detail_booth: ({ nomor_booth }) => ({ result: boothText(fp, String(nomor_booth || ''), user.role) }),
   cari_tenant: ({ kata }) => ({ result: searchText(fp, String(kata || '')) }),
   ringkasan_project: () => ({ result: summaryText(fp) }),
+  cari_invoice: ({ kata }) => ({ result: invoiceListText(fp, String(kata || '')) }),
+  kirim_pdf_invoice: ({ nomor }) => sendInvoicePdfs(user, fp, String(nomor || ''), channel),
   siapkan_booking: (a) => asFinal(bookingRequest(user, fp,
     Array.isArray(a.nomor_booth) ? a.nomor_booth.map(c => String(c).trim().replace(/^#/, '')).filter(Boolean) : boothCodesFrom(a.nomor_booth, fp),
     { brand: a.brand, nama_pic: a.nama_pic, whatsapp: a.whatsapp, kategori: a.kategori, dp: a.rencana === 'dp' ? Math.round(Number(a.dp_persen)) : 0 }, channel)),
@@ -353,7 +416,7 @@ const toolHandlers = (user, fp, channel) => ({
 
 async function askGemini(user, fp, text, channel) {
   const out = await chatWithGemini({ memoryKey: user.id, text, system: systemPrompt(user, fp), tools: [...READ_TOOLS, ...ACTION_TOOLS], handlers: toolHandlers(user, fp, channel) });
-  return out.text || `Asisten AI belum bisa menjawab: ${out.error}\nKetik MENU untuk memakai perintah biasa.`;
+  return out.parts || out.text || `Asisten AI belum bisa menjawab: ${out.error}\nKetik MENU untuk memakai perintah biasa.`;
 }
 
 // With Gemini on, a command is answered by the system only when its argument is understood; anything else
@@ -364,7 +427,8 @@ function isCommand(cmd, rest, fp) {
   switch (cmd) {
     case 'menu': case 'ringkasan': return !r;
     case 'tersedia': case 'kosong': return !r || SIZE_RE.test(r);
-    case 'booth': case 'invoice': return Boolean(r && findBooth(fp.id, r.replace(/^#/, ''), ''));
+    case 'booth': return Boolean(r && findBooth(fp.id, r.replace(/^#/, ''), ''));
+    case 'invoice': return Boolean(r && (findBooth(fp.id, r.replace(/^#/, ''), '') || findInvoices(fp, r).some(i => lower(i.invoice_number) === lower(r))));
     case 'booking': { const codes = boothCodesFrom(r, fp); return codes.length > 0 && codes.every(c => findBooth(fp.id, c, '')); }
     case 'cari': return Boolean(r) && r.split(/\s+/).length <= 3;
     default: return false;
@@ -400,7 +464,12 @@ export async function answerStaff(user, text, channel = 'WhatsApp') {
     case 'cari': return searchText(fp, rest);
     case 'ringkasan': return summaryText(fp);
     case 'booking': return startBooking(user, fp, rest, channel);
-    case 'invoice': { const r = invoiceRequest(user, fp, rest, channel); return r.error || r.confirm; }
+    case 'invoice': {
+      // already there: its PDF; otherwise the first invoice is prepared and waits for YA
+      if (findInvoices(fp, rest).some(isLive)) { const sent = await sendInvoicePdfs(user, fp, rest, channel); return sent.parts || sent.error; }
+      const r = invoiceRequest(user, fp, rest, channel);
+      return r.error || r.confirm;
+    }
     default: return menuText(fp);
   }
 }
