@@ -34,5 +34,6 @@ export function installPlatform() {
   if (/Android/.test(ua)) return 'android';
   if (/Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR|Firefox/.test(ua)) return 'mac-safari';
   if (/Firefox/.test(ua)) return 'firefox';
-  return 'desktop';
+  if (/Edg\//.test(ua)) return 'edge';
+  return /Windows/.test(ua) ? 'windows' : 'desktop';
 }

@@ -26,6 +26,7 @@ import { api } from '../../services/api';
 import { invoiceTaxView, allocate } from '../../utils/invoiceTax';
 import InvoiceTotals from './InvoiceTotals';
 import { invoiceDates } from '../../utils/invoiceNumbering';
+import { isSizeOnlyCategory } from '../../utils/templatePrice';
 
 // Kop surat (AGENTS.md §42), printed: the letterhead must cover the whole paper, so the page margin is 0 and these
 // empty head / foot rows (repeated on every page) give the content the usual 12 mm margins on each page.
@@ -208,7 +209,9 @@ export default function InvoiceA4View({
     const w = Number(spec.widthM) || 0;
     const h = Number(spec.heightM) || 0;
     const size = w && h ? `${w} × ${h} m (${Math.round(w * h * 100) / 100} m²)` : '';
-    return [spec.category, size].filter(Boolean).join(' • ');
+    // a category that is only the size ("3X9") is not printed next to the size again
+    const category = isSizeOnlyCategory(spec.category, w, h) ? '' : spec.category;
+    return [category, size].filter(Boolean).join(' • ');
   };
   const specsForLine = (item) => {
     const codes = item.boothCode ? [item.boothCode] : boothCodes;

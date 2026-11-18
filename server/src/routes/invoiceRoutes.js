@@ -15,6 +15,16 @@ import { externalizeImages, CONFIG_INLINE_KEYS } from '../utils/uploads.js';
 import { renderInvoicePdf, printBaseUrl, PdfEngineError } from '../utils/pdfRenderer.js';
 import { cleanInvoiceNumber, invoiceFormatProblem, cleanNumberNext, DEFAULT_INVOICE_NUMBER_FORMAT } from '../../../shared/invoiceNumbering.js';
 import { cleanDueDays, DEFAULT_DUE_DAYS } from '../../../shared/invoiceDates.js';
+import { isSizeOnlyCategory } from '../../../shared/templatePrice.js';
+
+// "Uang Muka (DP 19.4%) Sewa Booth #A-01 Premium (3x9m)": the category is left out when it is only the size,
+// and the share has one decimal, like the contract box of the invoice
+const dpLineDescription = (pct, code, booth) => {
+  const w = booth?.width_m; const h = booth?.height_m;
+  const size = w && h ? ` (${w}x${h}m)` : '';
+  const category = booth?.category && !isSizeOnlyCategory(booth.category, w, h) ? booth.category : '';
+  return `Uang Muka (DP ${Math.round(Number(pct) * 10) / 10}%) Sewa Booth #${code} ${category}${size}`.replace(/\s+/g, ' ').trim();
+};
 import { canDeleteInvoice, canDeletePaidInvoice, canRestoreInvoice, cleanDeleteReason, sameInvoiceNumber, DELETE_REASON_MIN } from '../../../shared/invoicePermissions.js';
 
 const router = express.Router();
@@ -291,6 +301,7 @@ function invoiceRowMapper() {
       contractCache.set(key, {
         key,
         total: c.contractTotal,
+        subtotal: c.subtotal, // booth price(s) before the private discount
         paid: c.paid,
         remaining: c.remaining,
         billed: c.billed,
@@ -772,7 +783,7 @@ export function createContractInvoice(req, res) {
     kind = 'dp';
     part = taxPortion(contract, amount);
     dpPercent = dpMode === 'nominal' ? Math.round((amount / contractTotal) * 10000) / 100 : raw;
-    description = `Uang Muka (DP ${dpPercent}%) Sewa Booth #${c.booth.code} ${c.booth.category || ''}${size}`.replace(/\s+/g, ' ');
+    description = dpLineDescription(dpPercent, c.booth.code, c.booth);
   } else if (invoiceKind === 'settlement') {
     if (c.settlementInvoice) {
       return res.status(409).json({
@@ -1283,10 +1294,9 @@ router.post('/:id/terms', (req, res) => {
       if (amount >= contract.total) return res.status(400).json({ success: false, error: 'Nilai DP harus lebih kecil dari total kontrak.' });
       const pct = Math.round((amount / contract.total) * 10000) / 100;
       const part = taxPortion(contract, amount);
-      const size = c.booth?.width_m && c.booth?.height_m ? ` (${c.booth.width_m}x${c.booth.height_m}m)` : '';
       dpUpdate = {
         id: dpRow.id, amount, pct, part,
-        items: [{ id: 'item-1', description: `Uang Muka (DP ${pct}%) Sewa Booth #${dpRow.booth_code} ${c.booth?.category || ''}${size}`.replace(/\s+/g, ' ').trim(), qty: 1, unitPrice: amount, amount }]
+        items: [{ id: 'item-1', description: dpLineDescription(pct, dpRow.booth_code, c.booth), qty: 1, unitPrice: amount, amount }]
       };
       if (wantsDp) changes.push(`DP Rp ${amount.toLocaleString('id-ID')} (${pct}%)`);
     }

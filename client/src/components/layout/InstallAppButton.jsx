@@ -7,6 +7,8 @@ const STEPS = {
   android: ['Buka halaman ini di Chrome.', 'Ketuk menu ⋮ di kanan atas.', 'Pilih "Instal aplikasi" (atau "Tambahkan ke layar utama").'],
   'mac-safari': ['Di menu Safari, pilih File (Arsip).', 'Pilih "Tambahkan ke Dock".', 'Ikon EXPO muncul di Dock dan Launchpad.'],
   firefox: ['Firefox belum bisa memasang aplikasi web.', 'Buka halaman ini di Chrome, Edge atau Safari, lalu tekan "Pasang Aplikasi" lagi.'],
+  windows: ['Klik ikon pasang (layar dengan panah ke bawah) di ujung kanan kolom alamat Chrome, lalu "Instal".', 'Tidak ada ikonnya? Menu ⋮ → "Transmisikan, simpan, dan bagikan" → "Instal halaman sebagai aplikasi…" → "Instal".', 'Ikon EXPO muncul di desktop dan menu Start. Klik kanan ikonnya di taskbar → "Sematkan ke taskbar" agar selalu ada.'],
+  edge: ['Klik menu ⋯ di kanan atas Edge.', 'Pilih "Aplikasi" → "Instal situs ini sebagai aplikasi" → "Instal".', 'Ikon EXPO muncul di menu Start (dan desktop bila dicentang). Klik kanan ikonnya di taskbar → "Sematkan ke taskbar".'],
   desktop: ['Klik ikon pasang (layar dengan panah) di ujung kanan kolom alamat,', 'atau menu ⋮ → "Transmisikan, simpan, dan bagikan" → "Instal halaman sebagai aplikasi".', 'Ikon EXPO muncul di Dock / taskbar dan menu aplikasi.']
 };
 
@@ -68,8 +70,12 @@ export default function InstallAppButton() {
                 </li>
               ))}
             </ol>
-            <div className="flex justify-end px-5 py-3.5 border-t border-slate-100 bg-slate-50/60">
-              <button type="button" autoFocus onClick={() => setSteps(null)} className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 active:scale-[0.97] transition-transform">Mengerti</button>
+            <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-slate-100 bg-slate-50/60">
+              {/* The browser may offer its prompt only after a moment on the page: then one click installs */}
+              {canPromptInstall() && (
+                <button type="button" onClick={() => { setSteps(null); handleClick(); }} className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 active:scale-[0.97] transition-transform">Pasang Sekarang</button>
+              )}
+              <button type="button" autoFocus onClick={() => setSteps(null)} className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 active:scale-[0.97] transition-transform">{canPromptInstall() ? 'Nanti' : 'Mengerti'}</button>
             </div>
           </div>
         </div>

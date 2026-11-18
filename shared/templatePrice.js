@@ -33,6 +33,12 @@ export function sizeKeyOf(widthM, heightM) {
   return a && b ? `${Math.min(a, b)}x${Math.max(a, b)}` : '';
 }
 
+/** true when a category name is only the booth's size ("3X9" on a 3 x 9 m booth): printing both repeats it. */
+export function isSizeOnlyCategory(category, widthM, heightM) {
+  const parsed = parseSizeLabel(category);
+  return Boolean(parsed) && sizeKeyOf(parsed.widthM, parsed.heightM) === sizeKeyOf(widthM, heightM);
+}
+
 export const sizeLabelOf = (widthM, heightM) => `${num(widthM)}x${num(heightM)}m`.replace(/\./g, ',');
 
 const templatePrice = (t) => Math.max(0, Math.round(Number(t?.defaultPrice ?? t?.default_price) || 0));

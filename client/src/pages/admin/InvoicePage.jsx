@@ -711,9 +711,17 @@ export default function InvoicePage() {
                         )}
                       </td>
 
-                      {/* Subtotal */}
+                      {/* Subtotal: a DP / Pelunasan row shows the CONTRACT (booth price before the discount), like the discount
+                          next to it, so Subtotal − Diskon = Nilai Kontrak; the amount of this invoice is under Total Tagihan */}
                       <td className="px-3 py-3.5 text-right font-mono text-slate-600 whitespace-nowrap text-xs">
-                        Rp {displaySubtotal.toLocaleString('id-ID')}
+                        {isContractSplit ? (
+                          <div>
+                            <div>Rp {(Number(inv.contract.subtotal) || (Number(inv.contract.total) + effectiveDiscountAmount)).toLocaleString('id-ID')}</div>
+                            <div className="text-[9px] text-slate-400 font-sans mt-0.5">harga booth (kontrak)</div>
+                          </div>
+                        ) : (
+                          <>Rp {displaySubtotal.toLocaleString('id-ID')}</>
+                        )}
                       </td>
 
                       {/* Private Discount */}
@@ -739,6 +747,11 @@ export default function InvoicePage() {
                         <InlineDpEdit inv={inv} onSaved={loadInvoices}>
                           <span>Rp {displayTotal.toLocaleString('id-ID')}</span>
                         </InlineDpEdit>
+                        {isContractSplit && (
+                          <div className="text-[9px] text-slate-500 font-sans font-medium mt-0.5">
+                            {invoiceKind(inv) === 'dp' ? 'DP' : 'Pelunasan'} dari kontrak Rp {Number(inv.contract.total).toLocaleString('id-ID')}
+                          </div>
+                        )}
                       </td>
 
                       {/* Uang yang Baru / Sudah Dibayar (DP) */}
