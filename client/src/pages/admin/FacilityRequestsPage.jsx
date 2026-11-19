@@ -31,6 +31,14 @@ import {
   Ban
 } from 'lucide-react';
 import { api } from '../../services/api';
+
+// Payment of a request's live facility invoice (Finance records it in Manajemen Invoice): 'paid' | 'partial' | 'unpaid' | null
+const paymentOf = (req) => {
+  const inv = req.invoice;
+  if (!inv || inv.status === 'CANCELED') return null;
+  if (inv.status === 'PAID' || (inv.total > 0 && inv.paid >= inv.total)) return 'paid';
+  return inv.paid > 0 ? 'partial' : 'unpaid';
+};
 import BroadcastTenantModal from '../../components/admin/BroadcastTenantModal';
 import GenerateTenantFacilityModal from '../../components/admin/GenerateTenantFacilityModal';
 import FacilityCategoryManager from '../../components/admin/FacilityCategoryManager';
@@ -386,11 +394,15 @@ export default function FacilityRequestsPage() {
   const totalReqCount = requests.length;
   const pendingCount = requests.filter(r => r.status === 'PENDING').length;
   const invoicedCount = requests.filter(r => r.status === 'INVOICED').length;
+  const paidCount = requests.filter(r => paymentOf(r) === 'paid').length;
   // A rejected request (also one whose facility invoice was deleted, §46) is no revenue
   const totalRevenue = requests.filter(r => r.status !== 'REJECTED').reduce((sum, r) => sum + (Number(r.total_amount) || 0), 0);
 
   const filteredRequests = requests.filter(r => {
-    const matchStatus = statusFilter === 'ALL' || r.status === statusFilter;
+    const matchStatus = statusFilter === 'ALL'
+      || (statusFilter === 'PAID' ? paymentOf(r) === 'paid'
+        : statusFilter === 'UNPAID' ? ['unpaid', 'partial'].includes(paymentOf(r))
+        : r.status === statusFilter);
     const q = searchRequest.toLowerCase().trim();
     const matchSearch = !q || 
       (r.booth_code && r.booth_code.toLowerCase().includes(q)) ||
@@ -492,6 +504,7 @@ export default function FacilityRequestsPage() {
           <div>
             <span className="text-[11px] font-bold text-slate-400 block uppercase">Diterbitkan Invoice</span>
             <span className="text-xl font-black text-blue-600">{invoicedCount}</span>
+            <span className="text-[11px] font-semibold text-emerald-600 ml-1.5">{paidCount} sudah bayar</span>
           </div>
         </div>
 
@@ -567,7 +580,7 @@ export default function FacilityRequestsPage() {
           {/* Filter Bar */}
           <div className="bg-white p-3.5 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
             <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
-              {['ALL', 'PENDING', 'APPROVED', 'INVOICED', 'COMPLETED', 'REJECTED'].map(st => (
+              {['ALL', 'PENDING', 'APPROVED', 'INVOICED', 'PAID', 'UNPAID', 'COMPLETED', 'REJECTED'].map(st => (
                 <button
                   key={st}
                   type="button"
@@ -578,7 +591,7 @@ export default function FacilityRequestsPage() {
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  {st === 'ALL' ? 'Semua Status' : st}
+                  {st === 'ALL' ? 'Semua Status' : st === 'PAID' ? 'Sudah Bayar' : st === 'UNPAID' ? 'Belum Bayar' : st}
                 </button>
               ))}
             </div>
@@ -684,6 +697,22 @@ export default function FacilityRequestsPage() {
                           {req.invoice && (
                             <span className={`block mt-1 font-mono text-[10px] whitespace-nowrap ${liveInvoice ? 'text-slate-500' : 'text-slate-400 line-through'}`} title={liveInvoice ? 'Invoice aktif' : 'Invoice dibatalkan'}>
                               {req.invoice.number}
+                            </span>
+                          )}
+                          {/* Paid or not, from the invoice payment Finance recorded */}
+                          {paymentOf(req) === 'paid' && (
+                            <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200" title={`Dibayar Rp ${req.invoice.paid.toLocaleString('id-ID')}`}>
+                              <CheckCircle2 size={11} /> Lunas
+                            </span>
+                          )}
+                          {paymentOf(req) === 'partial' && (
+                            <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200" title={`Dibayar Rp ${req.invoice.paid.toLocaleString('id-ID')} dari Rp ${req.invoice.total.toLocaleString('id-ID')}`}>
+                              <Clock size={11} /> Dibayar sebagian
+                            </span>
+                          )}
+                          {paymentOf(req) === 'unpaid' && (
+                            <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-50 text-slate-500 border border-slate-200">
+                              <Clock size={11} /> Belum bayar
                             </span>
                           )}
                         </td>
